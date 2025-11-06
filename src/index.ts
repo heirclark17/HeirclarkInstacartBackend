@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 
 // ----- Config -----
 const app = express();
@@ -26,6 +27,50 @@ app.use(
 
 app.use(express.json({ limit: '1mb' }));
 
+// ===== Shopify App Proxy verification (recommended) =====
+/**
+ * Verifies the HMAC signature for App Proxy requests.
+ * Shopify computes HMAC over: "<shopifyProxyPath>?<sortedQueryString>"
+ * where shopifyProxyPath is the public storefront path (e.g. "/apps/heirclark").
+ */
+const SHOPIFY_APP_SECRET = process.env.SHOPIFY_API_SECRET || '';
+const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/heirclark'; // must match your App Proxy
+
+function verifyShopifyProxy(req, res, next) {
+  try {
+    const { signature, ...rest } = req.query || {};
+    if (!signature) {
+      return res.status(401).send('Missing signature');
+    }
+    if (!SHOPIFY_APP_SECRET) {
+      // Allow through but warn if you haven't set your secret yet.
+      console.warn('WARNING: SHOPIFY_API_SECRET not set; skipping signature validation.');
+      return next();
+    }
+
+    // Build sorted query string excluding "signature"
+    const sortedPairs = Object.keys(rest)
+      .sort()
+      .map(k => `${k}=${rest[k]}`);
+    const qs = sortedPairs.join('&');
+
+    // HMAC over "<public path>?<sorted qs>"
+    const data = qs.length ? `${SHOPIFY_PROXY_PATH}?${qs}` : SHOPIFY_PROXY_PATH;
+
+    const computed = crypto
+      .createHmac('sha256', SHOPIFY_APP_SECRET)
+      .update(data)
+      .digest('hex');
+
+    if (computed !== signature) {
+      return res.status(401).send('Bad signature');
+    }
+    return next();
+  } catch (err) {
+    return res.status(401).send('Signature check failed');
+  }
+}
+
 // ----- Routes -----
 
 // Health (for Railway + browser checks)
@@ -40,6 +85,36 @@ app.get('/api/health', (_req, res) => {
 // Simple version endpoint (optional)
 app.get('/api/version', (_req, res) => {
   res.json({ version: process.env.npm_package_version || '1.0.0' });
+});
+
+/**
+ * Shopify App Proxy target
+ * Your App Proxy config:
+ *   Subpath prefix: apps
+ *   Subpath: heirclark
+ *   Proxy URL: https://heirclarkinstacartbackend-production.up.railway.app/proxy
+ *
+ * Test in browser:
+ *   https://heirclark.com/apps/heirclark?ping=1
+ */
+app.get('/proxy', verifyShopifyProxy, (req, res) => {
+  // You can branch behavior by query params here
+  const { ping } = req.query;
+
+  if (ping) {
+    return res.status(200).json({
+      ok: true,
+      via: 'shopify-app-proxy',
+      shop: req.query.shop,
+      ts: req.query.timestamp
+    });
+  }
+
+  // Example: return HTML that can be embedded on the storefront
+  res
+    .status(200)
+    .type('html')
+    .send(`<div style="font:14px/1.4 system-ui">Proxy OK for ${req.query.shop || 'unknown shop'}</div>`);
 });
 
 /**
