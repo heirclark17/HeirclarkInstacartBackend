@@ -1,3 +1,9 @@
-node_modules/
-dist/
+# dependencies
+/node_modules
+
+# builds
+/dist
+
+# env
 .env
+.env.*.local
