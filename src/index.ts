@@ -130,6 +130,24 @@ app.post('/api/instacart/cart', (req: Request, res: Response) => {
     cartUrl: 'https://www.instacart.com/store'
   });
 });
+// Admin landing (App URL target)
+app.get('/', (_req: Request, res: Response) => {
+  res
+    .status(200)
+    .type('html')
+    .send(`
+      <div style="font:14px/1.5 system-ui; padding:16px">
+        <h1>Heirclark Instacart Backend</h1>
+        <p>Backend is running.</p>
+        <ul>
+          <li><a href="/api/health" target="_blank">/api/health</a></li>
+          <li><a href="/api/version" target="_blank">/api/version</a></li>
+        </ul>
+        <p><strong>Storefront App Proxy test (open in storefront):</strong><br/>
+        Visit <code>https://heirclark.com/apps/heirclark?ping=1</code> in a storefront tab.</p>
+      </div>
+    `);
+});
 
 // Catch-all for 404 JSON
 app.use((_req: Request, res: Response) => {
