@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import cors, { CorsOptions } from 'cors';
 import crypto from 'crypto';
 
 // ----- Config -----
@@ -12,19 +12,22 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .map(s => s.trim())
   .filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      // Allow same-origin / curl / server-to-server (no origin)
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.length === 0) return cb(null, true); // allow all if not set
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: false
-  })
-);
+// Type the origin callback so TS doesn’t complain
+const corsOptions: CorsOptions = {
+  origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void): void {
+    // Allow same-origin / curl / server-to-server (no origin)
+    if (!origin) return callback(null, true);
+    // If not set, allow all
+    if (allowedOrigins.length === 0) return callback(null, true);
+    // Allow if in the list
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Otherwise block
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: false
+};
 
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
 // ===== Shopify App Proxy verification (typed) =====
@@ -50,7 +53,6 @@ function verifyShopifyProxy(req: Request, res: Response, next: NextFunction): vo
       return;
     }
 
-    // Build sorted query string excluding "signature"
     const sortedPairs = Object.keys(rest)
       .sort()
       .map(k => `${k}=${toStr(rest[k])}`);
@@ -92,12 +94,12 @@ app.get('/api/version', (_req: Request, res: Response) => {
 
 /**
  * Shopify App Proxy target
- * Your App Proxy config:
+ * App Proxy config (Shopify):
  *   Subpath prefix: apps
  *   Subpath: heirclark
  *   Proxy URL: https://heirclarkinstacartbackend-production.up.railway.app/proxy
  *
- * Test in browser:
+ * Test:
  *   https://heirclark.com/apps/heirclark?ping=1
  */
 app.get('/proxy', verifyShopifyProxy, (req: Request, res: Response) => {
@@ -111,8 +113,6 @@ app.get('/proxy', verifyShopifyProxy, (req: Request, res: Response) => {
     });
     return;
   }
-
-  // Example HTML response (proxy supports JSON or HTML; no redirects)
   res
     .status(200)
     .type('html')
@@ -121,7 +121,6 @@ app.get('/proxy', verifyShopifyProxy, (req: Request, res: Response) => {
 
 /**
  * Stub Instacart endpoint (for future integration)
- * Translate plan -> ingredients -> Instacart link here later.
  */
 app.post('/api/instacart/cart', (req: Request, res: Response) => {
   const payload = req.body ?? {};
