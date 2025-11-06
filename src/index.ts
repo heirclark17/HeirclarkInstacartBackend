@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 
@@ -27,34 +27,36 @@ app.use(
 
 app.use(express.json({ limit: '1mb' }));
 
-// ===== Shopify App Proxy verification (recommended) =====
-/**
- * Verifies the HMAC signature for App Proxy requests.
- * Shopify computes HMAC over: "<shopifyProxyPath>?<sortedQueryString>"
- * where shopifyProxyPath is the public storefront path (e.g. "/apps/heirclark").
- */
+// ===== Shopify App Proxy verification (typed) =====
 const SHOPIFY_APP_SECRET = process.env.SHOPIFY_API_SECRET || '';
-const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/heirclark'; // must match your App Proxy
+const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/heirclark';
 
-function verifyShopifyProxy(req, res, next) {
+// Helper to coerce Express query values to strings
+type QVal = string | string[] | undefined;
+const toStr = (v: QVal): string => (Array.isArray(v) ? (v[0] ?? '') : (v ?? ''));
+
+function verifyShopifyProxy(req: Request, res: Response, next: NextFunction): void {
   try {
-    const { signature, ...rest } = req.query || {};
+    const q = req.query as Record<string, QVal>;
+    const { signature, ...rest } = q;
+
     if (!signature) {
-      return res.status(401).send('Missing signature');
+      res.status(401).send('Missing signature');
+      return;
     }
     if (!SHOPIFY_APP_SECRET) {
-      // Allow through but warn if you haven't set your secret yet.
       console.warn('WARNING: SHOPIFY_API_SECRET not set; skipping signature validation.');
-      return next();
+      next();
+      return;
     }
 
     // Build sorted query string excluding "signature"
     const sortedPairs = Object.keys(rest)
       .sort()
-      .map(k => `${k}=${rest[k]}`);
+      .map(k => `${k}=${toStr(rest[k])}`);
     const qs = sortedPairs.join('&');
 
-    // HMAC over "<public path>?<sorted qs>"
+    // HMAC over "<public proxy path>?<sorted qs>"
     const data = qs.length ? `${SHOPIFY_PROXY_PATH}?${qs}` : SHOPIFY_PROXY_PATH;
 
     const computed = crypto
@@ -62,19 +64,20 @@ function verifyShopifyProxy(req, res, next) {
       .update(data)
       .digest('hex');
 
-    if (computed !== signature) {
-      return res.status(401).send('Bad signature');
+    if (computed !== toStr(signature)) {
+      res.status(401).send('Bad signature');
+      return;
     }
-    return next();
-  } catch (err) {
-    return res.status(401).send('Signature check failed');
+    next();
+  } catch {
+    res.status(401).send('Signature check failed');
   }
 }
 
 // ----- Routes -----
 
 // Health (for Railway + browser checks)
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (_req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
     service: 'Heirclark Instacart Backend',
@@ -83,7 +86,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Simple version endpoint (optional)
-app.get('/api/version', (_req, res) => {
+app.get('/api/version', (_req: Request, res: Response) => {
   res.json({ version: process.env.npm_package_version || '1.0.0' });
 });
 
@@ -97,20 +100,19 @@ app.get('/api/version', (_req, res) => {
  * Test in browser:
  *   https://heirclark.com/apps/heirclark?ping=1
  */
-app.get('/proxy', verifyShopifyProxy, (req, res) => {
-  // You can branch behavior by query params here
-  const { ping } = req.query;
-
+app.get('/proxy', verifyShopifyProxy, (req: Request, res: Response) => {
+  const ping = (req.query?.ping as string) ?? '';
   if (ping) {
-    return res.status(200).json({
+    res.status(200).json({
       ok: true,
       via: 'shopify-app-proxy',
       shop: req.query.shop,
       ts: req.query.timestamp
     });
+    return;
   }
 
-  // Example: return HTML that can be embedded on the storefront
+  // Example HTML response (proxy supports JSON or HTML; no redirects)
   res
     .status(200)
     .type('html')
@@ -118,30 +120,20 @@ app.get('/proxy', verifyShopifyProxy, (req, res) => {
 });
 
 /**
- * Placeholder endpoint your Shopify section can call when
- * you wire in Instacart later. Accepts a weekly macro plan
- * and responds with a stub “cartUrl”.
- *
- * POST /api/instacart/cart
- * {
- *   "weekOf": "2025-11-10",
- *   "plan": [{ day: "Mon", meals: [...] }],
- *   "macros": { calories: 2400, protein: 180, fat: 70, carbs: 270 }
- * }
+ * Stub Instacart endpoint (for future integration)
+ * Translate plan -> ingredients -> Instacart link here later.
  */
-app.post('/api/instacart/cart', (req, res) => {
+app.post('/api/instacart/cart', (req: Request, res: Response) => {
   const payload = req.body ?? {};
-  // TODO: translate plan -> ingredients -> Instacart link
-  return res.status(200).json({
+  res.status(200).json({
     ok: true,
     received: payload,
-    // Replace with your real cart URL generator when ready:
     cartUrl: 'https://www.instacart.com/store'
   });
 });
 
 // Catch-all for 404 JSON
-app.use((_req, res) => {
+app.use((_req: Request, res: Response) => {
   res.status(404).json({ ok: false, error: 'Not found' });
 });
 
