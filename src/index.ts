@@ -16,7 +16,10 @@ import crypto from 'crypto';
  */
 const PORT = Number(process.env.PORT || 3000);
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
-const PUBLIC_PREFIX = (process.env.SHOPIFY_PROXY_PUBLIC_PREFIX || 'apps').replace(/^\/|\/$/g, '');
+const PUBLIC_BASE = `${process.env.SHOPIFY_PROXY_PUBLIC_PREFIX}/${process.env.SHOPIFY_PUBLIC_SUBPATH}`; // /apps/instacart
+// HMAC over `${PUBLIC_BASE}${req.pathFromPublic}?<sorted qs>`
+// (or simply `${PUBLIC_BASE}${req.query.path}` depending on your helper)
+
 const PUBLIC_SUBPATH = (process.env.SHOPIFY_PUBLIC_SUBPATH || 'instacart').replace(/^\/|\/$/g, '');
 
 /**
