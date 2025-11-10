@@ -81,12 +81,14 @@ app.get('/api/version', (_req, res) => res.json({ version: process.env.npm_packa
 app.get('/proxy/health', verifyShopifyProxy, (_req, res) => res.json({ ok: true, via: 'shopify-app-proxy' }));
 
 app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  res.json({
+  const payload = req.body ?? {};
+  return res.status(200).json({
     ok: true,
-    received: req.body,
+    received: payload,
     cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 
 // Optional GET for quick browser sanity checks: /apps/instacart/build-list?ping=1
