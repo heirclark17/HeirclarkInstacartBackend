@@ -43,96 +43,57 @@ function toStr(v: unknown): string {
 
 function verifyShopifyProxy(req: Request, res: Response, next: NextFunction): void {
   try {
-    const q = req.query as Record<string, unknown>;
-    const sig = toStr(q.signature);
-    if (!sig) {
-      res.status(401).send('Missing signature');
-      return;
-    }
+    const q = req.query as Record<string, QVal>;
+    const signature = toStr(q.signature);
+    if (!signature) { res.status(401).send('Missing signature'); return; }
+
     if (!SHOPIFY_APP_SECRET) {
       console.warn('WARNING: SHOPIFY_API_SECRET not set; skipping signature validation.');
-      next();
-      return;
+      return next();
     }
 
-    // Remove "signature" from the query and sort the rest
-    const sortedPairs = Object.keys(q)
-      .filter(k => k !== 'signature')
+    // 1) Build the public path Shopify used (what the customer sees)
+    const pathPrefix = toStr(q.path_prefix) || '/apps/instacart'; // fallback
+    // forwarded path on your server (e.g. '/proxy/build-list'), strip the '/proxy' base
+    const forwardedPath = req.path.replace(/^\/proxy/, '') || '/';
+    const publicPath = `${pathPrefix}${forwardedPath}`; // e.g. '/apps/instacart/build-list'
+
+    // 2) Build the sorted querystring excluding `signature`
+    const { signature: _sig, ...rest } = q;
+    const sortedPairs = Object.keys(rest)
       .sort()
-      .map(k => `${k}=${toStr(q[k])}`);
-
+      .map(k => `${k}=${toStr(rest[k])}`);
     const qs = sortedPairs.join('&');
-    // Shopify signs ONLY the base proxy path (no trailing route),
-    // not the extra path like "/build-list".
-    const data = qs.length ? `${SHOPIFY_PROXY_PATH}?${qs}` : SHOPIFY_PROXY_PATH;
 
+    // 3) Compute HMAC of "<publicPath>?<sorted qs>"
+    const payload = qs.length ? `${publicPath}?${qs}` : publicPath;
     const computed = crypto
       .createHmac('sha256', SHOPIFY_APP_SECRET)
-      .update(data)
+      .update(payload)
       .digest('hex');
 
-    if (computed !== sig) {
-      res.status(401).send('Bad signature');
-      return;
-    }
+    if (computed !== signature) { res.status(401).send('Bad signature'); return; }
     next();
   } catch (e) {
     res.status(401).send('Signature check failed');
   }
 }
 
+
 // ------------ Routes ------------
 
-// Health (direct)
-app.get('/api/health', (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: 'Heirclark Instacart Backend',
-    time: new Date().toISOString(),
-  });
+// App Proxy landing (GET ping or simple HTML)
+app.get('/proxy', verifyShopifyProxy, (req, res) => {
+  if (req.query.ping) return res.json({ ok: true, via: 'shopify-app-proxy', shop: req.query.shop, ts: req.query.timestamp });
+  res.type('html').send(`<div style="font:14px system-ui">Proxy OK for ${req.query.shop || 'unknown shop'}</div>`);
 });
 
-// Optional version
-app.get('/api/version', (_req, res) => {
-  res.json({ version: process.env.npm_package_version || '1.0.0' });
-});
-
-/**
- * App Proxy target:
- * Storefront calls:
- *   GET  /apps/instacart/build-list?ping=1   -> GET /build-list (this route), returns pong
- *   POST /apps/instacart/build-list          -> POST /build-list (this route), returns ok + echo
- *
- * Shopify forwards to our base URL and appends "/build-list".
- */
-app.get('/build-list', verifyShopifyProxy, (req, res) => {
-  // quick ping sanity
-  if (req.query.ping === '1') {
-    return res.status(200).json({
-      ok: true,
-      via: 'shopify-app-proxy',
-      shop: req.query.shop,
-      ts: req.query.timestamp,
-    });
-  }
-  // No ping -> show simple info page
-  res
-    .status(200)
-    .type('html')
-    .send(`<div style="font:14px/1.4 system-ui">Proxy OK for ${req.query.shop || 'unknown shop'}</div>`);
-});
-
-app.post('/build-list', verifyShopifyProxy, (req, res) => {
-  // This is what your "Generate Instacart List" button will hit.
+// Build-list action (POST) – this is your button target
+app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
   const payload = req.body ?? {};
-  // TODO: call your Instacart flow here and return the created cart/link.
-  res.status(200).json({
-    ok: true,
-    message: 'Instacart list created (stub).',
-    received: payload,
-    cartUrl: 'https://www.instacart.com/store',
-  });
+  return res.json({ ok: true, received: payload, cartUrl: 'https://www.instacart.com/store' });
 });
+
 
 // Admin landing (App URL target)
 app.get('/', (_req, res) => {
