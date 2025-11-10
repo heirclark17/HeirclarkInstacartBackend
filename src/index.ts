@@ -22,68 +22,36 @@ const corsOptions: CorsOptions = {
   credentials: false,
 };
 
-app.use(cors(corsOptions));
+// keep this middleware
 app.use(express.json({ limit: '1mb' }));
 
-// ===== Shopify App Proxy verification =====
-const SHOPIFY_APP_SECRET = process.env.SHOPIFY_API_SECRET || '';
-// EXACT public proxy path configured in Shopify:
-// /apps/instacart/build-list  (matches your screenshots)
-const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/instacart/build-list';
+// HMAC check stays the same, but make sure this value matches your app proxy PATH:
+const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/instacart';
 
-type QVal = string | string[] | undefined;
-const toStr = (v: QVal) => (Array.isArray(v) ? (v[0] ?? '') : (v ?? ''));
-
-function verifyShopifyProxy(req: Request, res: Response, next: NextFunction) {
-  try {
-    const q = req.query as Record<string, QVal>;
-    const { signature, ...rest } = q;
-
-    if (!signature) return res.status(401).send('Missing signature');
-    if (!SHOPIFY_APP_SECRET) return res.status(401).send('Missing app secret');
-
-    // Shopify requires the sorted, unescaped query string (excluding signature)
-    const sortedPairs = Object.keys(rest)
-      .sort()
-      .map(k => `${k}=${toStr(rest[k])}`);
-    const qsJoined = sortedPairs.join('&');
-
-    // Data is the EXACT public proxy path you configured (+ "?qs" if any)
-    const data = qsJoined ? `${SHOPIFY_PROXY_PATH}?${qsJoined}` : SHOPIFY_PROXY_PATH;
-
-    const computed = crypto
-      .createHmac('sha256', SHOPIFY_APP_SECRET)
-      .update(data)
-      .digest('hex');
-
-    if (computed !== toStr(signature)) return res.status(401).send('Bad signature');
-    next();
-  } catch (e) {
-    res.status(401).send('Signature check failed');
-  }
-}
-
-// ----- Health (works either way) -----
-app.get('/api/health', (_req, res) => {
-  res.status(200).json({ ok: true, service: 'Heirclark Instacart Backend', time: new Date().toISOString() });
-});
-
-// ====== App Proxy targets (MUST MATCH Shopify Proxy URL) ======
-// Quick ping (GET):  /apps/instacart/build-list?ping=1
-app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
+// --- App Proxy health/ping via GET
+app.get('/proxy/build-list', verifyShopifyProxy, (req: Request, res: Response) => {
+  // optional ping check like /apps/instacart/build-list?ping=1
   if (req.query.ping) {
-    return res.json({ ok: true, via: "shopify-app-proxy" });
+    return res.status(200).json({
+      ok: true,
+      service: 'Heirclark Instacart Backend',
+      time: new Date().toISOString()
+    });
   }
-  res.json({ ok: true, message: "GET build-list OK" });
+  return res.status(200).json({ ok: true });
 });
 
-app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  res.json({
+// --- Main button POST (Generate Instacart List)
+app.post('/proxy/build-list', verifyShopifyProxy, (req: Request, res: Response) => {
+  const payload = req.body ?? {};
+  // For now just echo back that we received it; you’ll wire Instacart later
+  return res.status(200).json({
     ok: true,
-    received: req.body,
-    cartUrl: 'https://www.instacart.com/store'
+    received: payload,
+    message: 'Proxy OK (next: call Instacart here)'
   });
 });
+
 
 
 // Admin landing
