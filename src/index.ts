@@ -126,38 +126,35 @@ app.get('/api/version', (_req, res) => {
  */
 
 // quick ping to prove the mapping works
-app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  // if you call /apps/instacart/build-list?ping=1 from the storefront,
-  // you should see this JSON (200)
+// GET ping endpoint (used for sanity check)
+app.get('/apps/instacart/build-list', verifyShopifyProxy, (req, res) => {
   if (req.query.ping) {
     return res.status(200).json({
       ok: true,
       via: 'shopify-app-proxy',
-      shop: (req.query as any).shop || null,
-      ts: (req.query as any).timestamp || null
+      shop: req.query.shop || null,
+      ts: req.query.timestamp || null,
     });
   }
-  // Helpful HTML page if someone opens it manually
-  res
-    .status(200)
+
+  res.status(200)
     .type('html')
-    .send(`<div style="font:14px/1.5 system-ui">Proxy OK for ${toStr((req.query as any).shop)}</div>`);
+    .send(`<div style="font:14px/1.5 system-ui">Proxy OK for ${req.query.shop}</div>`);
 });
 
-// real “Generate Instacart List” handler
-app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  // Payload your theme sends
+
+// POST Generate Instacart List
+app.post('/apps/instacart/build-list', verifyShopifyProxy, (req, res) => {
   const payload = req.body ?? {};
 
-  // TODO: connect to your Instacart flow here.
-  // For now, just echo back success and a placeholder URL.
-  res.status(200).json({
+  return res.status(200).json({
     ok: true,
     received: payload,
     message: 'Instacart list created (stub)',
     cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 /**
  * ----- Catch-all 404 -----
