@@ -80,14 +80,14 @@ app.get('/api/version', (_req, res) => res.json({ version: process.env.npm_packa
 // So /apps/instacart/build-list -> https://<railway>/proxy/build-list
 app.get('/proxy/health', verifyShopifyProxy, (_req, res) => res.json({ ok: true, via: 'shopify-app-proxy' }));
 
-app.post('/proxy/build-list', verifyShopifyProxy, (req: Request, res: Response) => {
-  // TODO: replace this stub with your Instacart logic
-  res.status(200).json({
+app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
+  res.json({
     ok: true,
-    received: req.body || {},
-    cartUrl: 'https://www.instacart.com/store',
+    received: req.body,
+    cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 // Optional GET for quick browser sanity checks: /apps/instacart/build-list?ping=1
 app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
