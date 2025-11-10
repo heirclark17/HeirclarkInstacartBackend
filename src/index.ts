@@ -81,7 +81,7 @@ app.get('/api/version', (_req, res) => res.json({ version: process.env.npm_packa
    Public path on the shop: /apps/instacart/build-list
 --------------------------------------------------------------------------- */
 
-// Ping (GET) — quick sanity check in the storefront console
+// ✅ App Proxy route — MUST MATCH Shopify App Proxy URL exactly
 app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
   if (req.query.ping) {
     return res.status(200).json({
@@ -91,19 +91,22 @@ app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
       time: new Date().toISOString()
     });
   }
-  return res.status(200).json({ ok: true, route: '/proxy/build-list', method: 'GET' });
+  return res.status(200).json({
+    ok: true,
+    route: '/proxy/build-list',
+    method: 'GET'
+  });
 });
 
-// Generate list (POST) — your “Generate Instacart List” button hits this
 app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
   const payload = req.body ?? {};
-  // TODO: connect to Instacart here; for now return a stub
   return res.status(200).json({
     ok: true,
     received: payload,
     cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 /* ---------------- Optional direct REST (non-proxy) ---------------- */
 app.post('/api/instacart/cart', (req, res) => {
