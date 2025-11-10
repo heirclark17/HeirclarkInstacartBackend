@@ -1,56 +1,53 @@
-// src/proxy.ts
-import type { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
-import qs from 'qs';
+// index.ts (core pieces)
+import express from "express";
+import crypto from "crypto";
+import type { Request, Response, NextFunction } from "express";
 
-const APP_PROXY_SECRET = process.env.SHOPIFY_API_SECRET!; // same as in your Shopify app
+const app = express();
+app.use(express.json());
 
-function verifyAppProxySignature(req: Request): boolean {
-  // Shopify sends ?signature=<md5> alongside other query params
-  const { signature, ...rest } = req.query as Record<string, unknown>;
+// ------- App Proxy signature check (query param "signature") -------
+function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
+  const secret = process.env.SHOPIFY_API_SECRET!;
+  const q = { ...req.query } as Record<string, unknown>;
+  const sig = String(q.signature || "");
+  delete q.signature;
 
-  // Build the query string with keys sorted and RFC1738 encoding (space => +)
-  const sorted = Object.keys(rest).sort().reduce<Record<string, unknown>>((acc, k) => {
-    acc[k] = (rest as any)[k];
-    return acc;
-  }, {});
-  const serialized = qs.stringify(sorted, { encode: true, sort: (a, b) => a.localeCompare(b), format: 'RFC1738' });
+  // Build sorted query string "key=value" (values joined with ",")
+  const ordered = Object.keys(q)
+    .sort()
+    .map((k) => {
+      const v = q[k];
+      return `${k}=${
+        Array.isArray(v) ? v.join(",") : (v ?? "").toString()
+      }`;
+    })
+    .join("");
 
-  const digest = crypto.createHash('md5').update(APP_PROXY_SECRET + serialized).digest('hex');
-  const sig = typeof signature === 'string' ? signature : Array.isArray(signature) ? signature[0] : '';
+  const hmac = crypto.createHmac("sha256", secret).update(ordered, "utf8").digest("hex");
 
-  return crypto.timingSafeEqual(Buffer.from(digest, 'utf8'), Buffer.from(sig, 'utf8'));
+  if (sig !== hmac) return res.status(401).send("Bad signature");
+  return next();
 }
 
-export function requireAppProxy(req: Request, res: Response, next: NextFunction) {
-  try {
-    if (!verifyAppProxySignature(req)) {
-      return res.status(401).json({ ok: false, error: 'Bad signature' });
-    }
-    return next();
-  } catch (e) {
-    return res.status(401).json({ ok: false, error: 'Signature validation error' });
-  }
-}
+// ------- Health for your theme's GET ping -------
+app.get(`/${process.env.SHOPIFY_PUBLIC_SUBPATH}/build-list`, verifyAppProxy, (req, res) => {
+  // If ?ping=1 is present we just say hello
+  if (req.query.ping) return res.json({ ok: true });
+  return res.status(405).json({ ok: false, error: "Use POST for build-list" });
+});
 
-// Routes mounted under /proxy
-export function registerProxyRoutes(app: import('express').Express) {
-  // Health/ping for your front-end GET ?ping=1 probe
-  app.get('/proxy/build-list', requireAppProxy, (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.status(200).json({ ok: true, message: 'proxy healthy' });
-  });
+// ------- Main POST handler your theme calls -------
+app.post(`/${process.env.SHOPIFY_PUBLIC_SUBPATH}/build-list`, verifyAppProxy, (req, res) => {
+  const { start, plan, recipeLandingUrl } = req.body || {};
+  // …do your work here (create list, etc.) …
+  return res.json({ ok: true, message: "Instacart list created (stub)." });
+});
 
-  // Create the Instacart list (payload comes from your JS)
-  app.post('/proxy/build-list', requireAppProxy, (req, res) => {
-    // Example: validate body then do your logic
-    const { start, plan, recipeLandingUrl } = req.body || {};
-    if (!start || !Array.isArray(plan)) {
-      return res.status(400).json({ ok: false, error: 'Invalid payload' });
-    }
+app.get(`/${process.env.SHOPIFY_PUBLIC_SUBPATH}/api/health`, (_req, res) => {
+  res.json({ ok: true });
+});
 
-    // TODO: call your Instacart logic here…
-
-    res.status(200).json({ ok: true, message: 'Instacart list created.' });
-  });
-}
+app.listen(process.env.PORT || 8080, () => {
+  console.log("Heirclark Instacart backend running");
+});
