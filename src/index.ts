@@ -81,13 +81,18 @@ app.get('/api/version', (_req, res) => res.json({ version: process.env.npm_packa
 app.get('/proxy/health', verifyShopifyProxy, (_req, res) => res.json({ ok: true, via: 'shopify-app-proxy' }));
 
 app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  const payload = req.body ?? {};
-  return res.status(200).json({
-    ok: true,
-    received: payload,
-    cartUrl: 'https://www.instacart.com/store'
-  });
+  try {
+    const payload = req.body;
+    res.status(200).json({
+      ok: true,
+      received: payload,
+      cartUrl: 'https://www.instacart.com/store'
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: 'Failed to process list' });
+  }
 });
+
 
 
 
