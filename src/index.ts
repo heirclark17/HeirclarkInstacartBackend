@@ -90,36 +90,28 @@ app.get('/api/version', (_req, res) => {
 });
 
 // ---- App Proxy routes ----
-// 1) GET ping for quick sanity check
-app.get([INTERNAL_PROXY_PATH, `${INTERNAL_PROXY_PATH}/`], verifyShopifyProxy, (req, res) => {
-  if (req.query.ping) {
-    return res.status(200).json({
+// accept both "/proxy/build-list" and "/build-list"
+const paths = ['/proxy/build-list', '/build-list'];
+
+paths.forEach(path => {
+  app.get(path, verifyShopifyProxy, (req, res) => {
+    if (req.query.ping) {
+      return res.status(200).json({ ok: true, via: 'shopify-app-proxy' });
+    }
+    res.status(200).type('html').send('<div style="font:14px/1.5 system-ui">Proxy OK</div>');
+  });
+
+  app.post(path, verifyShopifyProxy, (req, res) => {
+    const payload = req.body ?? {};
+    res.status(200).json({
       ok: true,
-      via: 'shopify-app-proxy',
-      shop: (req.query as any).shop || null,
-      ts: (req.query as any).timestamp || null,
+      received: payload,
+      message: 'Instacart list created (stub)',
+      cartUrl: 'https://www.instacart.com/store'
     });
-  }
-  // If a human opens it directly
-  res
-    .status(200)
-    .type('html')
-    .send(`<div style="font:14px/1.5 system-ui">Proxy OK for ${(req.query as any).shop || 'unknown'}</div>`);
-});
-
-// 2) POST from your “Generate Instacart List” button
-app.post([INTERNAL_PROXY_PATH, `${INTERNAL_PROXY_PATH}/`], verifyShopifyProxy, (req, res) => {
-  const payload = req.body ?? {};
-
-  // TODO: call your Instacart flow here with `payload`
-
-  res.status(200).json({
-    ok: true,
-    received: payload,
-    message: 'Instacart list created (stub)',
-    cartUrl: 'https://www.instacart.com/store',
   });
 });
+
 
 // ---- Admin landing (optional) ----
 app.get('/', (_req, res) => {
