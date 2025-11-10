@@ -3,26 +3,20 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors, { CorsOptions } from 'cors';
 import crypto from 'crypto';
 
-// ----- Config -----
 const app = express();
 
-// Allow multiple origins via comma-separated env (e.g. https://heirclark.com,https://admin.heirclark.com)
+/* ---------- CORS ---------- */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 
-// Type the origin callback so TS doesn’t complain
 const corsOptions: CorsOptions = {
-  origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void): void {
-    // Allow same-origin / curl / server-to-server (no origin)
-    if (!origin) return callback(null, true);
-    // If not set, allow all
-    if (allowedOrigins.length === 0) return callback(null, true);
-    // Allow if in the list
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // Otherwise block
-    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  origin(origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) {
+    if (!origin) return cb(null, true);                 // server-to-server / curl
+    if (allowedOrigins.length === 0) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: false
 };
@@ -30,9 +24,9 @@ const corsOptions: CorsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
-// ===== Shopify App Proxy verification (typed) =====
+/* ---------- Shopify App Proxy HMAC ---------- */
 const SHOPIFY_APP_SECRET = process.env.SHOPIFY_API_SECRET || '';
-const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/instacart'; // <— this should match your App Proxy Subpath
+const SHOPIFY_PROXY_PATH = process.env.SHOPIFY_PROXY_PATH || '/apps/instacart'; // <- MUST match your Shopify App Proxy
 
 type QVal = string | string[] | undefined;
 const toStr = (v: QVal): string => (Array.isArray(v) ? (v[0] ?? '') : (v ?? ''));
@@ -40,45 +34,34 @@ const toStr = (v: QVal): string => (Array.isArray(v) ? (v[0] ?? '') : (v ?? ''))
 function verifyShopifyProxy(req: Request, res: Response, next: NextFunction): void {
   try {
     const q = req.query as Record<string, QVal>;
-    const { signature, ...rest } = q;
+    const sig = toStr(q.signature);
+    if (!sig) return void res.status(401).send('Missing signature');
 
-    if (!signature) {
-      res.status(401).send('Missing signature');
-      return;
-    }
     if (!SHOPIFY_APP_SECRET) {
       console.warn('WARNING: SHOPIFY_API_SECRET not set; skipping signature validation.');
-      next();
-      return;
+      return void next();
     }
 
-    const sortedPairs = Object.keys(rest)
-      .sort()
-      .map(k => `${k}=${toStr(rest[k])}`);
+    // Build sorted query string without signature
+    const { signature, ...rest } = q;
+    const sortedPairs = Object.keys(rest).sort().map(k => `${k}=${toStr(rest[k])}`);
     const qs = sortedPairs.join('&');
 
     // HMAC over "<public proxy path>?<sorted qs>"
+    // IMPORTANT: use the exact public path configured in Shopify (e.g. /apps/instacart)
     const data = qs.length ? `${SHOPIFY_PROXY_PATH}?${qs}` : SHOPIFY_PROXY_PATH;
 
-    const computed = crypto
-      .createHmac('sha256', SHOPIFY_APP_SECRET)
-      .update(data)
-      .digest('hex');
+    const computed = crypto.createHmac('sha256', SHOPIFY_APP_SECRET).update(data).digest('hex');
+    if (computed !== sig) return void res.status(401).send('Bad signature');
 
-    if (computed !== toStr(signature)) {
-      res.status(401).send('Bad signature');
-      return;
-    }
-    next();
-  } catch {
-    res.status(401).send('Signature check failed');
+    return void next();
+  } catch (e) {
+    return void res.status(401).send('Signature check failed');
   }
 }
 
-// ----- Routes -----
-
-// Health (for Railway + browser checks)
-app.get('/api/health', (_req: Request, res: Response) => {
+/* ---------- Public health/version ---------- */
+app.get('/api/health', (_req, res) => {
   res.status(200).json({
     ok: true,
     service: 'Heirclark Instacart Backend',
@@ -86,98 +69,58 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Simple version endpoint (optional)
-app.get('/api/version', (_req: Request, res: Response) => {
+app.get('/api/version', (_req, res) => {
   res.json({ version: process.env.npm_package_version || '1.0.0' });
 });
 
-/**
- * App Proxy health (Shopify -> your backend)
- * Frontend probe: GET https://heirclark.com/apps/instacart/health?ping=1
- * Shopify forwards to:    https://<railway-app>/proxy/health?shop=...&timestamp=...&signature=...
+/* ---------- PROXY namespace (Shopify → your app) ---------- */
+/* All /proxy/* require a valid Shopify App Proxy signature */
+app.use('/proxy', verifyShopifyProxy);
+
+/** Health for your front-end probe via proxy:
+ *  Storefront GET  /apps/instacart/api/health   → backend GET /proxy/api/health
  */
-app.get('/proxy/health', verifyShopifyProxy, (req: Request, res: Response) => {
-  const ping = (req.query?.ping as string) ?? '';
-  res.status(200).json({
-    ok: true,
-    via: 'shopify-app-proxy',
-    path: '/proxy/health',
-    ping: !!ping,
-    shop: req.query.shop,
-    ts: req.query.timestamp
-  });
+app.get('/proxy/api/health', (_req, res) => {
+  res.status(200).json({ ok: true, via: 'shopify-app-proxy', endpoint: 'api/health' });
 });
 
-/**
- * App Proxy "build list"
- * Frontend calls:
- *   GET  /apps/instacart/build-list?ping=1     -> 200 ok if proxy/verification works
- *   POST /apps/instacart/build-list            -> creates a stubbed cart response for now
- *
- * Shopify forwards those to:
- *   GET/POST /proxy/build-list
+/** Simple echo/ping for build-list:
+ *  Storefront GET  /apps/instacart/build-list?ping=1  → 200 JSON
+ *  Storefront POST /apps/instacart/build-list         → returns stub cartUrl
  */
-app.all('/proxy/build-list', verifyShopifyProxy, (req: Request, res: Response) => {
-  // ping check to debug proxy wiring
-  if (req.method === 'GET' && 'ping' in req.query) {
-    res.status(200).json({
-      ok: true,
-      via: 'shopify-app-proxy',
-      path: '/proxy/build-list',
-      shop: req.query.shop,
-      ts: req.query.timestamp
-    });
-    return;
-  }
-
-  if (req.method === 'POST') {
-    const payload = req.body ?? {};
-    // TODO: Replace with real Instacart integration
-    return res.status(200).json({
-      ok: true,
-      message: 'Stub: Instacart list created.',
-      received: payload,
-      cartUrl: 'https://www.instacart.com/store'
-    });
-  }
-
-  res.status(405).json({ ok: false, error: 'Method not allowed' });
-});
-
-/**
- * Legacy demo proxy root (optional)
- */
-app.get('/proxy', verifyShopifyProxy, (req: Request, res: Response) => {
-  const ping = (req.query?.ping as string) ?? '';
+app.get('/proxy/build-list', (req, res) => {
+  const ping = toStr(req.query.ping);
   if (ping) {
-    res.status(200).json({
+    return void res.status(200).json({
       ok: true,
       via: 'shopify-app-proxy',
+      endpoint: 'build-list',
       shop: req.query.shop,
       ts: req.query.timestamp
     });
-    return;
   }
-  res
-    .status(200)
-    .type('html')
-    .send(`<div style="font:14px/1.4 system-ui">Proxy OK for ${req.query.shop || 'unknown shop'}</div>`);
+  res.status(404).json({ ok: false, error: 'Not found' });
 });
 
-/**
- * Direct (non-proxy) REST stub
- */
-app.post('/api/instacart/cart', (req: Request, res: Response) => {
+app.post('/proxy/build-list', (req, res) => {
   const payload = req.body ?? {};
-  res.status(200).json({
+  // TODO: translate your meal plan payload to Instacart request here.
+  return void res.status(200).json({
     ok: true,
     received: payload,
+    message: 'Instacart list created (stub)',
     cartUrl: 'https://www.instacart.com/store'
   });
 });
 
-// Admin landing (App URL target)
-app.get('/', (_req: Request, res: Response) => {
+/* ---------- Optional direct (non-proxy) REST for testing ---------- */
+app.post('/api/instacart/cart', (req, res) => {
+  const payload = req.body ?? {};
+  res.status(200).json({ ok: true, received: payload, cartUrl: 'https://www.instacart.com/store' });
+});
+
+/* ---------- Root ---------- */
+app.get('/', (_req, res) => {
   res
     .status(200)
     .type('html')
@@ -189,21 +132,20 @@ app.get('/', (_req: Request, res: Response) => {
           <li><a href="/api/health" target="_blank">/api/health</a></li>
           <li><a href="/api/version" target="_blank">/api/version</a></li>
         </ul>
-        <p><strong>Storefront App Proxy tests (open in storefront):</strong></p>
+        <p><strong>Storefront App Proxy tests (open from the storefront domain):</strong></p>
         <ul>
-          <li><code>https://heirclark.com/apps/instacart/health?ping=1</code></li>
-          <li><code>https://heirclark.com/apps/instacart/build-list?ping=1</code></li>
+          <li><code>GET  https://heirclark.com/apps/instacart/api/health</code></li>
+          <li><code>GET  https://heirclark.com/apps/instacart/build-list?ping=1</code></li>
+          <li><code>POST https://heirclark.com/apps/instacart/build-list</code></li>
         </ul>
       </div>
     `);
 });
 
-// Catch-all for 404 JSON
-app.use((_req: Request, res: Response) => {
-  res.status(404).json({ ok: false, error: 'Not found' });
-});
+/* ---------- 404 JSON ---------- */
+app.use((_req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
 
-// ----- Start server -----
+/* ---------- Start ---------- */
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Heirclark Instacart Backend running on port ${port}`);
