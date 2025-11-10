@@ -71,19 +71,20 @@ app.get('/api/health', (_req, res) => {
 // ====== App Proxy targets (MUST MATCH Shopify Proxy URL) ======
 // Quick ping (GET):  /apps/instacart/build-list?ping=1
 app.get('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  if (req.query.ping) return res.status(200).json({ ok: true, via: 'shopify-app-proxy', ts: new Date().toISOString() });
-  res.status(200).json({ ok: true, message: 'build-list GET ready' });
+  if (req.query.ping) {
+    return res.json({ ok: true, via: "shopify-app-proxy" });
+  }
+  res.json({ ok: true, message: "GET build-list OK" });
 });
 
-// Button POST:  /apps/instacart/build-list
 app.post('/proxy/build-list', verifyShopifyProxy, (req, res) => {
-  // TODO: call your Instacart logic here
-  res.status(200).json({
+  res.json({
     ok: true,
-    received: req.body ?? {},
-    cartUrl: 'https://www.instacart.com/store',
+    received: req.body,
+    cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 // Admin landing
 app.get('/', (_req, res) => {
