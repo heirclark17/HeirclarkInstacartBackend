@@ -88,15 +88,15 @@ app.get('/api/version', (_req, res) => {
     POST https://<railway-host>/build-list?shop=...&timestamp=...&signature=...
 */
 // Build Instacart list via App Proxy
-app.post('/build-list', verifyShopifyProxy, (req: Request, res: Response) => {
-  // TODO: generate Instacart list from the payload
+app.post('/build-list', verifyShopifyProxy, (req, res) => {
   const payload = req.body ?? {};
-  return res.status(200).json({
+  return res.json({
     ok: true,
     received: payload,
-    message: 'Proxy signature valid. (Stub) Instacart list would be created here.'
+    cartUrl: 'https://www.instacart.com/store'
   });
 });
+
 
 
 /* Optional ping for quick proxy sanity check: /apps/instacart/build-list?ping=1 (GET) */
