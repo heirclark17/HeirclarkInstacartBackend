@@ -70,41 +70,40 @@ function originalQueryWithoutSignature(req: Request): string {
     .join('&');
 }
 
-/**
- * Verify App Proxy signature. Shopify computes:
- *   HMAC-SHA256(secret, "<PUBLIC_PATH>[?<original_query_without_signature>]")
- * Notes:
- *   - query order MUST be preserved
- *   - URL encoding should not be changed
- */
+// index.ts (replace your verifyShopifyProxy with this)
+const SHOPIFY_PUBLIC_PREFIX = process.env.SHOPIFY_PUBLIC_PREFIX || '/apps/instacart';
+
 function verifyShopifyProxy(req: Request, res: Response, next: NextFunction): void {
   try {
-    const sig = (req.query?.signature as string) || '';
-    if (!sig) {
-      res.status(401).send('Missing signature');
-      return;
-    }
-    if (!SHOPIFY_APP_SECRET) {
-      console.warn('WARNING: SHOPIFY_API_SECRET not set; skipping signature validation.');
-      next();
-      return;
-    }
+    const q = req.query as Record<string, QVal>;
+    const { signature, ...rest } = q;
 
-    const pubPath = publicPathForRequest(req); // e.g. "/apps/instacart/build-list"
-    const qs = originalQueryWithoutSignature(req); // original order
-    const data = qs ? `${pubPath}?${qs}` : pubPath;
+    if (!signature) return void res.status(401).send('Missing signature');
+    if (!SHOPIFY_APP_SECRET) return void res.status(401).send('No app secret');
+
+    // 1) Sort params (excluding signature)
+    const sorted = Object.keys(rest)
+      .sort()
+      .map(k => `${k}=${toStr(rest[k])}`)
+      .join('&');
+
+    // 2) Build the EXACT public path Shopify used to sign:
+    //    <public prefix><actual route on the proxy>
+    //    e.g. /apps/instacart + /build-list  => /apps/instacart/build-list
+    const publicPath = `${SHOPIFY_PUBLIC_PREFIX}${req.path}`;
+
+    // 3) HMAC over "<publicPath>?<sorted>" (omit '?' if no params)
+    const data = sorted ? `${publicPath}?${sorted}` : publicPath;
 
     const computed = crypto.createHmac('sha256', SHOPIFY_APP_SECRET).update(data).digest('hex');
+    if (computed !== toStr(signature)) return void res.status(401).send('Bad signature');
 
-    if (computed !== sig) {
-      res.status(401).send('Bad signature');
-      return;
-    }
     next();
-  } catch (err) {
+  } catch {
     res.status(401).send('Signature check failed');
   }
 }
+
 
 // ---------------------------
 // Public API (direct/backend checks)
@@ -127,19 +126,17 @@ app.get('/api/version', (_req, res) => {
 // Backend path implemented here: /proxy/*
 // ---------------------------
 
-// Simple GET ping:  https://heirclark.com/apps/instacart/build-list?ping=1
-app.get(`${PROXY_BACKEND_MOUNT}/build-list`, verifyShopifyProxy, (req, res) => {
-  if (req.query.ping) {
-    res.status(200).json({
-      ok: true,
-      via: 'shopify-app-proxy',
-      shop: req.query.shop,
-      time: new Date().toISOString(),
-    });
-    return;
-  }
-  // If someone GETs without ping, just acknowledge
-  res.status(200).json({ ok: true });
+// Simple GET for quick ping
+app.get('/build-list', verifyShopifyProxy, (req, res) => {
+  if (req.query.ping) return res.json({ ok: true, via: 'proxy-get' });
+  res.json({ ok: true });
+});
+
+// Your POST for Generate List
+app.post('/build-list', verifyShopifyProxy, (req, res) => {
+  const payload = req.body ?? {};
+  // TODO: call your Instacart logic here
+  res.json({ ok: true, received: payload, cartUrl: 'https://www.instacart.com/store' });
 });
 
 // Real POST handler used by your “Generate Instacart List” button
