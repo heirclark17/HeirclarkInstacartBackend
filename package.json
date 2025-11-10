@@ -1,20 +1,17 @@
 {
   "name": "heirclark-instacart-backend",
   "version": "1.0.0",
-  "description": "Heirclark Instacart backend with Shopify App Proxy",
+  "type": "module",
   "main": "dist/index.js",
-  "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js"
- {
-  "devDependencies": {
-    "typescript": "^5.6.3",
-    "@types/node": "^20.11.30",
-    "@types/express": "^4.17.21"
   },
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js"
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "typescript": "^5.4.0"
   }
 }
