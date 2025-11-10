@@ -48,6 +48,6 @@ app.get(`/${process.env.SHOPIFY_PUBLIC_SUBPATH}/api/health`, (_req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(process.env.PORT || 8080, () => {
+app.listen(process.env.PORT || 3000, () => {
   console.log("Heirclark Instacart backend running");
 });
