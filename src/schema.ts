@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 export const IngredientSchema = z.object({
-  name: z.string().min(1, "name required"),
+  name: z.string().min(1, "Ingredient name required"),
   quantity: z.number().nonnegative(),
-  unit: z.string().min(1, "unit required"),
+  unit: z.string().min(1, "Unit required"),
   category: z.string().default("other"),
   pantry: z.boolean().default(false),
 
@@ -24,14 +24,22 @@ export const IngredientSchema = z.object({
     .optional()
 });
 
+/**
+ * This now matches your *backend expectation*:
+ * - `plan` is an array of ingredients,
+ * - not a string.
+ */
 export const BuildListPayloadSchema = z.object({
-  // whatever else you want from the client:
-  start: z.string().optional(), // e.g. date string
-  plan: z.string().optional(),  // e.g. "7-day", etc.
+  start: z.string().optional(),
   recipeLandingUrl: z.string().url().optional(),
 
-  // *** IMPORTANT: top-level object with items array ***
-  items: z.array(IngredientSchema).min(1, "items cannot be empty")
+  /**
+   * plan = array of ingredients
+   */
+  plan: z.array(IngredientSchema).min(1, "plan must contain at least 1 ingredient"),
+
+  // (optional: you can support items[] too if needed)
+  items: z.array(IngredientSchema).optional()
 });
 
 export type BuildListPayload = z.infer<typeof BuildListPayloadSchema>;
