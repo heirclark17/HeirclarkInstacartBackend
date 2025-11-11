@@ -15,7 +15,7 @@ function getEnv(name: string, fallback?: string): string {
   throw new Error(`Missing required env var: ${name}`);
 }
 
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT || 3000);
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map(s => s.trim())
