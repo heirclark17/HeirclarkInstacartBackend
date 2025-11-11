@@ -1,203 +1,170 @@
 // src/index.ts
 import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
 import crypto from "crypto";
+import dotenv from "dotenv";
 
-/* ----------------------------- ENV MANAGEMENT ----------------------------- */
+dotenv.config();
 
+/**
+ * Environment helpers
+ */
 function getEnv(name: string, fallback?: string): string {
-  const v = process.env[name] ?? fallback;
-  if (v === undefined) {
-    // For non-critical vars, pass a fallback above; for critical, throw.
-    // throw new Error(`Missing required env var: ${name}`);
-    return ""; // keep server booting if you prefer non-fatal
-  }
-  return v;
+  const v = process.env[name];
+  if (v && v.trim().length > 0) return v;
+  if (fallback !== undefined) return fallback;
+  throw new Error(`Missing required env var: ${name}`);
 }
 
 const PORT = Number(process.env.PORT || 8080);
-const ALLOWED_ORIGINS = getEnv("ALLOWED_ORIGINS", "*");
-const SHOPIFY_API_SECRET = getEnv("SHOPIFY_API_SECRET", ""); // optional if you don't use proxy HMAC
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
-/* --------------------------------- TYPES ---------------------------------- */
+// If you plan to verify Shopify App Proxy calls, set this
+// in Railway variables. If not set, verification is skipped.
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || "";
 
-type QVal = string | string[];
-
-interface BuildItem {
-  name: string;
-  quantity?: number;
-  unit?: string;
-}
-
-interface BuildListPayload {
-  items: BuildItem[];
-  // optional contextual fields you may add later
-  planId?: string;
-  userId?: string;
-}
-
-/* ----------------------------- RUNTIME GUARDS ----------------------------- */
-
-function isString(v: unknown): v is string {
-  return typeof v === "string";
-}
-
-function isBuildItem(v: unknown): v is BuildItem {
-  if (!v || typeof v !== "object") return false;
-  const o = v as Record<string, unknown>;
-  return isString(o.name) && (o.quantity === undefined || typeof o.quantity === "number") && (o.unit === undefined || isString(o.unit));
-}
-
-function normalizePayload(body: unknown): BuildListPayload {
-  const fallback: BuildListPayload = { items: [] };
-  if (!body || typeof body !== "object") return fallback;
-
-  const o = body as Record<string, unknown>;
-  const rawItems = o.items;
-
-  const items: BuildItem[] = Array.isArray(rawItems)
-    ? rawItems.filter(isBuildItem)
-    : [];
-
-  return {
-    items,
-    planId: isString(o.planId) ? o.planId : undefined,
-    userId: isString(o.userId) ? o.userId : undefined,
-  };
-}
-
-/* ------------------------------ APP PROXY HMAC ---------------------------- */
 /**
- * If you are calling this server through a Shopify App Proxy route, you can
- * protect it with the HMAC signature check below. Set SHOPIFY_API_SECRET.
- * If you are NOT using an app proxy, you can leave SHOPIFY_API_SECRET blank
- * and the middleware will no-op (allow).
+ * Basic server
  */
-function verifyShopifyProxy(req: Request, res: Response, next: NextFunction) {
-  if (!SHOPIFY_API_SECRET) return next(); // not enforcing when no secret is set
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-  // Signature format (classic app proxy): build a sorted query string without "signature"
-  const q = { ...req.query } as Record<string, QVal>;
-  const sig = String(q.signature ?? "");
-  delete q.signature;
+/**
+ * Minimal CORS (optional; safe defaults)
+ */
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
+  if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Vary", "Origin");
+    res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
-  // turn arrays into comma-joined strings, then sort "key=value" lexicographically
+/**
+ * Health check for Railway
+ * GET /api/health -> { ok: true }
+ */
+app.get("/api/health", (_req: Request, res: Response) => {
+  res.json({ ok: true, service: "heirclark-instacart-backend", node: process.version });
+});
+
+/**
+ * Optional Shopify App Proxy verification middleware.
+ * If SHOPIFY_API_SECRET is not set, this middleware is a no-op.
+ *
+ * App Proxy computes signature as HMAC-SHA256 over the sorted query string
+ * (without `signature`) using the app secret.
+ */
+function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
+  if (!SHOPIFY_API_SECRET) return next(); // Skip if not configured
+  const q = { ...req.query } as Record<string, unknown>;
+  const provided = String(q.signature || "");
+  delete (q as Record<string, unknown>).signature;
+
+  // Flatten values into comma-joined strings and sort keys
   const ordered = Object.keys(q)
     .sort()
     .map((k) => {
-      const val = Array.isArray(q[k]) ? (q[k] as string[]).join(",") : String(q[k] ?? "");
-      return `${k}=${val}`;
+      const v = q[k];
+      if (Array.isArray(v)) return `${k}=${v.join(",")}`;
+      if (v === undefined || v === null) return `${k}=`;
+      return `${k}=${String(v)}`;
     })
     .join("");
 
   const hmac = crypto.createHmac("sha256", SHOPIFY_API_SECRET).update(ordered, "utf8").digest("hex");
-
-  if (sig !== hmac) return res.status(401).json({ ok: false, error: "Bad signature" });
-  return next();
+  if (provided !== hmac) {
+    return res.status(401).json({ ok: false, error: "Bad signature" });
+  }
+  next();
 }
 
-/* --------------------------------- SERVER --------------------------------- */
-
-const app = express();
-app.set("trust proxy", true);
-
-app.use(
-  cors({
-    origin: ALLOWED_ORIGINS === "*"
-      ? true
-      : (origin, cb) => {
-          if (!origin) return cb(null, true);
-          const allowed = ALLOWED_ORIGINS.split(",").map((s) => s.trim());
-          cb(null, allowed.includes(origin));
-        },
-    credentials: true,
-  })
-);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-/* --------------------------------- ROUTES --------------------------------- */
-
-// Basic liveness
-app.get("/", (_req, res) => {
-  res.type("text/plain").send("Heirclark Instacart backend is running");
-});
-
-// Programmatic health check
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    uptime: process.uptime(),
-    node: process.version,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// App Proxy ping (GET) and build-list (POST) under /apps/instacart/...
-app.get("/apps/instacart/build-list", verifyShopifyProxy, (req, res) => {
-  // e.g., GET /apps/instacart/build-list?ping=1
+/**
+ * Simple GET ping for App Proxy:
+ * GET /apps/instacart/build-list?ping=1 -> { ok: true }
+ */
+app.get("/apps/instacart/build-list", verifyAppProxy, (req: Request, res: Response) => {
   if (req.query.ping) return res.json({ ok: true });
-  res.status(400).json({ ok: false, error: "Missing action. Use POST for build-list, or ?ping=1" });
+  // If you want to return something else for GET without ping:
+  return res.json({ ok: true, message: "Use POST to generate a list." });
 });
 
-app.post("/apps/instacart/build-list", verifyShopifyProxy, (req, res) => {
-  const payload = normalizePayload(req.body);
+/**
+ * Payload types and safe guards
+ */
+type BuildListItem = {
+  name: string;
+  qty?: number;
+  unit?: string;
+  sku?: string;
+};
 
-  // At this point you'd exchange OAuth and call Instacart’s real APIs.
-  // For now, echo back a well-formed response so the frontend can proceed.
-  // This prevents TS errors by guaranteeing payload.items is always an array.
-  const items = payload.items;
+type BuildListBody = {
+  // items can be missing; we guard against it
+  items?: BuildListItem[];
+  // you can add other fields as needed (e.g., planId, customerId, etc.)
+};
 
-  if (!items.length) {
-    return res.status(400).json({ ok: false, error: "No items provided" });
+function isValidItem(x: any): x is BuildListItem {
+  return x && typeof x.name === "string" && x.name.trim().length > 0;
+}
+
+/**
+ * POST /apps/instacart/build-list
+ * Accepts { items: BuildListItem[] } and returns a placeholder response.
+ * This validates `items` defensively to avoid TS18048 ("possibly undefined").
+ */
+app.post("/apps/instacart/build-list", verifyAppProxy, (req: Request, res: Response) => {
+  const body: BuildListBody = req.body ?? {};
+  const itemsRaw = body.items;
+
+  if (!Array.isArray(itemsRaw) || itemsRaw.length === 0) {
+    return res.status(400).json({ ok: false, error: "Body must include a non-empty 'items' array." });
   }
 
-  // TODO: integrate with Instacart — create a list, add items, return a deep link.
-  // Placeholder response:
+  // Filter and coerce items safely
+  const items: BuildListItem[] = itemsRaw.filter(isValidItem).map((it) => ({
+    name: it.name.trim(),
+    qty: typeof it.qty === "number" && !Number.isNaN(it.qty) ? it.qty : 1,
+    unit: typeof it.unit === "string" ? it.unit : "ea",
+    sku: typeof it.sku === "string" ? it.sku : undefined,
+  }));
+
+  if (items.length === 0) {
+    return res.status(400).json({ ok: false, error: "No valid items provided." });
+  }
+
+  // TODO: Integrate with Instacart API here. For now return a stub.
   return res.json({
     ok: true,
-    created: true,
+    message: "List received. (Stub response — connect to Instacart here.)",
     count: items.length,
     items,
-    // link: "https://instacart.example/list/abc123" // populate when integrated
+    // Example: you might eventually return a generated URL to the cart
+    instacart_url: null,
   });
 });
 
-// Plain REST variant for non-proxy calls (useful for local testing)
-app.post("/api/build-list", (req, res) => {
-  const payload = normalizePayload(req.body);
-  const items = payload.items;
-
-  if (!items.length) {
-    return res.status(400).json({ ok: false, error: "No items provided" });
-  }
-
-  return res.json({
-    ok: true,
-    created: true,
-    count: items.length,
-    items,
-  });
+/**
+ * Root
+ */
+app.get("/", (_req: Request, res: Response) => {
+  res.json({ ok: true, routes: ["/api/health", "/apps/instacart/build-list"] });
 });
 
-/* ----------------------------- ERROR HANDLERS ----------------------------- */
-
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  // eslint-disable-next-line no-console
-  console.error("Unhandled error:", err);
-  res.status(500).json({ ok: false, error: "Internal Server Error" });
-});
-
-/* --------------------------------- BOOT ----------------------------------- */
-
-const server = app.listen(PORT, () => {
+/**
+ * Start server
+ */
+app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`🔥 Heirclark Instacart backend running on port ${PORT}`);
 });
 
-process.on("SIGTERM", () => {
-  server.close(() => process.exit(0));
-});
-process.on("SIGINT", () => {
-  server.close(() => process.exit(0));
-});
+export default app;
