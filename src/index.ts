@@ -38,7 +38,11 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
 
 function toInstacartLineItems(items: BuildListPayload["items"]) {
   // Map your Ingredient -> Instacart LineItem contract
-  return items.map(i => ({
+  const safeItems = items ?? [];
+safeItems.forEach(item => {
+  // ...
+});
+
     // Docs call this “LineItem” product name:
     product_name: i.name,
     // Single-measurement fields:
