@@ -1,41 +1,37 @@
 import { z } from "zod";
 
-/**
- * A single ingredient line from a recipe
- */
 export const IngredientSchema = z.object({
-  name: z.string().min(1, "name is required"),
-  quantity: z.number().nonnegative().optional(), // allow missing if you're only searching by name
-  unit: z.string().trim().optional(),            // e.g., "lb", "tbsp"
-  prep: z.string().trim().optional(),            // e.g., "minced", "diced"
-  notes: z.string().trim().optional(),
-  category: z.string().trim().optional(),        // e.g., "meat", "oil"
-  brand: z.string().trim().nullable().optional(),
-  size_preference: z.string().trim().optional(), // e.g., "1-1.5 lb pack"
-  pantry: z.boolean().optional().default(false),
+  name: z.string().min(1, "name required"),
+  quantity: z.number().nonnegative(),
+  unit: z.string().min(1, "unit required"),
+  category: z.string().default("other"),
+  pantry: z.boolean().default(false),
+
+  // optional
+  prep: z.string().optional().default(""),
+  notes: z.string().optional().default(""),
+  brand: z.string().nullable().optional(),
+  size_preference: z.string().optional(),
   substitutions_allowed: z.boolean().optional().default(true),
+
   retailer_map: z
     .object({
-      instacart_query: z.string().trim().optional(),
-      upc: z.string().trim().optional().nullable(),
-      store_sku: z.string().trim().optional().nullable()
+      instacart_query: z.string().optional(),
+      upc: z.string().nullable().optional(),
+      store_sku: z.string().nullable().optional()
     })
     .partial()
     .optional()
 });
 
-export type Ingredient = z.infer<typeof IngredientSchema>;
-
-export const IngredientListSchema = z.array(IngredientSchema).min(1, "At least one ingredient is required");
-
-export const BuildListRequestSchema = z.object({
-  start: z.string().datetime().optional(), // ISO string if you need scheduling
+export const BuildListPayloadSchema = z.object({
+  // whatever else you want from the client:
+  start: z.string().optional(), // e.g. date string
+  plan: z.string().optional(),  // e.g. "7-day", etc.
   recipeLandingUrl: z.string().url().optional(),
-  plan: z
-    .object({
-      title: z.string().optional(),
-      ingredients: IngredientListSchema
-    })
-    .strict()
+
+  // *** IMPORTANT: top-level object with items array ***
+  items: z.array(IngredientSchema).min(1, "items cannot be empty")
 });
-export type BuildListRequest = z.infer<typeof BuildListRequestSchema>;
+
+export type BuildListPayload = z.infer<typeof BuildListPayloadSchema>;
