@@ -3,8 +3,7 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors, { CorsOptions } from "cors";
 import axios from "axios";
-import { ZodError } from "zod";
-import { BuildListPayloadSchema } from "./schema";
+import { BuildListPayloadSchema } from "./schema";  // <-- use your schema
 
 const app = express();
 app.use(express.json());
@@ -19,8 +18,8 @@ const INSTACART_KEY_HEADER = process.env.INSTACART_KEY_HEADER || "X-API-Key";
 
 /* ---------- Helpers ---------- */
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
-  // Shopify App Proxy HMAC (query-string) verification
-  if (!SHOPIFY_API_SECRET) return res.status(500).send("Missing SHOPIFY_API_SECRET");
+  const secret = SHOPIFY_API_SECRET;
+  if (!secret) return res.status(500).send("Missing SHOPIFY_API_SECRET");
 
   const q = { ...req.query } as Record<string, unknown>;
   const sig = String(q.signature || "");
@@ -31,9 +30,22 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
     .map((k) => `${k}=${Array.isArray(q[k]) ? (q[k] as any[]).join(",") : (q[k] ?? "").toString()}`)
     .join("");
 
-  const hmac = crypto.createHmac("sha256", SHOPIFY_API_SECRET).update(ordered, "utf8").digest("hex");
+  const hmac = crypto.createHmac("sha256", secret).update(ordered, "utf8").digest("hex");
   if (sig !== hmac) return res.status(401).send("Bad signature");
   next();
+}
+
+// Map your Ingredient to Instacart LineItem (adjust field names to your contract)
+function mapToInstacartLineItem(item: any) {
+  return {
+    product_name: item.name,     // Instacart uses product name matching
+    quantity: item.quantity,     // number
+    unit: item.unit,             // must match Instacart’s "Units of measurement" list
+    notes: item.notes || undefined,
+    // You can pass search hints if allowed:
+    // upc: item?.retailer_map?.upc ?? undefined,
+    // store_sku: item?.retailer_map?.store_sku ?? undefined
+  };
 }
 
 async function forwardToInstacart(payload: any) {
@@ -41,11 +53,13 @@ async function forwardToInstacart(payload: any) {
     throw new Error("Instacart env vars are not configured");
   }
 
-  // Example path – replace with the real Instacart path your program has access to.
-  const url = `${INSTACART_API_BASE}/lists`;
+  // Per the Instacart doc you shared, the path is:
+  // POST /idp/v1/products/products_link
+  const url = `${INSTACART_API_BASE}/idp/v1/products/products_link`;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    [INSTACART_KEY_HEADER]: INSTACART_API_KEY
+    [INSTACART_KEY_HEADER]: INSTACART_API_KEY,
   };
 
   const { data } = await axios.post(url, payload, { headers, timeout: 25_000 });
@@ -53,105 +67,71 @@ async function forwardToInstacart(payload: any) {
 }
 
 /* ---------- PROXY routes (Shopify → your backend) ---------- */
-app.get("/proxy/build-list", verifyAppProxy, (req, res) => {
+app.get("/proxy/build-list", verifyAppProxy, (req: Request, res: Response) => {
   if (req.query.ping) return res.json({ ok: true });
   return res.status(405).json({ ok: false, error: "Use POST for /proxy/build-list" });
 });
 
-app.post("/proxy/build-list", verifyAppProxy, async (req, res) => {
+app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
-    // Validate against your schema
-    const parsed = BuildListPayloadSchema.parse(req.body);
+    // 1) Validate the incoming body
+    const parsed = BuildListPayloadSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "Invalid payload", issues: parsed.error.flatten() });
+    }
+    const body = parsed.data;
 
-    // Example transform to Instacart’s shape (see Section 3)
-    const instacartPayload = {
-      // meta you might want to pass through
-      start: parsed.start,
-      plan: parsed.plan,
-      recipeLandingUrl: parsed.recipeLandingUrl,
-      // items normalized
-      items: parsed.items.map((it) => ({
-        name: it.name,
-        quantity: it.quantity,
-        unit: it.unit,
-        category: it.category,
-        pantry: it.pantry,
-        notes: it.notes ?? "",
-        brand: it.brand ?? undefined,
-        size_preference: it.size_preference ?? undefined,
-        substitutions_allowed: it.substitutions_allowed ?? true,
-        // optional product mapping hints
-        retailer_map: it.retailer_map
-          ? {
-              instacart_query: it.retailer_map.instacart_query,
-              upc: it.retailer_map.upc ?? undefined,
-              store_sku: it.retailer_map.store_sku ?? undefined
-            }
-          : undefined
-      }))
+    // 2) Map your items to Instacart "line_items"
+    const line_items = body.items.map(mapToInstacartLineItem);
+
+    // 3) Compose Instacart request body (based on their "Create shopping list page" endpoint)
+    const instacartBody = {
+      line_items,
+      // Optional:
+      // page_config, retailer, redirect_url, etc. — include if your contract supports these
     };
 
-    const instacartResponse = await forwardToInstacart(instacartPayload);
-    return res.json({ ok: true, message: "Instacart list created.", instacart: instacartResponse });
+    // 4) Send to Instacart
+    const instacartResp = await forwardToInstacart(instacartBody);
+
+    return res.json({
+      ok: true,
+      message: "Instacart list link created",
+      instacart: instacartResp, // response typically includes a link/URL
+      meta: { start: body.start, plan: body.plan, recipeLandingUrl: body.recipeLandingUrl },
+    });
   } catch (err: any) {
-    if (err instanceof ZodError) {
-      return res.status(400).json({ ok: false, error: "Invalid payload", issues: err.errors });
-    }
     console.error("Instacart error:", err?.response?.data || err?.message || err);
     return res.status(502).json({
       ok: false,
       error: "Failed to create Instacart list",
-      detail: err?.response?.data || err?.message || "unknown"
+      detail: err?.response?.data || err?.message || "unknown",
     });
   }
 });
 
 /* ---------- Optional REST fallback ---------- */
 const corsOptions: CorsOptions = {
-  origin(_origin, cb) {
-    // TODO: tighten to your domain, e.g. https://heirclark.com
-    cb(null, true);
-  },
-  credentials: true
+  origin(_origin, cb) { cb(null, true); },
+  credentials: true,
 };
-
 app.options("/rest/build-list", cors(corsOptions));
-app.post("/rest/build-list", cors(corsOptions), async (req, res) => {
+app.post("/rest/build-list", cors(corsOptions), async (req: Request, res: Response) => {
   try {
-    const parsed = BuildListPayloadSchema.parse(req.body);
-
-    const instacartPayload = {
-      start: parsed.start,
-      plan: parsed.plan,
-      recipeLandingUrl: parsed.recipeLandingUrl,
-      items: parsed.items
-    };
-
-    const instacartResponse = await forwardToInstacart(instacartPayload);
-    return res.json({ ok: true, message: "Instacart list created.", instacart: instacartResponse });
-  } catch (err: any) {
-    if (err instanceof ZodError) {
-      return res.status(400).json({ ok: false, error: "Invalid payload", issues: err.errors });
+    const parsed = BuildListPayloadSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "Invalid payload", issues: parsed.error.flatten() });
     }
+    const body = parsed.data;
+    const line_items = body.items.map(mapToInstacartLineItem);
+    const instacartResp = await forwardToInstacart({ line_items });
+    return res.json({ ok: true, instacart: instacartResp });
+  } catch (err: any) {
     console.error("Instacart error:", err?.response?.data || err?.message || err);
-    return res.status(502).json({
-      ok: false,
-      error: "Failed to create Instacart list",
-      detail: err?.response?.data || err?.message || "unknown"
-    });
+    return res.status(502).json({ ok: false, error: "Failed to create Instacart list" });
   }
 });
 
-/* ---------- Health ---------- */
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
-
-/* ---------- Error fallthrough ---------- */
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({ ok: false, error: "Server error" });
-});
-
-/* ---------- Start ---------- */
-app.listen(PORT, () => {
-  console.log(`Heirclark Instacart backend running on port ${PORT}`);
-});
+/* ---------- Basics ---------- */
+app.get("/api/health", (_req: Request, res: Response) => res.json({ ok: true }));
+app.listen(PORT, () => console.log(`Heirclark Instacart backend running on port ${PORT}`));
