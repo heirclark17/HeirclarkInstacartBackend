@@ -117,10 +117,12 @@ const corsOptions: CorsOptions = {
 app.options("/rest/build-list", cors(corsOptions));
 app.post("/rest/build-list", cors(corsOptions), async (req: Request, res: Response) => {
   try {
-    const { start, plan, recipeLandingUrl } = req.body || {};
-    if (!plan || !Array.isArray(plan)) {
-      return res.status(400).json({ ok: false, error: "Missing or invalid plan" });
-    }
+  const parsed = BuildListPayloadSchema.safeParse(req.body);
+if (!parsed.success) {
+  return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+}
+const { start, plan, recipeLandingUrl } = parsed.data;
+
 
     const instacartPayload = {
       start,
