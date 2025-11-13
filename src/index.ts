@@ -51,7 +51,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-instacart-backend" });
 });
 
-// GET /proxy/build-list: ping
+// GET /proxy/build-list: ping (no HMAC)
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -60,7 +60,7 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// POST /proxy/build-list: called via Shopify app proxy
+// POST /proxy/build-list: main Instacart recipe generator
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
     console.log("Incoming /proxy/build-list body:", JSON.stringify(req.body, null, 2));
@@ -72,7 +72,7 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       return res.status(400).json({ ok: false, error: "No items provided" });
     }
 
-    // Map your items -> Instacart ingredients[]
+    // Map items -> Instacart ingredients[]
     const ingredients: InstacartIngredient[] = items.map((item: any) => {
       const name = String(item.name || "").trim() || "item";
       const quantity = Number(item.quantity) || 1;
@@ -90,7 +90,8 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       };
     });
 
-    const partnerLink = recipeLandingUrl || "https://heirclark.com/pages/your-7-day-plan";
+    const partnerLink =
+      recipeLandingUrl || "https://heirclark.com/pages/your-7-day-plan";
 
     const recipePayload = {
       title: "Your Heirclark 7-Day Plan",
@@ -129,6 +130,7 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
   }
 });
 
+// ---- Start server ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Instacart backend listening on port ${PORT}`);
