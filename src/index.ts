@@ -11,10 +11,10 @@ app.use(express.json());
 // 0) Simple health check at root
 // -------------------------------------------------
 app.get("/", (_req, res) => {
-  res.type("application/json").status(200).send({
-    ok: true,
-    service: "heirclark-instacart-backend",
-  });
+  res.setHeader("Content-Type", "application/json");
+  res.status(200).send(JSON.stringify({ ok: true, service: "heirclark-backend" }));
+});
+
 });
 
 // -------------------------------------------------
