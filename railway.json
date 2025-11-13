@@ -8,7 +8,7 @@
     "numReplicas": 1,
     "startCommand": "npm run",
     "preDeployCommand": [
-      "npm ci --include=dev && npm run build"
+      "npm ci --include= npm run build"
     ],
     "sleepApplication": false,
     "useLegacyStacker": false,
