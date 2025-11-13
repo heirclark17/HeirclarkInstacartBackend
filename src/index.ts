@@ -1,17 +1,20 @@
 // src/index.ts
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import { createInstacartRecipe } from "./instacartClient";
+import { createInstacartRecipe, InstacartIngredient } from "./instacartClient";
 
 const app = express();
+
+// Parse JSON & x-www-form-urlencoded
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ---- existing verifyAppProxy (you already had something like this) ----
+// ---- Shopify App Proxy verification ----
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
     if (!secret) {
+      console.error("Missing SHOPIFY_API_SECRET");
       return res.status(500).json({ ok: false, error: "Missing SHOPIFY_API_SECRET" });
     }
 
@@ -33,17 +36,23 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
       .digest("hex");
 
     if (sig !== hmac) {
-      return res.status(401).send("Bad signature");
+      console.error("App proxy signature mismatch");
+      return res.status(401).json({ ok: false, error: "Bad signature" });
     }
 
     next();
   } catch (err) {
-    console.error("verifyAppProxy error", err);
-    return res.status(500).send("App proxy verification failed");
+    console.error("verifyAppProxy error:", err);
+    return res.status(500).json({ ok: false, error: "App proxy verification failed" });
   }
 }
 
-// ---- GET for quick ping (optional) ----
+// ---- Simple health root (optional) ----
+app.get("/", (_req: Request, res: Response) => {
+  res.status(200).json({ ok: true, service: "heirclark-instacart-backend" });
+});
+
+// ---- GET /proxy/build-list: quick ping from store (no HMAC) ----
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -52,27 +61,26 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// ---- POST: main Instacart recipe endpoint used by your theme ----
+// ---- POST /proxy/build-list: main Instacart recipe generator ----
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
-    // This is the payload from your hc-instacart.js
-    const { start, plan, recipeLandingUrl, items } = req.body;
+    console.log("Incoming /proxy/build-list body:", JSON.stringify(req.body, null, 2));
+
+    const { items, recipeLandingUrl } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        ok: false,
-        error: "No items provided"
-      });
+      console.error("No items array received");
+      return res.status(400).json({ ok: false, error: "No items provided" });
     }
 
-    // Map your "items" into Instacart ingredients[]
-    const ingredients = items.map((item: any) => {
+    // Map your "items" to Instacart ingredients[]
+    const ingredients: InstacartIngredient[] = items.map((item: any) => {
+      const name = String(item.name || "").trim() || "item";
       const quantity = Number(item.quantity) || 1;
-      const unit = item.unit || "each";
-      const name = item.name || "item";
+      const unit = String(item.unit || "each");
 
       return {
-        name, // search term
+        name, // used as Instacart search term
         display_text: `${quantity} ${unit} ${name}`.trim(),
         measurements: [
           {
@@ -83,18 +91,23 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       };
     });
 
-    // Build Instacart recipe payload
+    const partnerLink = recipeLandingUrl || "https://heirclark.com/pages/your-7-day-plan";
+
     const payload = {
       title: "Your Heirclark 7-Day Plan",
       servings: 1,
       ingredients,
       landing_page_configuration: {
-        partner_linkback_url: recipeLandingUrl || "https://heirclark.com/pages/your-7-day-plan",
+        partner_linkback_url: partnerLink,
         enable_pantry_items: true
       }
     };
 
+    console.log("Calling Instacart with payload:", JSON.stringify(payload, null, 2));
+
     const instacartResp = await createInstacartRecipe(payload);
+
+    console.log("Instacart response:", JSON.stringify(instacartResp, null, 2));
 
     if (!instacartResp.products_link_url) {
       return res.status(502).json({
@@ -104,7 +117,6 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       });
     }
 
-    // Return a simple, front-end-friendly response
     return res.status(200).json({
       ok: true,
       products_link_url: instacartResp.products_link_url
@@ -118,8 +130,8 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
   }
 });
 
-// ---- rest of your app / listener ----
+// ---- Start server ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Backend listening on port ${PORT}`);
+  console.log(`Instacart backend listening on port ${PORT}`);
 });
