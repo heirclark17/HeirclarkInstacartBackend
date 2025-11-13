@@ -8,7 +8,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Shopify App Proxy verification
+// ---- Shopify App Proxy verification ----
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -46,12 +46,12 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// Simple root
+// Simple health check
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-instacart-backend" });
 });
 
-// GET /proxy/build-list (ping)
+// GET /proxy/build-list: ping
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -60,7 +60,7 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// POST /proxy/build-list (main route)
+// POST /proxy/build-list: called via Shopify app proxy
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
     console.log("Incoming /proxy/build-list body:", JSON.stringify(req.body, null, 2));
@@ -72,7 +72,7 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       return res.status(400).json({ ok: false, error: "No items provided" });
     }
 
-    // Map items -> Instacart ingredients
+    // Map your items -> Instacart ingredients[]
     const ingredients: InstacartIngredient[] = items.map((item: any) => {
       const name = String(item.name || "").trim() || "item";
       const quantity = Number(item.quantity) || 1;
