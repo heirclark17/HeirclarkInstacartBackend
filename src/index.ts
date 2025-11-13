@@ -51,14 +51,16 @@ app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-instacart-backend" });
 });
 
-// GET /proxy/build-list: ping (no HMAC)
-app.get("/proxy/build-list", (req: Request, res: Response) => {
+// GET /proxy/build-list?ping=1 — simple ping, no HMAC
+app.get('/proxy/build-list', (req: Request, res: Response) => {
+  console.log('💓 /proxy/build-list GET ping', req.query);
   res.status(200).json({
     ok: true,
-    via: "app-proxy",
-    ping: req.query.ping ?? null
+    via: 'proxy',
+    ping: req.query.ping ?? null,
   });
 });
+
 
 // POST /proxy/build-list: main Instacart recipe generator
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
