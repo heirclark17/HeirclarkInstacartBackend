@@ -3,7 +3,8 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import {
   createInstacartProductsLink,
-  InstacartLineItem
+  InstacartLineItem,
+  InstacartProductsLinkPayload
 } from "./instacartClient";
 
 const app = express();
@@ -11,60 +12,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ---- Shopify App Proxy verification ----
-function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
-  try {
-    const secret = process.env.SHOPIFY_API_SECRET;
-    if (!secret) {
-      console.error("Missing SHOPIFY_API_SECRET");
-      return res.status(500).json({ ok: false, error: "Missing SHOPIFY_API_SECRET" });
-    }
-
-    // Copy query params & remove signature
-    const q: Record<string, unknown> = { ...req.query };
-    const sig = String(q.signature || "");
-    delete (q as any).signature;
-
-    // Build ordered query string: key1=val1key2=val2...
-    const ordered = Object.keys(q)
-      .sort()
-      .map((k) => {
-        const v = q[k];
-        return `${k}=${Array.isArray(v) ? v.join(",") : (v ?? "").toString()}`;
-      })
-      .join("");
-
-    const hmac = crypto
-      .createHmac("sha256", secret)
-      .update(ordered, "utf8")
-      .digest("hex");
-
-    if (sig !== hmac) {
-      console.error("App proxy signature mismatch");
-      return res.status(401).json({ ok: false, error: "Bad signature" });
-    }
-
-    next();
-  } catch (err) {
-    console.error("verifyAppProxy error:", err);
-    return res.status(500).json({ ok: false, error: "App proxy verification failed" });
-  }
-}
-
-// ---- Basic health check ----
-app.get("/", (_req: Request, res: Response) => {
-  res.status(200).json({ ok: true, service: "heirclark-instacart-backend" });
-});
-
-// ---- GET /proxy/build-list?ping=1 (simple JSON ping) ----
-app.get("/proxy/build-list", (req: Request, res: Response) => {
-  console.log("💓 /proxy/build-list GET ping", req.query);
-  res.status(200).json({
-    ok: true,
-    via: "proxy",
-    ping: req.query.ping ?? null
-  });
-});
+// ... keep verifyAppProxy and other routes as you already have ...
 
 // ---- POST /proxy/build-list (main Instacart shopping list generator) ----
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
@@ -91,7 +39,6 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
         display_text: item.display_text || `${quantity} ${unit} ${name}`.trim()
       };
 
-      // Optional UPCs / filters if you decide to add them later
       if (Array.isArray(item.upcs) && item.upcs.length > 0) {
         lineItem.upcs = item.upcs;
       }
@@ -105,18 +52,18 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
     const partnerLink =
       recipeLandingUrl || "https://heirclark.com/pages/7-day-nutrition-plan";
 
-    const productsLinkPayload = {
+    // 🔧 KEY CHANGE: add explicit type annotation so TS knows link_type is a literal
+    const productsLinkPayload: InstacartProductsLinkPayload = {
       title: "Your Heirclark 7-Day Plan",
-      image_url: undefined, // you can add a 500x500 image later if you want
-      link_type: "shopping_list",
-      // expires_in: 30, // optional: days until link expires
+      image_url: undefined,
+      link_type: "shopping_list", // now correctly typed
+      // expires_in: 30, // optional
       instructions: [
         "Review your list, choose your store, and check out on Instacart."
       ],
       line_items: lineItems,
       landing_page_configuration: {
         partner_linkback_url: partnerLink
-        // enable_pantry_items: true // only honored for link_type = "recipe"
       }
     };
 
