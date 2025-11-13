@@ -63,22 +63,21 @@ app.get('/proxy/build-list', (req: Request, res: Response) => {
 
 
 // POST /proxy/build-list: main Instacart recipe generator
-app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
+app.post('/proxy/build-list', verifyAppProxy, async (req: Request, res: Response) => {
   try {
-    console.log("Incoming /proxy/build-list body:", JSON.stringify(req.body, null, 2));
+    console.log('📦 Incoming /proxy/build-list body:', JSON.stringify(req.body, null, 2));
 
     const { items, recipeLandingUrl } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
-      console.error("No items array received");
-      return res.status(400).json({ ok: false, error: "No items provided" });
+      console.error('No items array received');
+      return res.status(400).json({ ok: false, error: 'No items provided' });
     }
 
-    // Map items -> Instacart ingredients[]
-    const ingredients: InstacartIngredient[] = items.map((item: any) => {
-      const name = String(item.name || "").trim() || "item";
+    const ingredients = items.map((item: any) => {
+      const name = String(item.name || '').trim() || 'item';
       const quantity = Number(item.quantity) || 1;
-      const unit = String(item.unit || "each");
+      const unit = String(item.unit || 'each');
 
       return {
         name,
@@ -92,11 +91,10 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       };
     });
 
-    const partnerLink =
-      recipeLandingUrl || "https://heirclark.com/pages/your-7-day-plan";
+    const partnerLink = recipeLandingUrl || 'https://heirclark.com/pages/your-7-day-plan';
 
     const recipePayload = {
-      title: "Your Heirclark 7-Day Plan",
+      title: 'Your Heirclark 7-Day Plan',
       servings: 1,
       ingredients,
       landing_page_configuration: {
@@ -105,16 +103,16 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       }
     };
 
-    console.log("Calling Instacart with payload:", JSON.stringify(recipePayload, null, 2));
+    console.log('🚀 Calling Instacart with payload:', JSON.stringify(recipePayload, null, 2));
 
     const instacartResp = await createInstacartRecipe(recipePayload);
 
-    console.log("Instacart response object:", instacartResp);
+    console.log('✅ Instacart response object:', instacartResp);
 
     if (!instacartResp.products_link_url) {
       return res.status(502).json({
         ok: false,
-        error: "Instacart did not return a products_link_url",
+        error: 'Instacart did not return a products_link_url',
         instacart: instacartResp
       });
     }
@@ -124,13 +122,14 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
       products_link_url: instacartResp.products_link_url
     });
   } catch (err: any) {
-    console.error("Error in POST /proxy/build-list:", err);
+    console.error('❌ Error in POST /proxy/build-list:', err);
     return res.status(500).json({
       ok: false,
-      error: err?.message || "Unknown server error"
+      error: err?.message || 'Unknown server error'
     });
   }
 });
+
 
 // ---- Start server ----
 const PORT = process.env.PORT || 3000;
