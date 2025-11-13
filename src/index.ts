@@ -1,5 +1,7 @@
 import express from "express";
 import crypto from "crypto";
+import { weekPlan, WeekPlan } from "./weekPlan";  // ⬅ NEW import
+
 // import nextHandler from './next'          // if you have one
 // import { vite } from './vite'              // if you have one
 // import path from "path";
@@ -8,6 +10,42 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", true);
 app.use(express.json());
+
+// ---------- HELPERS ADDED ----------
+
+// Flatten all ingredients from the week plan
+function extractAllIngredients(plan: WeekPlan): string[] {
+  const ingredients: string[] = [];
+
+  for (const day of plan.weekPlan) {
+    const { breakfast, lunch, dinner } = day.meals;
+    ingredients.push(...breakfast.ingredients);
+    ingredients.push(...lunch.ingredients);
+    ingredients.push(...dinner.ingredients);
+  }
+
+  return ingredients;
+}
+
+// Placeholder for Instacart API search.
+// Later, replace with real Instacart integration.
+async function searchInstacartAPI(ingredient: string) {
+  return {
+    name: ingredient,
+    quantity: 1
+  };
+}
+
+async function buildInstacartCart(ingredients: string[]) {
+  const cartItems: any[] = [];
+
+  for (const ingredient of ingredients) {
+    const result = await searchInstacartAPI(ingredient);
+    if (result) cartItems.push(result);
+  }
+
+  return cartItems;
+}
 
 // 1) ✅ YOUR APP PROXY ROUTES FIRST
 // -------------------------------------------------
@@ -47,6 +85,13 @@ function verifyAppProxy(req: any, res: any, next: any) {
 app.post("/proxy/build-list", verifyAppProxy, async (req, res, next) => {
   try {
     const { start, plan, recipeLandingUrl } = req.body || {};
+
+    // ⬇️ NEW: pull all ingredients from the 7-day plan
+    const ingredients = extractAllIngredients(weekPlan);
+
+    // ⬇️ NEW: build a mock Instacart "cart" from those ingredients
+    const cart = await buildInstacartCart(ingredients);
+
     return res.status(200).json({
       ok: true,
       message: "Instacart list created (proxy).",
@@ -55,6 +100,9 @@ app.post("/proxy/build-list", verifyAppProxy, async (req, res, next) => {
         days: Array.isArray(plan) ? plan.length : 0,
         recipeLandingUrl: recipeLandingUrl ?? null,
       },
+      // ⬇️ NEW fields for your frontend / future Instacart integration
+      ingredients,
+      cart
     });
   } catch (e) { next(e); }
 });
