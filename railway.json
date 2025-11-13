@@ -6,7 +6,7 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "startCommand": "npm run build",
+    "startCommand": "npm run",
     "preDeployCommand": [
       "npm ci --include=dev && npm run build"
     ],
