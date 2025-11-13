@@ -6,9 +6,8 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "startCommand": "npm run",
-    "preDeployCommand": npm run build"
-    ],
+    "preDeployCommand": "npm run build",
+    "startCommand": "npm start",
     "sleepApplication": false,
     "useLegacyStacker": false,
     "multiRegionConfig": {
