@@ -7,8 +7,7 @@
     "runtime": "V2",
     "numReplicas": 1,
     "startCommand": "npm run",
-    "preDeployCommand": [
-      "npm ci --include= npm run build"
+    "preDeployCommand": npm run build"
     ],
     "sleepApplication": false,
     "useLegacyStacker": false,
