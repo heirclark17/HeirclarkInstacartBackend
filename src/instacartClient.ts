@@ -8,8 +8,8 @@ export interface InstacartMeasurement {
 }
 
 export interface InstacartIngredient {
-  name: string;
-  display_text?: string;
+  name: string;                // search term, e.g. "salmon fillet"
+  display_text?: string;       // user-facing text, e.g. "4 each salmon fillet"
   measurements?: InstacartMeasurement[];
 }
 
