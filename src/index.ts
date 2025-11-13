@@ -1,6 +1,7 @@
 import express from "express";
 import crypto from "crypto";
-import { weekPlan, WeekPlan } from "./weekPlan";  // ⬅ NEW import
+import { weekPlan, WeekPlan } from "./data/weekPlan"; // ⬅ path includes /data
+
 
 // import nextHandler from './next'          // if you have one
 // import { vite } from './vite'              // if you have one
