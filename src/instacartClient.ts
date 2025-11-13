@@ -9,7 +9,7 @@ export interface InstacartMeasurement {
 
 export interface InstacartIngredient {
   name: string;                // search term, e.g. "salmon fillet"
-  display_text?: string;       // what the user sees, e.g. "2 lb salmon fillet"
+  display_text?: string;       // how it shows on the Instacart page
   measurements?: InstacartMeasurement[];
 }
 
@@ -29,7 +29,7 @@ export interface InstacartRecipePayload {
 
 export interface InstacartRecipeResponse {
   products_link_url?: string;
-  // there are more fields, but this is the main one we care about
+  // Instacart returns other fields, but this is the one we care about
 }
 
 export async function createInstacartRecipe(
@@ -50,10 +50,10 @@ export async function createInstacartRecipe(
     body: JSON.stringify(payload)
   });
 
-  const data = await resp.json();
+  const data = await resp.json().catch(() => ({}));
 
   if (!resp.ok) {
-    console.error("Instacart error:", resp.status, resp.statusText, data);
+    console.error("Instacart API error:", resp.status, resp.statusText, data);
     throw new Error(`Instacart API error: ${resp.status} ${resp.statusText}`);
   }
 
