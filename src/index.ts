@@ -150,7 +150,9 @@ app.use((err: any, _req: any, res: any, _next: any) => {
     .send({ ok: false, error: err?.message || "Server error" });
 });
 
-const port = Number(process.env.PORT || 8080);
-app.listen(port, () =>
-  console.log(`Heirclark Instacart backend (proxy) running on ${port}`)
-);
+const port = Number(process.env.PORT) || 3000;
+
+app.listen(port, () => {
+  console.log(`Heirclark Instacart backend (proxy) running on port ${port}`);
+});
+
