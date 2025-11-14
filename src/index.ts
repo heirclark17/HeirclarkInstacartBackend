@@ -86,26 +86,37 @@ interface HcRequestBody {
 // POST from Shopify app proxy – now calls Instacart
 app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
-    const apiKey = process.env.INSTACART_API_KEY;
+      const apiKey = process.env.INSTACART_API_KEY;
     if (!apiKey) {
       console.error("Missing INSTACART_API_KEY");
       return res.status(500).json({ ok: false, error: "Missing INSTACART_API_KEY" });
     }
 
-    const body = req.body as HcRequestBody;
-    console.log("POST /proxy/build-list body:", JSON.stringify(body));
+    const apiBase = process.env.INSTACART_API_BASE || "https://connect.instacart.com";
+    const keyHeader = process.env.INSTACART_KEY_HEADER || "Authorization";
 
-    const items: HcItem[] = Array.isArray(body.items) ? body.items : [];
-    const lineItemsSource: HcItem[] = Array.isArray(body.lineItems) && body.lineItems.length
-      ? body.lineItems
-      : items;
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    };
 
-    if (!lineItemsSource.length) {
-      return res.status(400).json({
-        ok: false,
-        error: "No lineItems or items provided from frontend.",
-      });
+    // If header is Authorization, use Bearer (as docs show).
+    // If header is something like x-api-key, send the raw key.
+    if (keyHeader.toLowerCase() === "authorization") {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    } else {
+      headers[keyHeader] = apiKey;
     }
+
+    const instacartResp = await fetch(
+      `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(instacartBody),
+      }
+    );
+
 
     // Map Heirclark items -> Instacart LineItem objects
     const instacartLineItems = lineItemsSource
