@@ -176,17 +176,22 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
 
         if (!instacartResp.ok) {
       // Try to pull a useful error message from Instacart's response
-      let message = "";
+     let message = "";
 
-      if (typeof instacartData === "string") {
-        message = instacartData;
-      } else if (instacartData && typeof instacartData === "object") {
-        message =
-          (instacartData.error as string) ||
-          (instacartData.message as string) ||
-          (Array.isArray(instacartData.errors) && instacartData.errors[0]?.message) ||
-          JSON.stringify(instacartData).slice(0, 200);
-      }
+if (instacartData && typeof instacartData === "object") {
+  if (instacartData.error && typeof instacartData.error === "object") {
+    message =
+      (instacartData.error.message as string) ||
+      JSON.stringify(instacartData.error);
+  } else {
+    message =
+      (instacartData.error as string) ||
+      (instacartData.message as string) ||
+      (Array.isArray(instacartData.errors) && instacartData.errors[0]?.message) ||
+      JSON.stringify(instacartData).slice(0, 200);
+  }
+}
+
 
       if (!message) {
         message = `HTTP ${instacartResp.status}`;
