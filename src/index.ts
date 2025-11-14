@@ -59,22 +59,32 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
 }
 
 // POST from Shopify app proxy – stub for now
-app.post("/proxy/build-list", verifyAppProxy, (req: Request, res: Response) => {
+app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response) => {
   try {
     console.log("POST /proxy/build-list body:", JSON.stringify(req.body));
 
-    // TODO: later – call Instacart API here using the 7-day plan in req.body
+    // TODO: later — actually call Instacart's API and build real cart.
+    // For now, just return the shape the frontend expects.
+
+    const productsLinkUrl = "https://www.instacart.com/store"; // temporary stub
 
     return res.status(200).json({
       ok: true,
-      message: "Stubbed Instacart list generation",
-      received: req.body ?? null,
+      products_link_url: productsLinkUrl,
+      // keep extra stuff if you want to debug:
+      debug: {
+        received: req.body ?? null
+      }
     });
   } catch (err) {
     console.error("Handler error in /proxy/build-list:", err);
-    return res.status(500).json({ ok: false, error: "Server error in /proxy/build-list" });
+    return res.status(500).json({
+      ok: false,
+      error: "Server error in /proxy/build-list"
+    });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Heirclark Instacart backend listening on port ${PORT}`);
