@@ -22,7 +22,7 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// ---------- HMAC verification for App Proxy POST ----------
+// ---------- HMAC verification for App Proxy ----------
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -65,7 +65,7 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// ---------- Types for incoming payload ----------
+// ---------- Types ----------
 interface HcItem {
   name: string;
   quantity?: number;
@@ -88,7 +88,85 @@ interface HcRequestBody {
   items?: HcItem[];
   lineItems?: HcItem[];
   recipeLandingUrl?: string;
+  retailerKey?: string | null; // selected retailer from store picker (optional)
 }
+
+// ---------- GET /proxy/retailers (store picker support) ----------
+app.get(
+  "/proxy/retailers",
+  verifyAppProxy,
+  async (req: Request, res: Response) => {
+    try {
+      const apiKey = process.env.INSTACART_API_KEY;
+      if (!apiKey) {
+        console.error("Missing INSTACART_API_KEY");
+        return res
+          .status(500)
+          .json({ ok: false, error: "Missing INSTACART_API_KEY" });
+      }
+
+      const apiBase =
+        process.env.INSTACART_API_BASE ||
+        "https://connect.dev.instacart.tools";
+
+      const postalCode = String(req.query.postal_code || "").trim();
+      const countryCode = String(req.query.country_code || "US")
+        .trim()
+        .toUpperCase();
+
+      if (!postalCode) {
+        return res.status(400).json({
+          ok: false,
+          error: "postal_code is required",
+        });
+      }
+
+      const url =
+        `${apiBase.replace(/\/$/, "")}/idp/v1/retailers` +
+        `?postal_code=${encodeURIComponent(postalCode)}` +
+        `&country_code=${encodeURIComponent(countryCode)}`;
+
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+
+      const txt = await resp.text();
+      let data: any;
+      try {
+        data = JSON.parse(txt);
+      } catch {
+        data = null;
+      }
+
+      console.log("Instacart retailers status:", resp.status);
+      console.log("Instacart retailers body:", txt);
+
+      if (!resp.ok) {
+        return res.status(resp.status).json({
+          ok: false,
+          error: "Failed to fetch retailers from Instacart",
+          status: resp.status,
+          details: data || txt,
+        });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        retailers: data?.retailers || [],
+      });
+    } catch (err) {
+      console.error("Handler error in /proxy/retailers:", err);
+      return res.status(500).json({
+        ok: false,
+        error: "Server error in /proxy/retailers",
+      });
+    }
+  }
+);
 
 // ---------- POST /proxy/build-list (App Proxy) ----------
 app.post(
@@ -104,7 +182,7 @@ app.post(
           .json({ ok: false, error: "Missing INSTACART_API_KEY" });
       }
 
-      // Default to DEV environment for IDP; override via env if needed
+      // Default to DEV IDP base; override via INSTACART_API_BASE if needed
       const apiBase =
         process.env.INSTACART_API_BASE ||
         "https://connect.dev.instacart.tools";
@@ -163,6 +241,7 @@ app.post(
       }
 
       const partnerLinkbackUrl = body.recipeLandingUrl;
+      const retailerKey = body.retailerKey || null;
 
       // Build Instacart request body (Create Shopping List Page)
       const instacartBody: any = {
@@ -180,14 +259,20 @@ app.post(
         };
       }
 
-      // Headers exactly as Instacart docs specify: Authorization: Bearer <API_KEY>
+      // Save retailer context if you want to log/use later (not required by products_link)
+      if (retailerKey) {
+        instacartBody.metadata = {
+          ...(instacartBody.metadata || {}),
+          heirclark_retailer_key: retailerKey,
+        };
+      }
+
       const headers: Record<string, string> = {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       };
 
-      // Call Instacart /idp/v1/products/products_link
       const instacartResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
