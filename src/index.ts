@@ -104,10 +104,9 @@ app.post(
           .json({ ok: false, error: "Missing INSTACART_API_KEY" });
       }
 
-      const apiBase =
-        process.env.NODE_ENV === "production"
-    ? "https://connect.instacart.com"
-    : "https://connect.dev.instacart.tools";
+    const apiBase =
+  process.env.INSTACART_API_BASE ||
+  "https://connect.dev.instacart.tools";
 
 
       const body = req.body as HcRequestBody;
