@@ -104,10 +104,17 @@ app.post(
           .json({ ok: false, error: "Missing INSTACART_API_KEY" });
       }
 
-    const apiBase =
-  process.env.INSTACART_API_BASE ||
-  "https://connect.dev.instacart.tools";
+      // Default to DEV environment for IDP; override via env if needed
+      const apiBase =
+        process.env.INSTACART_API_BASE ||
+        "https://connect.dev.instacart.tools";
 
+      console.log(
+        "Using Instacart API base:",
+        apiBase,
+        " key prefix:",
+        apiKey.slice(0, 6)
+      );
 
       const body = req.body as HcRequestBody;
       console.log("POST /proxy/build-list body:", JSON.stringify(body));
@@ -173,24 +180,16 @@ app.post(
         };
       }
 
-      // Build headers – flexible: Authorization: Bearer KEY or x-api-key: KEY
+      // Headers exactly as Instacart docs specify: Authorization: Bearer <API_KEY>
       const headers: Record<string, string> = {
         Accept: "application/json",
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       };
-
-      if (keyHeader.toLowerCase() === "authorization") {
-        headers["Authorization"] = `Bearer ${apiKey}`;
-      } else {
-        headers[keyHeader] = apiKey;
-      }
 
       // Call Instacart /idp/v1/products/products_link
       const instacartResp = await fetch(
-        `${apiBase.replace(
-          /\/$/,
-          ""
-        )}/idp/v1/products/products_link`,
+        `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
           method: "POST",
           headers,
@@ -217,10 +216,7 @@ app.post(
             "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. " +
             "Please confirm that Product Links / Shopping List Pages are enabled for this key.";
         } else if (instacartData && typeof instacartData === "object") {
-          if (
-            instacartData.error &&
-            typeof instacartData.error === "object"
-          ) {
+          if (instacartData.error && typeof instacartData.error === "object") {
             message =
               instacartData.error.message ||
               JSON.stringify(instacartData.error).slice(0, 200);
