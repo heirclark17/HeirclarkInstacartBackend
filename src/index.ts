@@ -105,8 +105,10 @@ app.post(
       }
 
       const apiBase =
-        process.env.INSTACART_API_BASE || "https://connect.instacart.com";
-      const keyHeader = process.env.INSTACART_KEY_HEADER || "Authorization";
+        process.env.NODE_ENV === "production"
+    ? "https://connect.instacart.com"
+    : "https://connect.dev.instacart.tools";
+
 
       const body = req.body as HcRequestBody;
       console.log("POST /proxy/build-list body:", JSON.stringify(body));
