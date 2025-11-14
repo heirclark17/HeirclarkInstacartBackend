@@ -209,10 +209,13 @@ app.post(
       console.log("Instacart response body:", instacartText);
 
       if (!instacartResp.ok) {
-        // Extract a useful error message
         let message = "";
 
-        if (instacartData && typeof instacartData === "object") {
+        if (instacartResp.status === 403) {
+          message =
+            "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. " +
+            "Please confirm that Product Links / Shopping List Pages are enabled for this key.";
+        } else if (instacartData && typeof instacartData === "object") {
           if (
             instacartData.error &&
             typeof instacartData.error === "object"
@@ -253,7 +256,6 @@ app.post(
         });
       }
 
-      // Shape expected by your frontend
       return res.status(200).json({
         ok: true,
         products_link_url: productsLinkUrl,
