@@ -174,14 +174,32 @@ app.post("/proxy/build-list", verifyAppProxy, async (req: Request, res: Response
     console.log("Instacart response status:", instacartResp.status);
     console.log("Instacart response body:", instacartText);
 
-    if (!instacartResp.ok) {
+        if (!instacartResp.ok) {
+      // Try to pull a useful error message from Instacart's response
+      let message = "";
+
+      if (typeof instacartData === "string") {
+        message = instacartData;
+      } else if (instacartData && typeof instacartData === "object") {
+        message =
+          (instacartData.error as string) ||
+          (instacartData.message as string) ||
+          (Array.isArray(instacartData.errors) && instacartData.errors[0]?.message) ||
+          JSON.stringify(instacartData).slice(0, 200);
+      }
+
+      if (!message) {
+        message = `HTTP ${instacartResp.status}`;
+      }
+
       return res.status(instacartResp.status).json({
         ok: false,
-        error: "Instacart API error",
+        error: `Instacart: ${message}`,
         status: instacartResp.status,
         details: instacartData || instacartText,
       });
     }
+
 
     const productsLinkUrl = instacartData?.products_link_url;
     if (!productsLinkUrl) {
