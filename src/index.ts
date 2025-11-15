@@ -1,4 +1,5 @@
 // src/index.ts
+
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 
@@ -169,6 +170,9 @@ app.get(
 );
 
 // ---------- POST /proxy/build-list (App Proxy) ----------
+// Now returns BOTH:
+//   - products_link_url (shopping list / products link)
+//   - recipe_products_link_url (created via /idp/v1/products/recipe)
 app.post(
   "/proxy/build-list",
   verifyAppProxy,
@@ -210,7 +214,7 @@ app.post(
         });
       }
 
-      // Map Heirclark items -> Instacart LineItem objects
+      // Map Heirclark items -> Instacart LineItem objects (for products_link)
       const instacartLineItems = lineItemsSource
         .filter((i) => i && i.name)
         .map((item) => ({
@@ -225,9 +229,7 @@ app.post(
           upcs: item.upcs,
           line_item_measurements: item.measurements?.map((m) => ({
             quantity:
-              typeof m.quantity === "number" && m.quantity > 0
-                ? m.quantity
-                : 1,
+              typeof m.quantity === "number" && m.quantity > 0 ? m.quantity : 1,
             unit: m.unit || "each",
           })),
           filters: item.filters,
@@ -273,7 +275,8 @@ app.post(
         Authorization: `Bearer ${apiKey}`,
       };
 
-      const instacartResp = await fetch(
+      // ---------- 1) Call /products/products_link (shopping list) ----------
+      const productsResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
           method: "POST",
@@ -282,65 +285,230 @@ app.post(
         }
       );
 
-      const instacartText = await instacartResp.text();
-      let instacartData: any;
+      const productsText = await productsResp.text();
+      let productsData: any;
       try {
-        instacartData = JSON.parse(instacartText);
+        productsData = JSON.parse(productsText);
       } catch {
-        instacartData = null;
+        productsData = null;
       }
 
-      console.log("Instacart response status:", instacartResp.status);
-      console.log("Instacart response body:", instacartText);
+      console.log("Instacart products_link status:", productsResp.status);
+      console.log("Instacart products_link body:", productsText);
 
-      if (!instacartResp.ok) {
+      if (!productsResp.ok) {
         let message = "";
 
-        if (instacartResp.status === 403) {
+        if (productsResp.status === 403) {
           message =
             "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. " +
             "Please confirm that Product Links / Shopping List Pages are enabled for this key.";
-        } else if (instacartData && typeof instacartData === "object") {
-          if (instacartData.error && typeof instacartData.error === "object") {
+        } else if (productsData && typeof productsData === "object") {
+          if (productsData.error && typeof productsData.error === "object") {
             message =
-              instacartData.error.message ||
-              JSON.stringify(instacartData.error).slice(0, 200);
+              productsData.error.message ||
+              JSON.stringify(productsData.error).slice(0, 200);
           } else {
             message =
-              instacartData.error ||
-              instacartData.message ||
-              (Array.isArray(instacartData.errors) &&
-                instacartData.errors[0]?.message) ||
-              JSON.stringify(instacartData).slice(0, 200);
+              productsData.error ||
+              productsData.message ||
+              (Array.isArray(productsData.errors) &&
+                productsData.errors[0]?.message) ||
+              JSON.stringify(productsData).slice(0, 200);
           }
-        } else if (typeof instacartText === "string") {
-          message = instacartText.slice(0, 200);
+        } else if (typeof productsText === "string") {
+          message = productsText.slice(0, 200);
         }
 
         if (!message) {
-          message = `HTTP ${instacartResp.status}`;
+          message = `HTTP ${productsResp.status}`;
         }
 
-        return res.status(instacartResp.status).json({
+        return res.status(productsResp.status).json({
           ok: false,
           error: `Instacart: ${message}`,
-          status: instacartResp.status,
-          details: instacartData || instacartText,
+          status: productsResp.status,
+          details: productsData || productsText,
         });
       }
 
-      const productsLinkUrl = instacartData?.products_link_url;
+      const productsLinkUrl = productsData?.products_link_url;
       if (!productsLinkUrl) {
         return res.status(500).json({
           ok: false,
           error: "Instacart did not return products_link_url",
-          details: instacartData || instacartText,
+          details: productsData || productsText,
         });
       }
 
+      // ---------- 2) Call /products/recipe (recipe page) ----------
+      let recipeProductsLinkUrl: string | null = null;
+      let recipeError: string | null = null;
+
+      try {
+        // Map to Recipe "ingredients" format
+        const recipeIngredients = instacartLineItems.map((li) => ({
+          name: li.name,
+          display_text: li.display_text,
+          product_ids: li.product_ids,
+          upcs: li.upcs,
+          measurements:
+            li.line_item_measurements && li.line_item_measurements.length
+              ? li.line_item_measurements.map((m) => ({
+                  quantity: m.quantity,
+                  unit: m.unit,
+                }))
+              : [
+                  {
+                    quantity: li.quantity ?? 1,
+                    unit: li.unit || "each",
+                  },
+                ],
+          filters: li.filters,
+        }));
+
+        const meta = body.meta || {};
+        const recipeTitle =
+          typeof meta.recipeTitle === "string" && meta.recipeTitle.trim()
+            ? meta.recipeTitle.trim()
+            : "Heirclark 7-Day Nutrition Plan";
+
+        const recipeInstructions: string[] = Array.isArray(
+          meta.recipeInstructions
+        )
+          ? meta.recipeInstructions.map((s: any) => String(s))
+          : [
+              "Built from your Heirclark Wellness Plan 7-day nutrition recommendations.",
+            ];
+
+        const recipePayload: any = {
+          title: recipeTitle,
+          ingredients: recipeIngredients,
+          instructions: recipeInstructions,
+        };
+
+        if (typeof meta.servings === "number" && meta.servings > 0) {
+          recipePayload.servings = meta.servings;
+        }
+
+        if (
+          typeof meta.cooking_time === "number" &&
+          meta.cooking_time > 0
+        ) {
+          recipePayload.cooking_time = meta.cooking_time;
+        }
+
+        if (
+          typeof meta.author === "string" &&
+          meta.author.trim().length > 0
+        ) {
+          recipePayload.author = meta.author.trim();
+        }
+
+        if (
+          typeof meta.image_url === "string" &&
+          meta.image_url.trim().length > 0
+        ) {
+          recipePayload.image_url = meta.image_url.trim();
+        }
+
+        if (
+          typeof meta.external_reference_id === "string" &&
+          meta.external_reference_id.trim().length > 0
+        ) {
+          recipePayload.external_reference_id =
+            meta.external_reference_id.trim();
+        }
+
+        if (
+          typeof meta.content_creator_credit_info === "string" &&
+          meta.content_creator_credit_info.trim().length > 0
+        ) {
+          recipePayload.content_creator_credit_info =
+            meta.content_creator_credit_info.trim();
+        }
+
+        if (
+          typeof meta.expires_in === "number" &&
+          meta.expires_in > 0 &&
+          meta.expires_in <= 365
+        ) {
+          recipePayload.expires_in = meta.expires_in;
+        }
+
+        if (partnerLinkbackUrl) {
+          recipePayload.landing_page_configuration = {
+            partner_linkback_url: partnerLinkbackUrl,
+            enable_pantry_items: true,
+          };
+        }
+
+        const recipeResp = await fetch(
+          `${apiBase.replace(/\/$/, "")}/idp/v1/products/recipe`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(recipePayload),
+          }
+        );
+
+        const recipeText = await recipeResp.text();
+        let recipeData: any;
+        try {
+          recipeData = JSON.parse(recipeText);
+        } catch {
+          recipeData = null;
+        }
+
+        console.log("Instacart recipe status:", recipeResp.status);
+        console.log("Instacart recipe body:", recipeText);
+
+        if (!recipeResp.ok) {
+          let msg = "";
+
+          if (recipeData && typeof recipeData === "object") {
+            if (recipeData.error && typeof recipeData.error === "object") {
+              msg =
+                recipeData.error.message ||
+                JSON.stringify(recipeData.error).slice(0, 200);
+            } else {
+              msg =
+                recipeData.error ||
+                recipeData.message ||
+                (Array.isArray(recipeData.errors) &&
+                  recipeData.errors[0]?.message) ||
+                JSON.stringify(recipeData).slice(0, 200);
+            }
+          } else if (typeof recipeText === "string") {
+            msg = recipeText.slice(0, 200);
+          }
+
+          if (!msg) {
+            msg = `HTTP ${recipeResp.status}`;
+          }
+
+          recipeError = `Instacart recipe error: ${msg}`;
+        } else {
+          const maybeRecipeUrl = recipeData?.products_link_url;
+          if (maybeRecipeUrl && typeof maybeRecipeUrl === "string") {
+            recipeProductsLinkUrl = maybeRecipeUrl;
+          } else {
+            recipeError =
+              "Instacart recipe endpoint did not return products_link_url";
+          }
+        }
+      } catch (err) {
+        console.error("Error calling Instacart /products/recipe:", err);
+        recipeError = "Server error while calling Instacart recipe endpoint";
+      }
+
+      // Final response: always include products_link_url (if we got this far),
+      // plus recipe_products_link_url if available.
       return res.status(200).json({
         ok: true,
         products_link_url: productsLinkUrl,
+        recipe_products_link_url: recipeProductsLinkUrl,
+        ...(recipeError ? { recipe_error: recipeError } : {}),
       });
     } catch (err) {
       console.error("Handler error in /proxy/build-list:", err);
