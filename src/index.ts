@@ -70,11 +70,7 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
       generatedAt: new Date().toISOString(),
       constraints,
       days,
-      // @ts-expect-error – WeekPlan may not formally have recipes yet,
-      // but we add it so hc-seven-day-plan.js can check safely.
-      recipes: [],
-    } as unknown as WeekPlan;
-  }
+    
 }
 
 // This helper now asks OpenAI to return a WeekPlan that includes:
