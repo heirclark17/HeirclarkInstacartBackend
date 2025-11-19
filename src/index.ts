@@ -214,21 +214,21 @@ async function callOpenAiMealPlan(
   };
 
   const payload = {
-    model: OPENAI_MODEL,
-    temperature: 0.6,
-    max_output_tokens: 2048,
-    // Responses API uses `input` instead of `messages`
-    input: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: JSON.stringify(userPayload) },
-    ],
-    // <<< IMPORTANT: this replaces `response_format` in Responses API
-    text: {
-      format: {
-        type: "json", // ask model to emit JSON as plain text
-      },
+  model: OPENAI_MODEL,
+  temperature: 0.6,
+  max_output_tokens: 2048,
+  input: [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: JSON.stringify(userPayload) },
+  ],
+  // ✅ Responses API JSON setting – this replaces `response_format`
+  text: {
+    format: {
+      type: "json",
     },
-  };
+  },
+};
+
 
   console.log("Calling OpenAI /v1/responses with model:", OPENAI_MODEL, {
     timeoutMs,
