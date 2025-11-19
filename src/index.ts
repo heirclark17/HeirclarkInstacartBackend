@@ -81,12 +81,16 @@ function fetchWithTimeout(
   options: any,
   timeoutMs: number
 ): Promise<globalThis.Response> {
-  const controller = new AbortController();
+  const controller = new AbortSignal().constructor === AbortSignal
+    ? new AbortController()
+    : new (AbortController as any)();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
-    clearTimeout(timer);
-  });
+  return fetch(url, { ...options, signal: (controller as any).signal }).finally(
+    () => {
+      clearTimeout(timer);
+    }
+  );
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
@@ -247,6 +251,8 @@ async function callOpenAiMealPlan(
   }
 
   let plan: WeekPlan;
+
+  // NEW: if JSON is invalid or truncated, log it and FALL BACK instead of crashing
   try {
     console.log("RAW_OPENAI_CONTENT_START");
     console.log(content);
@@ -254,14 +260,26 @@ async function callOpenAiMealPlan(
 
     plan = JSON.parse(content);
   } catch (err) {
-    console.error("Failed to parse OpenAI JSON:", err, "raw:", content);
-    throw new Error("Failed to parse OpenAI meal plan JSON");
+    console.error(
+      "Failed to parse OpenAI JSON, falling back to local plan. Error:",
+      err
+    );
+    // Use local deterministic generator so your UI still gets a 7-day plan
+    const fallback = buildFallbackWeekPlan(constraints);
+    // Mark it as AI-ish so frontend still treats it like a plan
+    (fallback as any).mode = "fallback_ai_json_error";
+    return fallback;
   }
 
   const anyPlan = plan as any;
   if (!anyPlan || !Array.isArray(anyPlan.days)) {
-    console.error("OpenAI JSON did not include days[] as expected:", plan);
-    throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
+    console.error(
+      "OpenAI JSON did not include days[] as expected, falling back:",
+      plan
+    );
+    const fallback = buildFallbackWeekPlan(constraints);
+    (fallback as any).mode = "fallback_ai_shape_error";
+    return fallback;
   }
 
   if (!Array.isArray(anyPlan.recipes)) {
