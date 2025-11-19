@@ -3,7 +3,8 @@
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 
-// ---- AI Meal Plan imports ----
+// If you already have these types/services defined, keep these imports.
+// They’re used as a fallback if OpenAI is not configured or fails.
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
 import {
   generateWeekPlan,
@@ -14,15 +15,343 @@ import {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ======================================================================
-//                          HEALTH / ROOT
+//                         AI MEAL PLAN HELPERS
+// ======================================================================
+
+// Build a safe, minimal WeekPlan skeleton in case OpenAI fails
+function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
+  // Use your existing generator if available
+  try {
+    return generateWeekPlan(constraints);
+  } catch {
+    const days = Array.from({ length: 7 }).map((_, i) => ({
+      dayIndex: i,
+      label: `Day ${i + 1}`,
+      note:
+        "Fallback meal framework — detailed AI recipes were unavailable. Use this as a structure for your own meals.",
+      meals: [
+        {
+          type: "breakfast",
+          title: "High-protein breakfast",
+          calories: Math.round((constraints.dailyCalories || 0) * 0.25),
+          protein: Math.round((constraints.proteinGrams || 0) * 0.3),
+          carbs: Math.round((constraints.carbsGrams || 0) * 0.25),
+          fats: Math.round((constraints.fatsGrams || 0) * 0.25),
+        },
+        {
+          type: "lunch",
+          title: "Balanced lunch",
+          calories: Math.round((constraints.dailyCalories || 0) * 0.35),
+          protein: Math.round((constraints.proteinGrams || 0) * 0.35),
+          carbs: Math.round((constraints.carbsGrams || 0) * 0.35),
+          fats: Math.round((constraints.fatsGrams || 0) * 0.35),
+        },
+        {
+          type: "dinner",
+          title: "Evening plate",
+          calories: Math.round((constraints.dailyCalories || 0) * 0.4),
+          protein: Math.round((constraints.proteinGrams || 0) * 0.35),
+          carbs: Math.round((constraints.carbsGrams || 0) * 0.4),
+          fats: Math.round((constraints.fatsGrams || 0) * 0.4),
+        },
+      ],
+    }));
+
+    return {
+      mode: "fallback",
+      generatedAt: new Date().toISOString(),
+      constraints,
+      days,
+    } as unknown as WeekPlan;
+  }
+}
+
+async function callOpenAiMealPlan(
+  constraints: UserConstraints,
+  pantry?: string[]
+): Promise<WeekPlan> {
+  if (!OPENAI_API_KEY) {
+    console.warn("OPENAI_API_KEY is not set – using fallback week plan.");
+    return buildFallbackWeekPlan(constraints);
+  }
+
+  const payload = {
+    model: OPENAI_MODEL,
+    temperature: 0.6,
+    response_format: { type: "json_object" as const },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a nutrition coach creating detailed, practical 7-day meal plans. " +
+          "Return ONLY valid JSON matching the schema I give you. Do not include markdown.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions:
+            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill.",
+          constraints,
+          pantry: pantry || [],
+          schema: {
+            mode: "ai",
+            generatedAt: "ISO 8601 timestamp string",
+            constraints: "Echo of the inputs you received",
+            days: [
+              {
+                dayIndex: "0-based index (0–6)",
+                label: "e.g., 'Day 1' or 'Monday'",
+                note: "Short motivational or practical note for the day",
+                meals: [
+                  {
+                    type: "breakfast | lunch | dinner",
+                    title:
+                      "Short recipe name, e.g., 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
+                    calories: "number (approx calories for this meal)",
+                    protein: "grams of protein",
+                    carbs: "grams of carbs",
+                    fats: "grams of fats",
+                    portionLabel:
+                      "optional; e.g., '6 oz', '1 bowl', '1 plate' (used inline next to title)",
+                    portionOz:
+                      "optional; numeric oz value if relevant (e.g., 6)",
+                    notes:
+                      "optional; 1-2 sentence instructions or reminders for the meal",
+                    ingredients:
+                      "optional; array of ingredient strings for shopping list",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      },
+    ],
+  };
+
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.error("OpenAI /chat/completions error:", resp.status, txt);
+    throw new Error(`OpenAI error: HTTP ${resp.status}`);
+  }
+
+  const json = await resp.json();
+  const content = json?.choices?.[0]?.message?.content;
+
+  if (!content || typeof content !== "string") {
+    console.error("OpenAI response missing content:", json);
+    throw new Error("OpenAI response missing content");
+  }
+
+  let plan: WeekPlan;
+  try {
+    plan = JSON.parse(content);
+  } catch (err) {
+    console.error("Failed to parse OpenAI JSON:", err, "raw:", content);
+    throw new Error("Failed to parse OpenAI meal plan JSON");
+  }
+
+  // Make sure basic fields exist
+  if (!plan || !Array.isArray((plan as any).days)) {
+    console.error("OpenAI JSON did not match expected WeekPlan shape:", plan);
+    throw new Error("Invalid WeekPlan shape from OpenAI");
+  }
+
+  return plan;
+}
+
+// Shared handler so we can mount it on both /api/meal-plan and /proxy/meal-plan
+async function handleAiMealPlan(req: Request, res: Response) {
+  try {
+    const constraints = req.body as UserConstraints;
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.proteinGrams !== "number" ||
+      typeof constraints.carbsGrams !== "number" ||
+      typeof constraints.fatsGrams !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints. Expected dailyCalories, proteinGrams, carbsGrams, fatsGrams as numbers.",
+      });
+    }
+
+    let weekPlan: WeekPlan;
+
+    try {
+      weekPlan = await callOpenAiMealPlan(constraints);
+    } catch (err) {
+      console.error("OpenAI meal plan generation failed, using fallback:", err);
+      weekPlan = buildFallbackWeekPlan(constraints);
+    }
+
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err: any) {
+    console.error("Error in AI meal plan handler:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate AI meal plan",
+    });
+  }
+}
+
+// ======================================================================
+//                      AI MEAL PLAN API ENDPOINTS
+// ======================================================================
+
+// Primary REST endpoint (used if you call Railway directly)
+app.post("/api/meal-plan", handleAiMealPlan);
+
+// App Proxy endpoint under /apps/instacart/meal-plan → /proxy/meal-plan
+app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
+
+// POST /api/meal-plan/adjust
+// body: { weekPlan, actualIntake: { [date]: { caloriesDelta: number } } }
+app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
+  try {
+    const { weekPlan, actualIntake } = req.body as {
+      weekPlan: WeekPlan;
+      actualIntake: Record<string, { caloriesDelta: number }>;
+    };
+
+    if (!weekPlan || !Array.isArray((weekPlan as any).days)) {
+      return res.status(400).json({
+        ok: false,
+        error: "weekPlan with days[] is required.",
+      });
+    }
+
+    if (!actualIntake || typeof actualIntake !== "object") {
+      return res.status(400).json({
+        ok: false,
+        error: "actualIntake map is required.",
+      });
+    }
+
+    const adjusted = adjustWeekPlan(weekPlan, actualIntake);
+    return res.status(200).json({ ok: true, weekPlan: adjusted });
+  } catch (err: any) {
+    console.error("Error in /api/meal-plan/adjust:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to adjust meal plan",
+    });
+  }
+});
+
+// POST /api/meal-plan/from-pantry
+// body: { constraints, pantry: string[] }
+app.post("/api/meal-plan/from-pantry", async (req: Request, res: Response) => {
+  try {
+    const { constraints, pantry } = req.body as {
+      constraints: UserConstraints;
+      pantry: string[];
+    };
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.budgetPerDay !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
+      });
+    }
+
+    if (!Array.isArray(pantry)) {
+      return res.status(400).json({
+        ok: false,
+        error: "pantry must be an array of strings.",
+      });
+    }
+
+    let weekPlan: WeekPlan;
+    try {
+      weekPlan = await callOpenAiMealPlan(constraints, pantry);
+    } catch (err) {
+      console.error(
+        "OpenAI pantry-based meal plan failed, using local fallback:",
+        err
+      );
+      weekPlan = generateFromPantry(constraints, pantry);
+    }
+
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err: any) {
+    console.error("Error in /api/meal-plan/from-pantry:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate from pantry",
+    });
+  }
+});
+
+// ======================================================================
+//                      INSTACART / APP PROXY ROUTES
+// ======================================================================
+
+// ---------- Types for Instacart payload ----------
+interface HcItem {
+  name: string;
+  quantity?: number;
+  unit?: string;
+  category?: string;
+  pantry?: boolean;
+  displayText?: string;
+  productIds?: number[];
+  upcs?: string[];
+  measurements?: Array<{ quantity?: number; unit?: string }>;
+  filters?: {
+    brand_filters?: string[];
+    health_filters?: string[];
+  };
+}
+
+interface HcRequestBody {
+  meta?: any;
+  days?: any[];
+  items?: HcItem[];
+  lineItems?: HcItem[];
+  recipeLandingUrl?: string;
+  retailerKey?: string | null; // selected retailer from store picker (optional)
+}
+
+// ======================================================================
+//                 ROOT HEALTH + BASIC DEBUG ENDPOINTS
 // ======================================================================
 
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
+});
+
+// Simple open GET ping for App Proxy (debug only)
+app.get("/proxy/build-list", (req: Request, res: Response) => {
+  res.status(200).json({
+    ok: true,
+    via: "app-proxy",
+    ping: req.query.ping ?? null,
+  });
 });
 
 // ======================================================================
@@ -72,172 +401,9 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
 }
 
 // ======================================================================
-//                            TYPES (INSTACART)
+//                      INSTACART RETAILERS ENDPOINT
 // ======================================================================
 
-interface HcItem {
-  name: string;
-  quantity?: number;
-  unit?: string;
-  category?: string;
-  pantry?: boolean;
-  displayText?: string;
-  productIds?: number[];
-  upcs?: string[];
-  measurements?: Array<{ quantity?: number; unit?: string }>;
-  filters?: {
-    brand_filters?: string[];
-    health_filters?: string[];
-  };
-}
-
-interface HcRequestBody {
-  meta?: any;
-  days?: any[];
-  items?: HcItem[];
-  lineItems?: HcItem[];
-  recipeLandingUrl?: string;
-  retailerKey?: string | null;
-}
-
-// ======================================================================
-//                      AI MEAL PLAN CORE HANDLERS
-// ======================================================================
-// We implement handlers once, then mount them under:
-//   - /api/meal-plan*   (direct backend calls)
-//   - /proxy/meal-plan* (Shopify App Proxy via /apps/instacart/...)
-//
-// On Shopify side, calls should be:
-//   POST /apps/instacart/meal-plan
-//   POST /apps/instacart/meal-plan/adjust
-//   POST /apps/instacart/meal-plan/from-pantry
-// ======================================================================
-
-function handleGenerateMealPlan(req: Request, res: Response) {
-  try {
-    const constraints = req.body as UserConstraints;
-
-    if (
-      !constraints ||
-      typeof constraints.dailyCalories !== "number" ||
-      typeof constraints.budgetPerDay !== "number"
-    ) {
-      return res.status(400).json({
-        ok: false,
-        error:
-          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
-      });
-    }
-
-    const weekPlan: WeekPlan = generateWeekPlan(constraints);
-    return res.status(200).json({ ok: true, weekPlan });
-  } catch (err: any) {
-    console.error("Error in generateMealPlan:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "Failed to generate meal plan",
-    });
-  }
-}
-
-function handleAdjustMealPlan(req: Request, res: Response) {
-  try {
-    const { weekPlan, actualIntake } = req.body as {
-      weekPlan: WeekPlan;
-      actualIntake: Record<string, { caloriesDelta: number }>;
-    };
-
-    if (!weekPlan || !Array.isArray(weekPlan.days)) {
-      return res.status(400).json({
-        ok: false,
-        error: "weekPlan with days[] is required.",
-      });
-    }
-
-    if (!actualIntake || typeof actualIntake !== "object") {
-      return res.status(400).json({
-        ok: false,
-        error: "actualIntake map is required.",
-      });
-    }
-
-    const adjusted = adjustWeekPlan(weekPlan, actualIntake);
-    return res.status(200).json({ ok: true, weekPlan: adjusted });
-  } catch (err: any) {
-    console.error("Error in adjustMealPlan:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "Failed to adjust meal plan",
-    });
-  }
-}
-
-function handleMealPlanFromPantry(req: Request, res: Response) {
-  try {
-    const { constraints, pantry } = req.body as {
-      constraints: UserConstraints;
-      pantry: string[];
-    };
-
-    if (
-      !constraints ||
-      typeof constraints.dailyCalories !== "number" ||
-      typeof constraints.budgetPerDay !== "number"
-    ) {
-      return res.status(400).json({
-        ok: false,
-        error:
-          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
-      });
-    }
-
-    if (!Array.isArray(pantry)) {
-      return res.status(400).json({
-        ok: false,
-        error: "pantry must be an array of strings.",
-      });
-    }
-
-    const weekPlan: WeekPlan = generateFromPantry(constraints, pantry);
-    return res.status(200).json({ ok: true, weekPlan });
-  } catch (err: any) {
-    console.error("Error in mealPlanFromPantry:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "Failed to generate from pantry",
-    });
-  }
-}
-
-// ---------- Direct API (not via Shopify proxy) ----------
-app.post("/api/meal-plan", handleGenerateMealPlan);
-app.post("/api/meal-plan/adjust", handleAdjustMealPlan);
-app.post("/api/meal-plan/from-pantry", handleMealPlanFromPantry);
-
-// ---------- Shopify App Proxy versions ----------
-// Shopify: /apps/instacart/meal-plan → backend: /proxy/meal-plan
-app.post("/proxy/meal-plan", verifyAppProxy, handleGenerateMealPlan);
-app.post("/proxy/meal-plan/adjust", verifyAppProxy, handleAdjustMealPlan);
-app.post(
-  "/proxy/meal-plan/from-pantry",
-  verifyAppProxy,
-  handleMealPlanFromPantry
-);
-
-// ======================================================================
-//                  INSTACART / APP PROXY ROUTES (EXISTING)
-// ======================================================================
-
-// Simple debug GET for proxy root: /apps/instacart?ping=1
-app.get("/proxy/build-list", (req: Request, res: Response) => {
-  res.status(200).json({
-    ok: true,
-    via: "app-proxy",
-    ping: req.query.ping ?? null,
-  });
-});
-
-// ---------- GET /proxy/retailers (store picker support) ----------
 app.get(
   "/proxy/retailers",
   verifyAppProxy,
@@ -314,7 +480,10 @@ app.get(
   }
 );
 
-// ---------- POST /proxy/build-list (App Proxy) ----------
+// ======================================================================
+//                      INSTACART BUILD-LIST ENDPOINT
+// ======================================================================
+
 app.post(
   "/proxy/build-list",
   verifyAppProxy,
@@ -413,7 +582,7 @@ app.post(
         Authorization: `Bearer ${apiKey}`,
       };
 
-      // 1) Shopping list / products_link
+      // ---------- 1) /products/products_link ----------
       const productsResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
@@ -439,7 +608,8 @@ app.post(
 
         if (productsResp.status === 403) {
           message =
-            "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. Please confirm that Product Links / Shopping List Pages are enabled for this key.";
+            "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. " +
+            "Please confirm that Product Links / Shopping List Pages are enabled for this key.";
         } else if (productsData && typeof productsData === "object") {
           if (productsData.error && typeof productsData.error === "object") {
             message =
@@ -478,7 +648,7 @@ app.post(
         });
       }
 
-      // 2) Optional recipe link
+      // ---------- 2) /products/recipe ----------
       let recipeProductsLinkUrl: string | null = null;
       let recipeError: string | null = null;
 
@@ -527,17 +697,11 @@ app.post(
           recipePayload.servings = meta.servings;
         }
 
-        if (
-          typeof meta.cooking_time === "number" &&
-          meta.cooking_time > 0
-        ) {
+        if (typeof meta.cooking_time === "number" && meta.cooking_time > 0) {
           recipePayload.cooking_time = meta.cooking_time;
         }
 
-        if (
-          typeof meta.author === "string" &&
-          meta.author.trim().length > 0
-        ) {
+        if (typeof meta.author === "string" && meta.author.trim().length > 0) {
           recipePayload.author = meta.author.trim();
         }
 
@@ -655,7 +819,7 @@ app.post(
 );
 
 // ======================================================================
-//                        START SERVER
+//                      START SERVER
 // ======================================================================
 
 app.listen(PORT, () => {
