@@ -93,6 +93,7 @@ function fetchWithTimeout(
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -105,7 +106,8 @@ async function callOpenAiMealPlan(
   const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
-    // Simple JSON output – no custom named schema (avoids 400 errors)
+    // Simpler + safer: let OpenAI return ANY valid JSON object
+    // and we validate it ourselves.
     response_format: { type: "json_object" as const },
     messages: [
       {
@@ -113,7 +115,9 @@ async function callOpenAiMealPlan(
         content:
           "You are a nutrition coach creating detailed, practical 7-day meal plans " +
           "for a health + grocery shopping app. " +
-          "Return ONLY valid JSON (no markdown).",
+          "Return ONLY valid JSON (no markdown). " +
+          "Include both a day-level view (days) and a recipes list (recipes) " +
+          "so the app can generate a grocery list.",
       },
       {
         role: "user",
@@ -123,82 +127,6 @@ async function callOpenAiMealPlan(
             "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
           constraints,
           pantry: pantry || [],
-          // Shape hint so the model knows what fields to include
-          shape_hint: {
-            mode: "ai",
-            generatedAt: "ISO 8601 timestamp string",
-            constraints: {
-              // echo of inputs (dailyCalories, macros, budget, etc.)
-            },
-            days: [
-              {
-                day: "1–7 (1-based index)",
-                index: "0–6 (optional; 0-based index)",
-                isoDate: "YYYY-MM-DD (optional)",
-                label: "e.g. 'Day 1 • Monday'",
-                note: "Short motivational or practical note",
-                meals: [
-                  {
-                    type: "breakfast | lunch | dinner (lowercase)",
-                    recipeId: "string id referencing recipes[].id",
-                    title:
-                      "Short name such as 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
-                    calories: "number (approx calories for this meal)",
-                    protein: "number (grams of protein)",
-                    carbs: "number (grams of carbs)",
-                    fats: "number (grams of fats)",
-                    portionLabel:
-                      "optional; e.g. '6 oz', '1 bowl', '1 plate'",
-                    portionOz: "optional; numeric ounces (e.g. 6)",
-                    servings: "optional; number of servings, default 1",
-                    notes:
-                      "optional; 1–2 sentence instructions or reminders for the meal",
-                  },
-                ],
-              },
-            ],
-            recipes: [
-              {
-                id: "unique string id; must match meals[].recipeId",
-                name:
-                  "Recipe title, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
-                mealType:
-                  "optional; 'breakfast' | 'lunch' | 'dinner' | other string",
-                defaultServings:
-                  "optional; number of servings per recipe (e.g. 2)",
-                tags:
-                  "optional; e.g. ['high_protein','plate_method','quick']",
-                ingredients: [
-                  {
-                    id: "optional ingredient id; can be omitted",
-                    name:
-                      "ingredient name, e.g. 'Salmon fillet' (used for display and Instacart)",
-                    quantity:
-                      "number or string representing amount per SERVING (e.g. 6, '1 cup')",
-                    unit:
-                      "unit like 'oz', 'cup', 'tbsp', 'each', 'medium', etc.",
-                    instacart_query:
-                      "optional; search string to use for Instacart, defaults to name if omitted",
-                    category:
-                      "optional; e.g. 'protein', 'carb', 'veggie', 'fruit', 'fat', etc.",
-                    pantry:
-                      "optional boolean; true if typically a pantry item (oil, spices)",
-                    optional:
-                      "optional boolean; true if user could skip this ingredient",
-                    displayText:
-                      "optional; nicer display label like 'Salmon fillet (fresh)'",
-                    productIds:
-                      "optional array of numeric or string product IDs (if known)",
-                    upcs: "optional array of UPC strings (if known)",
-                    measurements:
-                      "optional; e.g. [{ quantity: 6, unit: 'oz' }]",
-                    filters:
-                      "optional object for constraints, e.g. { organic: true }",
-                  },
-                ],
-              },
-            ],
-          },
         }),
       },
     ],
@@ -228,7 +156,7 @@ async function callOpenAiMealPlan(
   const raw = (await resp.json()) as any;
   const msg = raw?.choices?.[0]?.message;
 
-  // Log a trimmed view of the raw message so we can debug in Railway
+  // Log a trimmed view so we can debug in Railway without spamming
   try {
     console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
   } catch {
@@ -238,11 +166,10 @@ async function callOpenAiMealPlan(
   let planAny: any;
 
   if (msg?.parsed) {
-    // Newer OpenAI responses can put JSON directly in message.parsed
+    // Newer APIs sometimes put JSON directly here
     console.log("Using OpenAI message.parsed as WeekPlan");
     planAny = msg.parsed;
   } else if (typeof msg?.content === "string") {
-    // Classic: JSON string in message.content
     const content = msg.content.trim();
     console.log("RAW_OPENAI_CONTENT_START");
     console.log(content.slice(0, 2000));
