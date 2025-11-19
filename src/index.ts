@@ -210,6 +210,10 @@ async function callOpenAiMealPlan(
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
 // ======================================================================
 
+// ======================================================================
+//                      AI MEAL PLAN HANDLER + ENDPOINTS
+// ======================================================================
+
 async function handleAiMealPlan(req: Request, res: Response) {
   try {
     const constraints = req.body as UserConstraints;
@@ -228,10 +232,10 @@ async function handleAiMealPlan(req: Request, res: Response) {
       });
     }
 
-      let weekPlan: WeekPlan;
+    let weekPlan: WeekPlan;
 
+    // 🚫 No fallback here – AI only
     try {
-      // ✅ Only ever use the AI plan here
       weekPlan = await callOpenAiMealPlan(constraints);
       console.log("AI_WEEKPLAN_OK");
     } catch (err: any) {
@@ -244,7 +248,6 @@ async function handleAiMealPlan(req: Request, res: Response) {
         lower.includes("aborted") ||
         lower.includes("timeout");
 
-      // ❌ No fallback — surface the error to the frontend
       return res.status(isAbort ? 504 : 500).json({
         ok: false,
         error: msg || "Failed while generating AI 7-day meal plan.",
@@ -257,10 +260,6 @@ async function handleAiMealPlan(req: Request, res: Response) {
       weekPlan,
       mode: "ai",
     });
-
-    }
-
-    return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
     console.error("Error in AI meal plan handler:", err);
     return res.status(500).json({
@@ -269,6 +268,7 @@ async function handleAiMealPlan(req: Request, res: Response) {
     });
   }
 }
+
 
 app.post("/api/meal-plan", handleAiMealPlan);
 app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
