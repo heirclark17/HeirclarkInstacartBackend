@@ -15,6 +15,59 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+// ---- AI Smart Meal Plan endpoint ----
+app.post("/api/meal-plan", (req, res) => {
+  try {
+    const {
+      dailyCalories,
+      proteinGrams,
+      carbsGrams,
+      fatsGrams,
+      budgetPerDay,
+      allergies,
+      skillLevel,
+    } = req.body || {};
+
+    if (!dailyCalories || !proteinGrams || !carbsGrams || !fatsGrams) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing macro targets – run the wellness calculator first.",
+      });
+    }
+
+    // For now, return a simple placeholder “AI plan” structure.
+    // You can later plug real AI logic into this.
+    const weekPlan = {
+      mode: "ai",
+      generatedAt: new Date().toISOString(),
+      constraints: {
+        dailyCalories,
+        proteinGrams,
+        carbsGrams,
+        fatsGrams,
+        budgetPerDay,
+        allergies,
+        skillLevel,
+      },
+      days: Array.from({ length: 7 }).map((_, i) => ({
+        dayIndex: i,
+        label: `Day ${i + 1}`,
+        note:
+          "AI meal planning placeholder — recipes will be added when the AI backend is wired up.",
+        meals: [],
+      })),
+    };
+
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err) {
+    console.error("Error in /api/meal-plan:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "Internal server error while building smart meal plan.",
+    });
+  }
+});
+
 app.use(express.urlencoded({ extended: true }));
 
 // ---------- Root health ----------
