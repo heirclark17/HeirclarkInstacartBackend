@@ -251,6 +251,10 @@ async function callOpenAiMealPlan(
 
   let plan: WeekPlan;
   try {
+    console.log("RAW_OPENAI_CONTENT_START");
+    console.log(content);
+    console.log("RAW_OPENAI_CONTENT_END");
+
     plan = JSON.parse(content);
   } catch (err) {
     console.error("Failed to parse OpenAI JSON:", err, "raw:", content);
