@@ -43,6 +43,7 @@ function fetchWithTimeout(
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -55,18 +56,136 @@ async function callOpenAiMealPlan(
   const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
-    // Simpler + safer: let OpenAI return ANY valid JSON object
-    // and we validate it ourselves.
-    response_format: { type: "json_object" as const },
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "week_plan",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: { type: "string" },
+            generatedAt: { type: "string" },
+            constraints: { type: "object" },
+            days: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                properties: {
+                  day: { anyOf: [{ type: "integer" }, { type: "string" }] },
+                  index: { anyOf: [{ type: "integer" }, { type: "string" }] },
+                  isoDate: { type: "string" },
+                  label: { type: "string" },
+                  note: { type: "string" },
+                  meals: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      additionalProperties: true,
+                      properties: {
+                        type: { type: "string" },
+                        name: { type: "string" },
+                        recipeId: { type: "string" },
+                        title: { type: "string" },
+                        calories: { type: "number" },
+                        protein: { type: "number" },
+                        carbs: { type: "number" },
+                        fats: { type: "number" },
+                        portionLabel: { type: "string" },
+                        portionOz: { type: "number" },
+                        servings: { type: "number" },
+                        notes: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            recipes: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                properties: {
+                  id: { type: "string" },
+                  name: { type: "string" },
+                  title: { type: "string" },
+                  mealType: { type: "string" },
+                  defaultServings: { type: "number" },
+                  tags: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                  ingredients: {
+                    type: "array",
+                    items: {
+                      anyOf: [
+                        { type: "string" },
+                        {
+                          type: "object",
+                          additionalProperties: true,
+                          properties: {
+                            id: { type: "string" },
+                            name: { type: "string" },
+                            quantity: {
+                              anyOf: [{ type: "number" }, { type: "string" }],
+                            },
+                            unit: { type: "string" },
+                            instacart_query: { type: "string" },
+                            category: { type: "string" },
+                            pantry: { type: "boolean" },
+                            optional: { type: "boolean" },
+                            displayText: { type: "string" },
+                            productIds: {
+                              type: "array",
+                              items: {
+                                anyOf: [
+                                  { type: "number" },
+                                  { type: "string" },
+                                ],
+                              },
+                            },
+                            upcs: {
+                              type: "array",
+                              items: { type: "string" },
+                            },
+                            measurements: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                additionalProperties: true,
+                                properties: {
+                                  quantity: { type: "number" },
+                                  unit: { type: "string" },
+                                },
+                              },
+                            },
+                            filters: {
+                              type: "object",
+                              additionalProperties: true,
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          required: ["days", "recipes"],
+        },
+      },
+    } as const,
     messages: [
       {
         role: "system",
         content:
           "You are a nutrition coach creating detailed, practical 7-day meal plans " +
           "for a health + grocery shopping app. " +
-          "Return ONLY valid JSON (no markdown). " +
-          "Include both a day-level view (days) and a recipes list (recipes) " +
-          "so the app can generate a grocery list.",
+          "Return ONLY JSON that matches the provided JSON schema.",
       },
       {
         role: "user",
@@ -105,54 +224,147 @@ async function callOpenAiMealPlan(
   const raw = (await resp.json()) as any;
   const msg = raw?.choices?.[0]?.message;
 
-  // Log a trimmed view so we can debug in Railway without spamming
   try {
     console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
   } catch {
     console.log("OPENAI_RAW_MESSAGE (non-serializable)", raw);
   }
 
-  let planAny: any;
+  let aiJson: any;
 
   if (msg?.parsed) {
-    // Newer APIs sometimes put JSON directly here
-    console.log("Using OpenAI message.parsed as WeekPlan");
-    planAny = msg.parsed;
+    console.log("Using OpenAI message.parsed as WeekPlan source");
+    aiJson = msg.parsed;
   } else if (typeof msg?.content === "string") {
     const content = msg.content.trim();
     console.log("RAW_OPENAI_CONTENT_START");
     console.log(content.slice(0, 2000));
     console.log("RAW_OPENAI_CONTENT_END");
-    planAny = JSON.parse(content);
+    aiJson = JSON.parse(content);
   } else if (msg?.content && typeof msg.content === "object") {
-    console.log(
-      "OpenAI message.content is already an object; using it directly."
-    );
-    planAny = msg.content;
+    console.log("OpenAI message.content is already an object; using it directly.");
+    aiJson = msg.content;
   } else {
     console.error("OpenAI response missing usable JSON content:", raw);
     throw new Error("OpenAI response missing usable JSON content");
   }
 
-  const plan = planAny as WeekPlan;
-  const anyPlan = plan as any;
+  // --------- ADAPT OpenAI JSON → canonical WeekPlan shape ---------
+  const rawDays = Array.isArray(aiJson.days) ? aiJson.days : [];
+  const rawRecipes = Array.isArray(aiJson.recipes) ? aiJson.recipes : [];
 
-  if (!anyPlan || !Array.isArray(anyPlan.days)) {
-    console.error("OpenAI JSON did not include days[] as expected:", plan);
-    throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
-  }
+  // Build recipe map & normalize recipes into Recipe[]
+  const recipeMap = new Map<string, { id: string; title: string }>();
 
-  if (!Array.isArray(anyPlan.recipes)) {
-    console.warn(
-      "OpenAI JSON missing recipes[]; adding empty recipes array to keep frontend safe."
-    );
-    anyPlan.recipes = [];
-  }
+  const recipes = rawRecipes.map((r: any) => {
+    const id = String(r.id || "").trim();
+    const name =
+      (r.name && String(r.name).trim()) ||
+      (r.title && String(r.title).trim()) ||
+      (id ? `Recipe ${id}` : "Recipe");
 
-  anyPlan.mode = "ai";
-  anyPlan.generatedAt = anyPlan.generatedAt || new Date().toISOString();
+    if (id) {
+      recipeMap.set(id, { id, title: name });
+    }
 
-  return plan;
+    const ingredients =
+      Array.isArray(r.ingredients) ?
+        r.ingredients.map((ing: any) => {
+          if (typeof ing === "string") {
+            return {
+              name: ing,
+              displayText: ing,
+            };
+          }
+
+          const ingName =
+            (ing.name && String(ing.name).trim()) ||
+            (ing.displayText && String(ing.displayText).trim()) ||
+            "Ingredient";
+
+          return {
+            name: ingName,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            instacart_query: ing.instacart_query,
+            category: ing.category,
+            pantry: ing.pantry,
+            optional: ing.optional,
+            displayText: ing.displayText || ingName,
+            productIds: ing.productIds,
+            upcs: ing.upcs,
+            measurements: ing.measurements,
+            filters: ing.filters,
+          };
+        }) :
+        [];
+
+    return {
+      id: id || name,
+      name,
+      mealType: r.mealType,
+      defaultServings: r.defaultServings,
+      tags: Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)) : undefined,
+      ingredients,
+    };
+  });
+
+  // Normalize days & meals
+  const days = rawDays.map((d: any, idx: number) => {
+    const dayNumber = d.day ?? idx + 1;
+    const label =
+      d.label ||
+      (typeof dayNumber === "number"
+        ? `Day ${dayNumber}`
+        : `Day ${idx + 1}`);
+
+    const meals = Array.isArray(d.meals)
+      ? d.meals.map((m: any) => {
+          const rawType = (m.type || m.name || "").toString().toLowerCase();
+          let type: string = "other";
+          if (rawType.includes("breakfast")) type = "breakfast";
+          else if (rawType.includes("lunch")) type = "lunch";
+          else if (rawType.includes("dinner")) type = "dinner";
+
+          const rid = m.recipeId ? String(m.recipeId) : undefined;
+          const recMeta = rid ? recipeMap.get(rid) : undefined;
+
+          return {
+            type,
+            recipeId: rid,
+            title: m.title || recMeta?.title || m.name || "Meal",
+            calories: m.calories,
+            protein: m.protein,
+            carbs: m.carbs,
+            fats: m.fats,
+            portionLabel: m.portionLabel,
+            portionOz: m.portionOz,
+            servings: m.servings,
+            notes: m.notes,
+          };
+        })
+      : [];
+
+    return {
+      day: dayNumber,
+      index: d.index ?? idx,
+      isoDate: d.isoDate,
+      label,
+      note: d.note,
+      meals,
+    };
+  });
+
+  const weekPlan: WeekPlan = {
+    mode: "ai",
+    generatedAt: new Date().toISOString(),
+    constraints, // echo back the constraints we received
+    days: days as any,
+    recipes: recipes as any,
+  };
+
+  console.log("AI_WEEKPLAN_OK");
+  return weekPlan;
 }
 
 // ======================================================================
