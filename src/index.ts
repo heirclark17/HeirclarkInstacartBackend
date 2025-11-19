@@ -76,17 +76,15 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
 }
 
 // Small helper to enforce timeout on OpenAI calls
+// Small helper – currently NOT enforcing timeout so we can see real OpenAI errors
 function fetchWithTimeout(
   url: string,
   options: any,
-  timeoutMs: number
+  _timeoutMs: number
 ): Promise<globalThis.Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, options);
+}
 
-  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
-    clearTimeout(id)
-},
 
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
