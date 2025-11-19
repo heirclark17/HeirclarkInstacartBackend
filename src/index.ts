@@ -105,10 +105,12 @@ async function callOpenAiMealPlan(
   }
 
   const payload = {
-    model: OPENAI_MODEL,
-    temperature: 0.6,
-    response_format: { type: "json_object" as const },
-    messages: [
+  model: OPENAI_MODEL,
+  temperature: 0.6,
+  max_tokens: 1500, // NEW: keeps responses compact & faster
+  response_format: { type: "json_object" as const },
+  messages: [
+
       {
         role: "system",
         content:
