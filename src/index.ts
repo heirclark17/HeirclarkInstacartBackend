@@ -81,15 +81,13 @@ function fetchWithTimeout(
   options: any,
   timeoutMs: number
 ): Promise<globalThis.Response> {
-  const controller = new AbortSignal().constructor === AbortSignal
-    ? new AbortController()
-    : new (AbortController as any)();
+  const controller = new AbortController();  // <-- safe constructor
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return fetch(url, { ...options, signal: (controller as any).signal }).finally(
-    () => {
-      clearTimeout(timer);
-    }
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
   );
 }
 
