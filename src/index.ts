@@ -14,28 +14,15 @@ import {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ----------------------------------------------------------------------
-// Global middleware
-// ----------------------------------------------------------------------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Simple request logger to help debug 404s / routing
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-// ----------------------------------------------------------------------
-// Root health
-// ----------------------------------------------------------------------
+// ---------- Root health ----------
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// ----------------------------------------------------------------------
-// OPEN GET ping for app proxy (debug only)
-// ----------------------------------------------------------------------
+// ---------- OPEN GET ping for app proxy (debug only) ----------
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -44,9 +31,7 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// ----------------------------------------------------------------------
-// HMAC verification for App Proxy
-// ----------------------------------------------------------------------
+// ---------- HMAC verification for App Proxy ----------
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -89,9 +74,7 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// ----------------------------------------------------------------------
-// Types for Instacart payloads
-// ----------------------------------------------------------------------
+// ---------- Types ----------
 interface HcItem {
   name: string;
   quantity?: number;
@@ -120,9 +103,6 @@ interface HcRequestBody {
 // ======================================================================
 //                      AI MEAL PLAN API ENDPOINTS
 // ======================================================================
-
-// NOTE: The earlier placeholder /api/meal-plan has been REMOVED.
-// This is now the single source of truth for the AI planner.
 
 // POST /api/meal-plan
 // - Generates a 7-day meal plan based on macros, budget, allergies, skill level
@@ -155,7 +135,6 @@ app.post("/api/meal-plan", (req: Request, res: Response) => {
 
 // POST /api/meal-plan/adjust
 // body: { weekPlan, actualIntake: { [date]: { caloriesDelta: number } } }
-// - Adjusts future days when the user goes over/under calories
 app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
   try {
     const { weekPlan, actualIntake } = req.body as {
@@ -190,7 +169,6 @@ app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
 
 // POST /api/meal-plan/from-pantry
 // body: { constraints, pantry: string[] }
-// - Generates a 7-day plan using what the user has in their fridge/pantry
 app.post("/api/meal-plan/from-pantry", (req: Request, res: Response) => {
   try {
     const { constraints, pantry } = req.body as {
@@ -224,6 +202,45 @@ app.post("/api/meal-plan/from-pantry", (req: Request, res: Response) => {
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to generate from pantry",
+    });
+  }
+});
+
+// ======================================================================
+//                AI MEAL PLAN VIA SHOPIFY APP PROXY
+// ======================================================================
+
+// POST /proxy/meal-plan
+// Called by Shopify App Proxy (/apps/meal-plan) to build smart 7-day plan
+app.post("/proxy/meal-plan", verifyAppProxy, (req: Request, res: Response) => {
+  try {
+    const raw = req.body as any;
+
+    // Support either { constraints: {...} } or plain constraints in the body
+    const constraints: UserConstraints =
+      raw && typeof raw === "object" && raw.constraints
+        ? (raw.constraints as UserConstraints)
+        : (raw as UserConstraints);
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.budgetPerDay !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
+      });
+    }
+
+    const weekPlan: WeekPlan = generateWeekPlan(constraints);
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err: any) {
+    console.error("Error in /proxy/meal-plan:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate meal plan via proxy",
     });
   }
 });
@@ -323,7 +340,6 @@ app.post(
           .json({ ok: false, error: "Missing INSTACART_API_KEY" });
       }
 
-      // Default to DEV IDP base; override via INSTACART_API_BASE if needed
       const apiBase =
         process.env.INSTACART_API_BASE ||
         "https://connect.dev.instacart.tools";
@@ -351,7 +367,6 @@ app.post(
         });
       }
 
-      // Map Heirclark items -> Instacart LineItem objects (for products_link)
       const instacartLineItems = lineItemsSource
         .filter((i) => i && i.name)
         .map((item) => ({
@@ -382,7 +397,6 @@ app.post(
       const partnerLinkbackUrl = body.recipeLandingUrl;
       const retailerKey = body.retailerKey || null;
 
-      // Build Instacart request body (Create Shopping List Page)
       const instacartBody: any = {
         title: "Heirclark 7-Day Nutrition Plan",
         link_type: "shopping_list",
@@ -411,7 +425,7 @@ app.post(
         Authorization: `Bearer ${apiKey}`,
       };
 
-      // ---------- 1) Call /products/products_link (shopping list) ----------
+      // ---------- 1) Call /products/products_link ----------
       const productsResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
@@ -477,7 +491,7 @@ app.post(
         });
       }
 
-      // ---------- 2) Call /products/recipe (recipe page) ----------
+      // ---------- 2) Call /products/recipe ----------
       let recipeProductsLinkUrl: string | null = null;
       let recipeError: string | null = null;
 
@@ -653,17 +667,7 @@ app.post(
   }
 );
 
-// ----------------------------------------------------------------------
-// Catch-all 404 (must be last) – helps debug wrong URLs
-// ----------------------------------------------------------------------
-app.all("*", (req: Request, res: Response) => {
-  console.warn("Unhandled route:", req.method, req.originalUrl);
-  res.status(404).json({ ok: false, error: "Not found" });
-});
-
 // ---------- Start server ----------
 app.listen(PORT, () => {
-  console.log(`Heirclark backend listening on port ${PORT}`);
+  console.log(`Heirclark Instacart backend listening on port ${PORT}`);
 });
-
-export default app;
