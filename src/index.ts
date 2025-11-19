@@ -261,6 +261,7 @@ async function callOpenAiMealPlan(
     throw new Error("Failed to parse OpenAI meal plan JSON");
   }
 
+
   const anyPlan = plan as any;
   if (!anyPlan || !Array.isArray(anyPlan.days)) {
     console.error("OpenAI JSON did not include days[] as expected:", plan);
