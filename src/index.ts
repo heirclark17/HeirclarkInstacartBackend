@@ -88,8 +88,6 @@ function fetchWithTimeout(
     .finally(() => clearTimeout(timer));
 }
 
-  );
-}
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
