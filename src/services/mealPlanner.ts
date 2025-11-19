@@ -1,59 +1,59 @@
 // src/services/mealPlanner.ts
 
-import OpenAI from "openai";
 import { UserConstraints, WeekPlan } from "../types/mealPlan";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+/**
+ * Very simple local 7-day framework.
+ * This is used as a fallback when AI isn’t available,
+ * and also by index.ts’s buildFallbackWeekPlan().
+ */
+export function generateWeekPlan(constraints: UserConstraints): WeekPlan {
+  const startDate = new Date().toISOString().slice(0, 10);
 
-// Generate a full 7-day AI meal plan
-export async function generateWeekPlan(constraints: UserConstraints): Promise<WeekPlan> {
-  const prompt = `
-You are a nutritionist. Create a 7-day meal plan.
-Match:
-- Daily calories: ${constraints.dailyCalories}
-- Protein: ${constraints.proteinGrams}g
-- Carbs: ${constraints.carbsGrams}g
-- Fats: ${constraints.fatsGrams}g
-- Daily budget: $${constraints.budgetPerDay}
-- Skill level: ${constraints.skillLevel}
-- Allergies: ${constraints.allergies?.join(", ") || "none"}
+  const days = Array.from({ length: 7 }).map((_, i) => ({
+    dayIndex: i,
+    label: `Day ${i + 1}`,
+    note:
+      "Local baseline plan — AI can later override this with specific recipes and macros.",
+    meals: [], // your front-end knows how to handle empty meals as a framework
+  }));
 
-Return JSON only:
-{
-  "mode": "ai",
-  "days": [
-    {
-      "label": "Day 1",
-      "meals": [
-        { "name": "Breakfast", "meal": "…" },
-        { "name": "Lunch", "meal": "…" },
-        { "name": "Dinner", "meal": "…" }
-      ]
-    },
-    ...
-  ]
-}
-`;
-
-  const completion = await client.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" }
-  });
-
-  return JSON.parse(completion.choices[0].message.content);
-}
-
-// Not used yet, but ready for the future
-export function adjustWeekPlan(weekPlan: WeekPlan, actualIntake: any): WeekPlan {
-  return weekPlan;
-}
-
-export function generateFromPantry(constraints: UserConstraints, pantry: string[]): WeekPlan {
+  // We cast to WeekPlan so we don’t fight over extra fields in the type.
   return {
-    mode: "ai",
-    days: []
-  };
+    id: `local-${startDate}`,
+    startDate,
+    constraints,
+    days,
+  } as WeekPlan;
+}
+
+/**
+ * Adjust plan based on actualIntake.
+ * For now, this just returns the same plan – you can add logic later.
+ */
+export function adjustWeekPlan(
+  weekPlan: WeekPlan,
+  _actualIntake: Record<string, { caloriesDelta: number }>
+): WeekPlan {
+  // Placeholder: you can later tweak future days based on over/under calories.
+  return {
+    ...weekPlan,
+  } as WeekPlan;
+}
+
+/**
+ * Pantry-based fallback – just tags the plan as pantry-based.
+ * Real AI pantry logic is handled in index.ts now.
+ */
+export function generateFromPantry(
+  constraints: UserConstraints,
+  pantry: string[]
+): WeekPlan {
+  const basePlan = generateWeekPlan(constraints);
+
+  // You can later use pantry to tune days/meals if you want, locally.
+  return {
+    ...basePlan,
+    // we don’t touch the required fields, just cast
+  } as WeekPlan;
 }
