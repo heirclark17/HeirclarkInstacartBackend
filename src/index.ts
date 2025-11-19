@@ -106,117 +106,119 @@ async function callOpenAiMealPlan(
     model: OPENAI_MODEL,
     temperature: 0.6,
     // Strict JSON schema so the model MUST return valid JSON
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "week_plan",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            mode: { type: "string" },
-            generatedAt: { type: "string" },
-            constraints: { type: "object" },
-            days: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  day: { anyOf: [{ type: "integer" }, { type: "string" }] },
-                  index: { anyOf: [{ type: "integer" }, { type: "string" }] },
-                  isoDate: { type: "string" },
-                  label: { type: "string" },
-                  note: { type: "string" },
-                  meals: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        type: { type: "string" },
-                        recipeId: { type: "string" },
-                        title: { type: "string" },
-                        calories: { type: "number" },
-                        protein: { type: "number" },
-                        carbs: { type: "number" },
-                        fats: { type: "number" },
-                        portionLabel: { type: "string" },
-                        portionOz: { type: "number" },
-                        servings: { type: "number" },
-                        notes: { type: "string" },
-                      },
-                      required: ["type", "recipeId", "title"],
-                    },
+   response_format: {
+  type: "json_schema",
+  json_schema: {
+    name: "week_plan",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,  // 👈 required by OpenAI
+      properties: {
+        mode: { type: "string" },
+        generatedAt: { type: "string" },
+        constraints: { type: "object" },
+        days: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              day: { anyOf: [{ type: "integer" }, { type: "string" }] },
+              index: { anyOf: [{ type: "integer" }, { type: "string" }] },
+              isoDate: { type: "string" },
+              label: { type: "string" },
+              note: { type: "string" },
+              meals: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    type: { type: "string" },
+                    recipeId: { type: "string" },
+                    title: { type: "string" },
+                    calories: { type: "number" },
+                    protein: { type: "number" },
+                    carbs: { type: "number" },
+                    fats: { type: "number" },
+                    portionLabel: { type: "string" },
+                    portionOz: { type: "number" },
+                    servings: { type: "number" },
+                    notes: { type: "string" },
                   },
+                  required: ["type", "recipeId", "title"],
                 },
-                required: ["meals"],
               },
             },
-            recipes: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string" },
-                  name: { type: "string" },
-                  mealType: { type: "string" },
-                  defaultServings: { type: "number" },
-                  tags: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
-                  ingredients: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        id: { type: "string" },
-                        name: { type: "string" },
-                        quantity: {
-                          anyOf: [{ type: "number" }, { type: "string" }],
-                        },
-                        unit: { type: "string" },
-                        instacart_query: { type: "string" },
-                        category: { type: "string" },
-                        pantry: { type: "boolean" },
-                        optional: { type: "boolean" },
-                        displayText: { type: "string" },
-                        productIds: {
-                          type: "array",
-                          items: {
-                            anyOf: [{ type: "number" }, { type: "string" }],
-                          },
-                        },
-                        upcs: {
-                          type: "array",
-                          items: { type: "string" },
-                        },
-                        measurements: {
-                          type: "array",
-                          items: {
-                            type: "object",
-                            properties: {
-                              quantity: { type: "number" },
-                              unit: { type: "string" },
-                            },
-                          },
-                        },
-                        filters: {
-                          type: "object",
-                          additionalProperties: true,
-                        },
-                      },
-                      required: ["name"],
-                    },
-                  },
-                },
-                required: ["id", "name", "ingredients"],
-              },
-            },
+            required: ["meals"],
           },
-          required: ["days", "recipes"],
+        },
+        recipes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              mealType: { type: "string" },
+              defaultServings: { type: "number" },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+              },
+              ingredients: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    quantity: {
+                      anyOf: [{ type: "number" }, { type: "string" }],
+                    },
+                    unit: { type: "string" },
+                    instacart_query: { type: "string" },
+                    category: { type: "string" },
+                    pantry: { type: "boolean" },
+                    optional: { type: "boolean" },
+                    displayText: { type: "string" },
+                    productIds: {
+                      type: "array",
+                      items: {
+                        anyOf: [{ type: "number" }, { type: "string" }],
+                      },
+                    },
+                    upcs: {
+                      type: "array",
+                      items: { type: "string" },
+                    },
+                    measurements: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          quantity: { type: "number" },
+                          unit: { type: "string" },
+                        },
+                      },
+                    },
+                    filters: {
+                      type: "object",
+                      additionalProperties: true,
+                    },
+                  },
+                  required: ["name"],
+                },
+              },
+            },
+            required: ["id", "name", "ingredients"],
+          },
         },
       },
-    } as const,
+      required: ["days", "recipes"],
+    },
+  },
+} as const,
+
     messages: [
       {
         role: "system",
