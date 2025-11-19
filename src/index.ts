@@ -14,68 +14,28 @@ import {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ----------------------------------------------------------------------
+// Global middleware
+// ----------------------------------------------------------------------
 app.use(express.json());
-// ---- AI Smart Meal Plan endpoint ----
-app.post("/api/meal-plan", (req, res) => {
-  try {
-    const {
-      dailyCalories,
-      proteinGrams,
-      carbsGrams,
-      fatsGrams,
-      budgetPerDay,
-      allergies,
-      skillLevel,
-    } = req.body || {};
-
-    if (!dailyCalories || !proteinGrams || !carbsGrams || !fatsGrams) {
-      return res.status(400).json({
-        ok: false,
-        error: "Missing macro targets – run the wellness calculator first.",
-      });
-    }
-
-    // For now, return a simple placeholder “AI plan” structure.
-    // You can later plug real AI logic into this.
-    const weekPlan = {
-      mode: "ai",
-      generatedAt: new Date().toISOString(),
-      constraints: {
-        dailyCalories,
-        proteinGrams,
-        carbsGrams,
-        fatsGrams,
-        budgetPerDay,
-        allergies,
-        skillLevel,
-      },
-      days: Array.from({ length: 7 }).map((_, i) => ({
-        dayIndex: i,
-        label: `Day ${i + 1}`,
-        note:
-          "AI meal planning placeholder — recipes will be added when the AI backend is wired up.",
-        meals: [],
-      })),
-    };
-
-    return res.status(200).json({ ok: true, weekPlan });
-  } catch (err) {
-    console.error("Error in /api/meal-plan:", err);
-    return res.status(500).json({
-      ok: false,
-      error: "Internal server error while building smart meal plan.",
-    });
-  }
-});
-
 app.use(express.urlencoded({ extended: true }));
 
-// ---------- Root health ----------
+// Simple request logger to help debug 404s / routing
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+// ----------------------------------------------------------------------
+// Root health
+// ----------------------------------------------------------------------
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// ---------- OPEN GET ping for app proxy (debug only) ----------
+// ----------------------------------------------------------------------
+// OPEN GET ping for app proxy (debug only)
+// ----------------------------------------------------------------------
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -84,7 +44,9 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// ---------- HMAC verification for App Proxy ----------
+// ----------------------------------------------------------------------
+// HMAC verification for App Proxy
+// ----------------------------------------------------------------------
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -127,7 +89,9 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// ---------- Types ----------
+// ----------------------------------------------------------------------
+// Types for Instacart payloads
+// ----------------------------------------------------------------------
 interface HcItem {
   name: string;
   quantity?: number;
@@ -156,6 +120,9 @@ interface HcRequestBody {
 // ======================================================================
 //                      AI MEAL PLAN API ENDPOINTS
 // ======================================================================
+
+// NOTE: The earlier placeholder /api/meal-plan has been REMOVED.
+// This is now the single source of truth for the AI planner.
 
 // POST /api/meal-plan
 // - Generates a 7-day meal plan based on macros, budget, allergies, skill level
@@ -343,9 +310,6 @@ app.get(
 );
 
 // ---------- POST /proxy/build-list (App Proxy) ----------
-// Now returns BOTH:
-//   - products_link_url (shopping list / products link)
-//   - recipe_products_link_url (created via /idp/v1/products/recipe)
 app.post(
   "/proxy/build-list",
   verifyAppProxy,
@@ -434,7 +398,6 @@ app.post(
         };
       }
 
-      // Save retailer context if you want to log/use later (not required by products_link)
       if (retailerKey) {
         instacartBody.metadata = {
           ...(instacartBody.metadata || {}),
@@ -519,7 +482,6 @@ app.post(
       let recipeError: string | null = null;
 
       try {
-        // Map to Recipe "ingredients" format
         const recipeIngredients = instacartLineItems.map((li) => ({
           name: li.name,
           display_text: li.display_text,
@@ -675,8 +637,6 @@ app.post(
         recipeError = "Server error while calling Instacart recipe endpoint";
       }
 
-      // Final response: always include products_link_url (if we got this far),
-      // plus recipe_products_link_url if available.
       return res.status(200).json({
         ok: true,
         products_link_url: productsLinkUrl,
@@ -693,7 +653,17 @@ app.post(
   }
 );
 
+// ----------------------------------------------------------------------
+// Catch-all 404 (must be last) – helps debug wrong URLs
+// ----------------------------------------------------------------------
+app.all("*", (req: Request, res: Response) => {
+  console.warn("Unhandled route:", req.method, req.originalUrl);
+  res.status(404).json({ ok: false, error: "Not found" });
+});
+
 // ---------- Start server ----------
 app.listen(PORT, () => {
-  console.log(`Heirclark Instacart backend listening on port ${PORT}`);
+  console.log(`Heirclark backend listening on port ${PORT}`);
 });
+
+export default app;
