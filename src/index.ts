@@ -86,7 +86,7 @@ function fetchWithTimeout(
 
   return fetch(url, { ...options, signal: controller.signal }).finally(() =>
     clearTimeout(id)
-}
+},
 
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
