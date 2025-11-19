@@ -228,25 +228,36 @@ async function handleAiMealPlan(req: Request, res: Response) {
       });
     }
 
-    let weekPlan: WeekPlan;
+      let weekPlan: WeekPlan;
 
     try {
+      // ✅ Only ever use the AI plan here
       weekPlan = await callOpenAiMealPlan(constraints);
+      console.log("AI_WEEKPLAN_OK");
     } catch (err: any) {
       console.error("OpenAI meal plan generation failed:", err);
 
+      const msg = String(err?.message || "");
+      const lower = msg.toLowerCase();
       const isAbort =
         err?.name === "AbortError" ||
-        String(err?.message || "").toLowerCase().includes("aborted");
+        lower.includes("aborted") ||
+        lower.includes("timeout");
 
-      const msg = isAbort
-        ? "Timed out talking to OpenAI."
-        : err?.message || "Failed while generating AI 7-day meal plan.";
-
+      // ❌ No fallback — surface the error to the frontend
       return res.status(isAbort ? 504 : 500).json({
         ok: false,
-        error: msg,
+        error: msg || "Failed while generating AI 7-day meal plan.",
       });
+    }
+
+    // If we got here, OpenAI succeeded
+    return res.status(200).json({
+      ok: true,
+      weekPlan,
+      mode: "ai",
+    });
+
     }
 
     return res.status(200).json({ ok: true, weekPlan });
