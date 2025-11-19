@@ -99,72 +99,70 @@ async function callOpenAiMealPlan(
   }
 
   const payload = {
-    model: OPENAI_MODEL,
-    temperature: 0.6,
-    response_format: { type: "json_object" as const },
-    // You can tweak this down if you keep seeing truncation
-    max_output_tokens: 1400,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a nutrition coach creating practical 7-day meal plans for a health + grocery shopping app. " +
-          "Return ONLY valid JSON (no markdown). Include a day-level view AND, if possible, a recipes list with ingredients. " +
-          "Keep text concise and avoid long descriptions so the JSON stays small.",
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          instructions:
-            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
-            "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
-          constraints,
-          pantry: pantry || [],
-          // NOTE: this is a descriptive schema, not something we expect back literally
-          schema: {
-            mode: "ai",
-            generatedAt: "ISO 8601 timestamp string",
-            constraints:
-              "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
-            days: [
-              {
-                day: "1–7 (1-based index)",
-                label: "e.g., 'Day 1'",
-                meals: [
-                  {
-                    type: "breakfast | lunch | dinner",
-                    recipeId: "matches id in recipes[].id",
-                    title: "Short recipe name",
-                    calories: "number",
-                    protein: "number",
-                    carbs: "number",
-                    fats: "number",
-                    portionLabel: "e.g. '6 oz', '1 plate'",
-                    notes: "short, practical instructions",
-                  },
-                ],
-              },
-            ],
-            recipes: [
-              {
-                id: "unique id; referenced by meals[].recipeId",
-                name: "Recipe title",
-                ingredients: [
-                  {
-                    name: "ingredient name",
-                    quantity: "number per serving",
-                    unit: "e.g. 'oz','cup','tbsp','each'",
-                    instacart_query:
-                      "optional; search string to use for Instacart",
-                  },
-                ],
-              },
-            ],
-          },
-        }),
-      },
-    ],
-  };
+  model: OPENAI_MODEL,
+  temperature: 0.6,
+  response_format: { type: "json_object" as const },
+  messages: [
+    {
+      role: "system",
+      content:
+        "You are a nutrition coach creating practical 7-day meal plans for a health + grocery shopping app. " +
+        "Return ONLY valid JSON (no markdown). Include a day-level view AND, if possible, a recipes list with ingredients. " +
+        "Keep text concise and avoid long descriptions so the JSON stays small.",
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        instructions:
+          "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
+          "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
+        constraints,
+        pantry: pantry || [],
+        schema: {
+          mode: "ai",
+          generatedAt: "ISO 8601 timestamp string",
+          constraints:
+            "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
+          days: [
+            {
+              day: "1–7 (1-based index)",
+              label: "e.g., 'Day 1'",
+              meals: [
+                {
+                  type: "breakfast | lunch | dinner",
+                  recipeId: "matches id in recipes[].id",
+                  title: "Short recipe name",
+                  calories: "number",
+                  protein: "number",
+                  carbs: "number",
+                  fats: "number",
+                  portionLabel: "e.g. '6 oz', '1 plate'",
+                  notes: "short, practical instructions",
+                },
+              ],
+            },
+          ],
+          recipes: [
+            {
+              id: "unique id; referenced by meals[].recipeId",
+              name: "Recipe title",
+              ingredients: [
+                {
+                  name: "ingredient name",
+                  quantity: "number per serving",
+                  unit: "e.g. 'oz','cup','tbsp','each'",
+                  instacart_query:
+                    "optional; search string to use for Instacart",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    },
+  ],
+};
+
 
   const started = Date.now();
   console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL, {
