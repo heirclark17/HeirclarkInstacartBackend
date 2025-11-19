@@ -1,50 +1,64 @@
-// src/types/mealPlan.ts
-export type SkillLevel = "beginner" | "intermediate" | "advanced";
+export interface Meal {
+  type: "breakfast" | "lunch" | "dinner" | string;
+  recipeId?: string;          // AI plans will use this
+  title: string;
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fats?: number;
+  portionLabel?: string;
+  portionOz?: number;
+  servings?: number;
+  notes?: string;
+}
+
+export interface DayPlan {
+  day?: number | string;
+  index?: number | string;
+  isoDate?: string;
+  label?: string;
+  note?: string;
+  meals: Meal[];
+}
+
+export interface RecipeIngredient {
+  id?: string;
+  name: string;
+  quantity?: number | string;
+  unit?: string;
+  instacart_query?: string;
+  category?: string;
+  pantry?: boolean;
+  optional?: boolean;
+  displayText?: string;
+  productIds?: (number | string)[];
+  upcs?: string[];
+  measurements?: { quantity?: number; unit?: string }[];
+  filters?: Record<string, any>;
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  mealType?: string;
+  defaultServings?: number;
+  tags?: string[];
+  ingredients: RecipeIngredient[];
+}
 
 export interface UserConstraints {
   dailyCalories: number;
   proteinGrams: number;
   carbsGrams: number;
   fatsGrams: number;
-  budgetPerDay: number;      // in USD
-  allergies: string[];       // ["peanuts", "shellfish"]
-  dislikes: string[];        // optional
-  skillLevel: SkillLevel;    // affects recipe complexity
-}
-
-export interface Ingredient {
-  name: string;
-  amount: number;
-  unit: string;   // "g", "oz", "tbsp", etc.
-}
-
-export interface Meal {
-  id: string;
-  name: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fats: number;
-  estimatedCost: number;
-  tags: string[];       // ["gluten-free","beginner"]
-  ingredients: Ingredient[];
-  instructions?: string;
-}
-
-export interface DayPlan {
-  date: string;         // "2025-11-18"
-  meals: Meal[];        // [breakfast, lunch, dinner, snacks...]
-  totalCalories: number;
-  totalProtein: number;
-  totalCarbs: number;
-  totalFats: number;
-  totalCost: number;
+  budgetPerDay?: number;
+  // keep any other existing fields you already had (allergies, etc.)
 }
 
 export interface WeekPlan {
-  id: string;
-  userId?: string;
-  startDate: string;
+  mode?: "ai" | "fallback" | "static" | string;
+  generatedAt?: string;
   constraints: UserConstraints;
   days: DayPlan[];
+  recipes: Recipe[];
 }
