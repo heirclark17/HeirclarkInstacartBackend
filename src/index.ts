@@ -86,8 +86,8 @@ function fetchWithTimeout(
 
   return fetch(url, { ...options, signal: controller.signal }).finally(() =>
     clearTimeout(id)
-  );
 }
+
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
@@ -220,6 +220,8 @@ async function callOpenAiMealPlan(
       },
     ],
   };
+
+    console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL);
 
     const resp = await fetchWithTimeout(
     "https://api.openai.com/v1/chat/completions",
