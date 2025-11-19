@@ -17,11 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-// Cap at 120s to avoid hitting hard limits; default 60s if not set
-const OPENAI_TIMEOUT_MS = Math.min(
-  Number(process.env.OPENAI_TIMEOUT_MS || 60000),
-  120000
-);
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s default
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -87,8 +83,7 @@ function fetchWithTimeout(
   return fetch(url, options);
 }
 
-
-// Call OpenAI (Responses API) to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -98,223 +93,186 @@ async function callOpenAiMealPlan(
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const timeoutMs = OPENAI_TIMEOUT_MS || 60000;
-
-  const systemPrompt =
-    "You are a nutrition coach creating detailed, practical 7-day meal plans " +
-    "for a health + grocery shopping app. " +
-    "You MUST return ONLY valid JSON (no markdown, no comments, no extra text) " +
-    "that matches the schema I give you. " +
-    "Include both the day-level view AND a recipes list with structured ingredients " +
-    "that can be used to generate a grocery list. " +
-    "Do not include any trailing commas. Do not explain the JSON.";
-
-  const userPayload = {
-    instructions:
-      "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
-      "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
-    constraints,
-    pantry: pantry || [],
-    schema: {
-      mode: "ai",
-      generatedAt: "ISO 8601 timestamp string",
-      constraints:
-        "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
-
-      // days[] is what the frontend uses to render the 7-day calendar
-      days: [
-        {
-          day: "1–7 (1-based index)",
-          index: "optional; 0-based or 1-based index – may include both",
-          isoDate: "YYYY-MM-DD string (optional but recommended)",
-          label: "e.g., 'Day 1 • Monday' or 'Day 1'",
-
-          note: "Short motivational or practical note for the day (optional)",
-
-          meals: [
-            {
-              // REQUIRED: must be breakfast | lunch | dinner (lowercase)
-              type: "breakfast | lunch | dinner",
-
-              // REQUIRED: id of a recipe that appears in recipes[].id
-              recipeId:
-                "String ID that matches the id of a recipe in recipes[]",
-
-              // Short recipe title used in UI
-              title:
-                "Short recipe name for the meal card, may match recipe.name",
-
-              // Approximate macros for this meal
-              calories: "number (approx calories for this meal)",
-              protein: "number (grams of protein)",
-              carbs: "number (grams of carbs)",
-              fats: "number (grams of fats)",
-
-              // Portion display used inline next to the recipe name
-              portionLabel:
-                "optional; string like '6 oz', '1 bowl', '1 plate'",
-              portionOz:
-                "optional; numeric ounces if relevant (e.g., 6 for 6 oz)",
-
-              servings:
-                "optional; number of servings for this meal (default 1)",
-
-              notes:
-                "optional; 1–2 sentence instructions or reminders for the meal (quick, practical).",
-            },
-          ],
-        },
-      ],
-
-      // recipes[] is what we aggregate into Instacart ingredients
-      recipes: [
-        {
-          id: "unique string id; must match meals[].recipeId",
-          name:
-            "Recipe title, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
-          mealType:
-            "optional; 'breakfast' | 'lunch' | 'dinner' | other string",
-          defaultServings: "optional; number of servings per recipe",
-          tags: "optional; string tags like ['high_protein','plate_method']",
-
-          ingredients: [
-            {
-              id: "optional ingredient id; can be omitted",
-              name:
-                "ingredient name, e.g. 'Salmon fillet' (this is used for display and Instacart)",
-              quantity:
-                "number representing amount per SERVING (e.g. 6 for 6 oz)",
-              unit:
-                "unit like 'oz', 'cup', 'tbsp', 'each', 'medium', etc.",
-              instacart_query:
-                "optional; search string to use for Instacart, defaults to name if omitted",
-              category:
-                "optional; e.g. 'protein', 'carb', 'veggie', 'fruit', 'fat', etc.",
-              pantry:
-                "optional boolean; true if typically a pantry item (e.g. olive oil, spices)",
-              optional:
-                "optional boolean; true if user could skip this ingredient",
-              displayText:
-                "optional; nicer display label like 'Salmon fillet (fresh)', otherwise use name",
-              productIds:
-                "optional array of numeric or string product IDs (if you know them, else omit)",
-              upcs:
-                "optional array of UPC strings (if you know them, else omit)",
-              measurements:
-                "optional object for per-unit measurement details (e.g. { perUnitOz: 6 })",
-              filters:
-                "optional object for constraints (e.g. { organic: true })",
-            },
-          ],
-        },
-      ],
-    },
-  };
-
   const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
-    max_output_tokens: 2048,
-    // Responses API uses `input` instead of `messages`
-    input: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: JSON.stringify(userPayload) },
+    response_format: { type: "json_object" as const },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a nutrition coach creating detailed, practical 7-day meal plans " +
+          "for a health + grocery shopping app. " +
+          "You MUST return ONLY valid JSON (no markdown) matching the schema I give you. " +
+          "Include both the day-level view AND a recipes list with structured ingredients " +
+          "that can be used to generate a grocery list.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions:
+            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
+            "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
+          constraints,
+          pantry: pantry || [],
+          schema: {
+            mode: "ai",
+            generatedAt: "ISO 8601 timestamp string",
+            constraints:
+              "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
+
+            // days[] is what the frontend uses to render the 7-day calendar
+            days: [
+              {
+                day: "1–7 (1-based index)",
+                index: "optional; 0-based or 1-based index – may include both",
+                isoDate: "YYYY-MM-DD string (optional but recommended)",
+                label: "e.g., 'Day 1 • Monday' or 'Day 1'",
+
+                note: "Short motivational or practical note for the day (optional)",
+
+                meals: [
+                  {
+                    // REQUIRED: must be breakfast | lunch | dinner (lowercase)
+                    type: "breakfast | lunch | dinner",
+
+                    // REQUIRED: id of a recipe that appears in recipes[].id
+                    recipeId:
+                      "String ID that matches the id of a recipe in recipes[]",
+
+                    // Short recipe title used in UI, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'
+                    title:
+                      "Short recipe name for the meal card, may match recipe.name",
+
+                    // Approximate macros for this meal
+                    calories: "number (approx calories for this meal)",
+                    protein: "number (grams of protein)",
+                    carbs: "number (grams of carbs)",
+                    fats: "number (grams of fats)",
+
+                    // Portion display used inline next to the recipe name
+                    portionLabel:
+                      "optional; string like '6 oz', '1 bowl', '1 plate'",
+                    portionOz:
+                      "optional; numeric ounces if relevant (e.g., 6 for 6 oz)",
+
+                    servings:
+                      "optional; number of servings for this meal (default 1)",
+
+                    notes:
+                      "optional; 1–2 sentence instructions or reminders for the meal (quick, practical).",
+                  },
+                ],
+              },
+            ],
+
+            // recipes[] is what we aggregate into Instacart ingredients
+            recipes: [
+              {
+                id: "unique string id; must match meals[].recipeId",
+                name:
+                  "Recipe title, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
+                mealType:
+                  "optional; 'breakfast' | 'lunch' | 'dinner' | other string",
+                defaultServings: "optional; number of servings per recipe",
+                tags:
+                  "optional; string tags like ['high_protein','plate_method']",
+
+                ingredients: [
+                  {
+                    id: "optional ingredient id; can be omitted",
+                    name:
+                      "ingredient name, e.g. 'Salmon fillet' (this is used for display and Instacart)",
+                    quantity:
+                      "number representing amount per SERVING (e.g. 6 for 6 oz)",
+                    unit:
+                      "unit like 'oz', 'cup', 'tbsp', 'each', 'medium', etc.",
+                    instacart_query:
+                      "optional; search string to use for Instacart, defaults to name if omitted",
+                    category:
+                      "optional; e.g. 'protein', 'carb', 'veggie', 'fruit', 'fat', etc.",
+                    pantry:
+                      "optional boolean; true if typically a pantry item (e.g. olive oil, spices)",
+                    optional:
+                      "optional boolean; true if user could skip this ingredient",
+                    displayText:
+                      "optional; nicer display label like 'Salmon fillet (fresh)', otherwise use name",
+                    productIds:
+                      "optional array of numeric or string product IDs (if you know them, else omit)",
+                    upcs:
+                      "optional array of UPC strings (if you know them, else omit)",
+                    measurements:
+                      "optional object for per-unit measurement details (e.g. { perUnitOz: 6 })",
+                    filters:
+                      "optional object for constraints (e.g. { organic: true })",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      },
     ],
-    // NOTE: no `response_format` and no `text.format` here –
-    // we force JSON via the prompt and then JSON.parse it.
   };
 
-  console.log("Calling OpenAI /v1/responses with model:", OPENAI_MODEL, {
-    timeoutMs,
-    hasPantry: !!pantry,
-  });
+  console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL);
 
-  const start = Date.now();
-  let resp: globalThis.Response;
-
-  try {
-    resp = await fetchWithTimeout(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify(payload),
+  const resp = await fetchWithTimeout(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
-      timeoutMs
-    );
-  } catch (err: any) {
-    console.error(
-      "OpenAI /v1/responses fetch failed (network/timeout):",
-      err
-    );
-    throw err;
-  }
-
-  const elapsed = Date.now() - start;
-  console.log(
-    "OpenAI /v1/responses finished in",
-    elapsed,
-    "ms with status",
-    resp.status
+      body: JSON.stringify(payload),
+    },
+    OPENAI_TIMEOUT_MS
   );
 
   if (!resp.ok) {
     const txt = await resp.text();
-    console.error("OpenAI /v1/responses error:", resp.status, txt);
+    console.error("OpenAI /chat/completions error:", resp.status, txt);
     throw new Error(`OpenAI error: HTTP ${resp.status}`);
   }
 
-  const json = await resp.json();
+  // ---- NEW: robust parsing of OpenAI response ----
+  const raw = (await resp.json()) as any;
+  const msg = raw?.choices?.[0]?.message;
 
-  // Responses API: convenience `output_text` is usually a string
-  let content: string | undefined;
-
-  if (typeof (json as any).output_text === "string") {
-    content = (json as any).output_text;
-  } else if (Array.isArray((json as any).output)) {
-    const outputArr = (json as any).output;
-    for (const item of outputArr) {
-      if (item.type === "message" && Array.isArray(item.content)) {
-        for (const part of item.content) {
-          // Some implementations nest text as { type: "output_text", text: "..." }
-          if (part.type === "output_text" && typeof part.text === "string") {
-            content = part.text;
-            break;
-          }
-          // Or as { type: "output_text", text: { value: "..." } }
-          if (
-            part.type === "output_text" &&
-            part.text &&
-            typeof part.text.value === "string"
-          ) {
-            content = part.text.value;
-            break;
-          }
-        }
-      }
-      if (content) break;
-    }
-  }
-
-  if (!content || typeof content !== "string" || !content.trim()) {
-    console.error("OpenAI Responses output missing content:", json);
-    throw new Error("OpenAI response missing content");
-  }
-
-  let plan: WeekPlan;
+  // Log the top-level message (trimmed so it doesn't spam logs)
   try {
+    console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
+  } catch {
+    console.log("OPENAI_RAW_MESSAGE (non-serializable)", raw);
+  }
+
+  let planAny: any;
+
+  if (msg?.parsed) {
+    // Newer OpenAI APIs can put the JSON directly here
+    console.log("Using OpenAI message.parsed as WeekPlan");
+    planAny = msg.parsed;
+  } else if (typeof msg?.content === "string") {
+    // Classic: JSON string in message.content
+    const content = msg.content.trim();
     console.log("RAW_OPENAI_CONTENT_START");
     console.log(content);
     console.log("RAW_OPENAI_CONTENT_END");
 
-    plan = JSON.parse(content) as WeekPlan;
-  } catch (err) {
-    console.error("Failed to parse OpenAI JSON:", err, "raw:", content);
-    throw new Error("Failed to parse OpenAI meal plan JSON");
+    planAny = JSON.parse(content);
+  } else if (msg?.content && typeof msg.content === "object") {
+    // Some SDKs already parse JSON into an object
+    console.log(
+      "OpenAI message.content is already an object; using it directly."
+    );
+    planAny = msg.content;
+  } else {
+    console.error("OpenAI response missing usable JSON content:", raw);
+    throw new Error("OpenAI response missing usable JSON content");
   }
+
+  const plan = planAny as WeekPlan;
 
   const anyPlan = plan as any;
   if (!anyPlan || !Array.isArray(anyPlan.days)) {
@@ -372,28 +330,18 @@ async function handleAiMealPlan(req: Request, res: Response) {
           )}s).`
         : err?.message || "Failed while generating AI 7-day meal plan.";
 
-      // fall back to local generator so frontend still gets something
-      const fallbackPlan = buildFallbackWeekPlan(constraints);
-
       return res.status(isAbort ? 504 : 500).json({
         ok: false,
         error: msg,
-        weekPlan: fallbackPlan,
-        mode: "fallback",
       });
     }
 
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
     console.error("Error in AI meal plan handler:", err);
-    const fallbackPlan = buildFallbackWeekPlan(
-      (req.body as UserConstraints) || {}
-    );
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to generate AI meal plan",
-      weekPlan: fallbackPlan,
-      mode: "fallback",
     });
   }
 }
