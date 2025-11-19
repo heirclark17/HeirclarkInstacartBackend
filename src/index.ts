@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-// cap at 120s to avoid hitting hard limits; default 60s if not set
+// Cap at 120s to avoid hitting hard limits; default 60s if not set
 const OPENAI_TIMEOUT_MS = Math.min(
   Number(process.env.OPENAI_TIMEOUT_MS || 60000),
   120000
@@ -107,9 +107,11 @@ async function callOpenAiMealPlan(
   const systemPrompt =
     "You are a nutrition coach creating detailed, practical 7-day meal plans " +
     "for a health + grocery shopping app. " +
-    "You MUST return ONLY valid JSON (no markdown) that matches the schema I give you. " +
+    "You MUST return ONLY valid JSON (no markdown, no comments, no extra text) " +
+    "that matches the schema I give you. " +
     "Include both the day-level view AND a recipes list with structured ingredients " +
-    "that can be used to generate a grocery list.";
+    "that can be used to generate a grocery list. " +
+    "Do not include any trailing commas. Do not explain the JSON.";
 
   const userPayload = {
     instructions:
@@ -142,7 +144,7 @@ async function callOpenAiMealPlan(
               recipeId:
                 "String ID that matches the id of a recipe in recipes[]",
 
-              // Short recipe title used in UI, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'
+              // Short recipe title used in UI
               title:
                 "Short recipe name for the meal card, may match recipe.name",
 
@@ -214,28 +216,26 @@ async function callOpenAiMealPlan(
   };
 
   const payload = {
-  model: OPENAI_MODEL,
-  temperature: 0.6,
-  max_output_tokens: 2048,
-  input: [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: JSON.stringify(userPayload) },
-  ],
-  // ✅ Responses API JSON setting – this replaces `response_format`
-  text: {
-    format: {
-      type: "json",
-    },
-  },
-};
-
+    model: OPENAI_MODEL,
+    temperature: 0.6,
+    max_output_tokens: 2048,
+    // Responses API uses `input` instead of `messages`
+    input: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(userPayload) },
+    ],
+    // NOTE: no `response_format` and no `text.format` here –
+    // we force JSON via the prompt and then JSON.parse it.
+  };
 
   console.log("Calling OpenAI /v1/responses with model:", OPENAI_MODEL, {
     timeoutMs,
     hasPantry: !!pantry,
   });
 
+  const start = Date.now();
   let resp: globalThis.Response;
+
   try {
     resp = await fetchWithTimeout(
       "https://api.openai.com/v1/responses",
@@ -257,7 +257,7 @@ async function callOpenAiMealPlan(
     throw err;
   }
 
-  const elapsed = timeoutMs; // we don't track start/end exactly here; logging kept simple
+  const elapsed = Date.now() - start;
   console.log(
     "OpenAI /v1/responses finished in",
     elapsed,
@@ -273,21 +273,33 @@ async function callOpenAiMealPlan(
 
   const json = await resp.json();
 
-  // Responses API: get the text output
+  // Responses API: convenience `output_text` is usually a string
   let content: string | undefined;
 
-  if (typeof json.output_text === "string") {
-    content = json.output_text;
-  } else if (Array.isArray(json.output)) {
-    // Find the first message->output_text content
-    const msg = json.output.find((o: any) => o.type === "message");
-    if (msg && Array.isArray(msg.content)) {
-      const textPart = msg.content.find(
-        (c: any) => c.type === "output_text" && typeof c.text === "string"
-      );
-      if (textPart) {
-        content = textPart.text;
+  if (typeof (json as any).output_text === "string") {
+    content = (json as any).output_text;
+  } else if (Array.isArray((json as any).output)) {
+    const outputArr = (json as any).output;
+    for (const item of outputArr) {
+      if (item.type === "message" && Array.isArray(item.content)) {
+        for (const part of item.content) {
+          // Some implementations nest text as { type: "output_text", text: "..." }
+          if (part.type === "output_text" && typeof part.text === "string") {
+            content = part.text;
+            break;
+          }
+          // Or as { type: "output_text", text: { value: "..." } }
+          if (
+            part.type === "output_text" &&
+            part.text &&
+            typeof part.text.value === "string"
+          ) {
+            content = part.text.value;
+            break;
+          }
+        }
       }
+      if (content) break;
     }
   }
 
