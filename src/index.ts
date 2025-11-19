@@ -70,7 +70,9 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
       generatedAt: new Date().toISOString(),
       constraints,
       days,
-    
+      recipes: [],
+    } as unknown as WeekPlan;
+  }
 }
 
 // This helper now asks OpenAI to return a WeekPlan that includes:
@@ -285,7 +287,6 @@ async function handleAiMealPlan(req: Request, res: Response) {
       weekPlan = buildFallbackWeekPlan(constraints);
     }
 
-    // IMPORTANT: this is what the frontend expects: { ok: true, weekPlan }
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
     console.error("Error in AI meal plan handler:", err);
