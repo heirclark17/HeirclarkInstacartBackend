@@ -22,57 +22,6 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ======================================================================
-//                         FALLBACK WEEK PLAN
-// ======================================================================
-
-// Build a safe, minimal WeekPlan skeleton (used only if we fall back locally)
-function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
-  try {
-    return generateWeekPlan(constraints);
-  } catch {
-    const days = Array.from({ length: 7 }).map((_, i) => ({
-      dayIndex: i,
-      label: `Day ${i + 1}`,
-      note:
-        "Fallback meal framework — detailed AI recipes were unavailable. Use this as a structure for your own meals.",
-      meals: [
-        {
-          type: "breakfast",
-          title: "High-protein breakfast",
-          calories: Math.round((constraints.dailyCalories || 0) * 0.25),
-          protein: Math.round((constraints.proteinGrams || 0) * 0.3),
-          carbs: Math.round((constraints.carbsGrams || 0) * 0.25),
-          fats: Math.round((constraints.fatsGrams || 0) * 0.25),
-        },
-        {
-          type: "lunch",
-          title: "Balanced lunch",
-          calories: Math.round((constraints.dailyCalories || 0) * 0.35),
-          protein: Math.round((constraints.proteinGrams || 0) * 0.35),
-          carbs: Math.round((constraints.carbsGrams || 0) * 0.35),
-          fats: Math.round((constraints.fatsGrams || 0) * 0.35),
-        },
-        {
-          type: "dinner",
-          title: "Evening plate",
-          calories: Math.round((constraints.dailyCalories || 0) * 0.4),
-          protein: Math.round((constraints.proteinGrams || 0) * 0.35),
-          carbs: Math.round((constraints.carbsGrams || 0) * 0.4),
-          fats: Math.round((constraints.fatsGrams || 0) * 0.4),
-        },
-      ],
-    }));
-
-    return {
-      mode: "fallback",
-      generatedAt: new Date().toISOString(),
-      constraints,
-      days,
-      recipes: [],
-    } as unknown as WeekPlan;
-  }
-}
 
 // ======================================================================
 //                         OPENAI HELPERS
