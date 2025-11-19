@@ -75,6 +75,20 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
   }
 }
 
+// NEW: small helper to enforce a timeout on OpenAI calls
+function fetchWithTimeout(
+  url: string,
+  options: any,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(id)
+  );
+}
+
 // This helper now asks OpenAI to return a WeekPlan that includes:
 // - days[]: with breakfast/lunch/dinner referencing recipeId
 // - recipes[]: each recipe has ingredients[] suitable for Instacart mapping
@@ -112,7 +126,8 @@ async function callOpenAiMealPlan(
           schema: {
             mode: "ai",
             generatedAt: "ISO 8601 timestamp string",
-            constraints: "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
+            constraints:
+              "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
 
             // days[] is what the frontend uses to render the 7-day calendar
             days: [
@@ -210,14 +225,19 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+  // NEW: use fetchWithTimeout so Shopify app proxy doesn't hang forever
+  const resp = await fetchWithTimeout(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+    8000 // 8s timeout; adjust if you need shorter/longer
+  );
 
   if (!resp.ok) {
     const txt = await resp.text();
