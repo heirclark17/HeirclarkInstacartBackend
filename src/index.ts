@@ -17,7 +17,8 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s default
+// Slightly more generous default timeout (45s) – can override via env
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -74,13 +75,18 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
   }
 }
 
-// Small helper – currently NOT enforcing timeout so we can see real OpenAI errors
+// Small helper – enforce timeout on fetch
 function fetchWithTimeout(
   url: string,
   options: any,
-  _timeoutMs: number
+  timeoutMs: number
 ): Promise<globalThis.Response> {
-  return fetch(url, options);
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    clearTimeout(id);
+  });
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
@@ -217,81 +223,130 @@ async function callOpenAiMealPlan(
 
   console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL);
 
-  const resp = await fetchWithTimeout(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(payload),
-    },
-    OPENAI_TIMEOUT_MS
-  );
+  const maxRetries = 2; // total attempts = maxRetries + 1
+  let lastError: any;
 
-  if (!resp.ok) {
-    const txt = await resp.text();
-    console.error("OpenAI /chat/completions error:", resp.status, txt);
-    throw new Error(`OpenAI error: HTTP ${resp.status}`);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`Retrying OpenAI call (attempt ${attempt + 1})`);
+      }
+
+      const resp = await fetchWithTimeout(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify(payload),
+        },
+        OPENAI_TIMEOUT_MS
+      );
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error(
+          "OpenAI /chat/completions error:",
+          resp.status,
+          txt.slice(0, 500)
+        );
+        const err: any = new Error(`OpenAI error: HTTP ${resp.status}`);
+        err.status = resp.status;
+        err.body = txt;
+        throw err;
+      }
+
+      // ---- Robust parsing of OpenAI response ----
+      const raw = (await resp.json()) as any;
+      const msg = raw?.choices?.[0]?.message;
+
+      // Log the top-level message (trimmed so it doesn't spam logs)
+      try {
+        console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
+      } catch {
+        console.log("OPENAI_RAW_MESSAGE (non-serializable)", raw);
+      }
+
+      let planAny: any;
+
+      if (msg?.parsed) {
+        // Newer OpenAI APIs can put the JSON directly here
+        console.log("Using OpenAI message.parsed as WeekPlan");
+        planAny = msg.parsed;
+      } else if (typeof msg?.content === "string") {
+        // Classic: JSON string in message.content
+        const content = msg.content.trim();
+        console.log("RAW_OPENAI_CONTENT_START");
+        console.log(content);
+        console.log("RAW_OPENAI_CONTENT_END");
+
+        planAny = JSON.parse(content);
+      } else if (msg?.content && typeof msg.content === "object") {
+        // Some SDKs already parse JSON into an object
+        console.log(
+          "OpenAI message.content is already an object; using it directly."
+        );
+        planAny = msg.content;
+      } else {
+        console.error("OpenAI response missing usable JSON content:", raw);
+        throw new Error("OpenAI response missing usable JSON content");
+      }
+
+      const plan = planAny as WeekPlan;
+      const anyPlan = plan as any;
+
+      if (!anyPlan || !Array.isArray(anyPlan.days)) {
+        console.error("OpenAI JSON did not include days[] as expected:", plan);
+        throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
+      }
+
+      if (!Array.isArray(anyPlan.recipes)) {
+        console.warn(
+          "OpenAI JSON missing recipes[]; adding empty recipes array to keep frontend safe."
+        );
+        anyPlan.recipes = [];
+      }
+
+      anyPlan.mode = "ai";
+      anyPlan.generatedAt = anyPlan.generatedAt || new Date().toISOString();
+
+      return plan;
+    } catch (err: any) {
+      lastError = err;
+      const message = String(err?.message || "").toLowerCase();
+      const status = err?.status as number | undefined;
+
+      const isAbort =
+        err?.name === "AbortError" || message.includes("aborted");
+      const isTransientStatus =
+        typeof status === "number" && status >= 500 && status <= 504;
+      const looksLikeNetwork =
+        message.includes("socket hang up") ||
+        message.includes("ecannreset") ||
+        message.includes("fetch failed");
+
+      const isTransient = isAbort || isTransientStatus || looksLikeNetwork;
+
+      console.error(
+        `OpenAI call attempt ${attempt + 1} failed (transient=${isTransient}):`,
+        err
+      );
+
+      if (!isTransient || attempt === maxRetries) {
+        // No more retries or non-transient error – rethrow
+        throw err;
+      }
+
+      // Backoff before next retry (1s, then 2s, etc.)
+      const delayMs = 1000 * (attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 
-  // ---- NEW: robust parsing of OpenAI response ----
-  const raw = (await resp.json()) as any;
-  const msg = raw?.choices?.[0]?.message;
-
-  // Log the top-level message (trimmed so it doesn't spam logs)
-  try {
-    console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
-  } catch {
-    console.log("OPENAI_RAW_MESSAGE (non-serializable)", raw);
-  }
-
-  let planAny: any;
-
-  if (msg?.parsed) {
-    // Newer OpenAI APIs can put the JSON directly here
-    console.log("Using OpenAI message.parsed as WeekPlan");
-    planAny = msg.parsed;
-  } else if (typeof msg?.content === "string") {
-    // Classic: JSON string in message.content
-    const content = msg.content.trim();
-    console.log("RAW_OPENAI_CONTENT_START");
-    console.log(content);
-    console.log("RAW_OPENAI_CONTENT_END");
-
-    planAny = JSON.parse(content);
-  } else if (msg?.content && typeof msg.content === "object") {
-    // Some SDKs already parse JSON into an object
-    console.log(
-      "OpenAI message.content is already an object; using it directly."
-    );
-    planAny = msg.content;
-  } else {
-    console.error("OpenAI response missing usable JSON content:", raw);
-    throw new Error("OpenAI response missing usable JSON content");
-  }
-
-  const plan = planAny as WeekPlan;
-
-  const anyPlan = plan as any;
-  if (!anyPlan || !Array.isArray(anyPlan.days)) {
-    console.error("OpenAI JSON did not include days[] as expected:", plan);
-    throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
-  }
-
-  if (!Array.isArray(anyPlan.recipes)) {
-    console.warn(
-      "OpenAI JSON missing recipes[]; adding empty recipes array to keep frontend safe."
-    );
-    anyPlan.recipes = [];
-  }
-
-  // Explicitly mark that this came from OpenAI
-  anyPlan.mode = "ai";
-  anyPlan.generatedAt = anyPlan.generatedAt || new Date().toISOString();
-
-  return plan;
+  // Shouldn’t get here, but TypeScript wants a return or throw
+  throw lastError || new Error("Unknown error calling OpenAI");
 }
 
 // Shared handler so we can mount it on both /api/meal-plan and /proxy/meal-plan
@@ -320,15 +375,10 @@ async function handleAiMealPlan(req: Request, res: Response) {
     } catch (err: any) {
       console.error("OpenAI meal plan generation failed:", err);
 
+      const msg = err?.message || "Failed while generating AI 7-day meal plan.";
       const isAbort =
         err?.name === "AbortError" ||
-        String(err?.message || "").toLowerCase().includes("aborted");
-
-      const msg = isAbort
-        ? `Timed out talking to OpenAI (>${Math.round(
-            OPENAI_TIMEOUT_MS / 1000
-          )}s).`
-        : err?.message || "Failed while generating AI 7-day meal plan.";
+        String(msg || "").toLowerCase().includes("aborted");
 
       return res.status(isAbort ? 504 : 500).json({
         ok: false,
