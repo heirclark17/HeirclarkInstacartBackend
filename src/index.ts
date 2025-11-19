@@ -17,6 +17,8 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s default
+
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -219,7 +221,7 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  const resp = await fetchWithTimeout(
+    const resp = await fetchWithTimeout(
     "https://api.openai.com/v1/chat/completions",
     {
       method: "POST",
@@ -229,8 +231,9 @@ async function callOpenAiMealPlan(
       },
       body: JSON.stringify(payload),
     },
-    8000 // 8s timeout
+    OPENAI_TIMEOUT_MS
   );
+
 
   if (!resp.ok) {
     const txt = await resp.text();
@@ -295,19 +298,27 @@ async function handleAiMealPlan(req: Request, res: Response) {
 
     let weekPlan: WeekPlan;
 
-    try {
+       try {
       weekPlan = await callOpenAiMealPlan(constraints);
     } catch (err: any) {
       console.error("OpenAI meal plan generation failed:", err);
-      // IMPORTANT: do NOT silently fall back here.
-      // Tell the frontend it was an AI failure so it can show the alert.
-      return res.status(504).json({
+
+      const isAbort =
+        err?.name === "AbortError" ||
+        String(err?.message || "").toLowerCase().includes("aborted");
+
+      const msg = isAbort
+        ? `Timed out talking to OpenAI (>${Math.round(
+            OPENAI_TIMEOUT_MS / 1000
+          )}s).`
+        : err?.message || "Failed while generating AI 7-day meal plan.";
+
+      return res.status(isAbort ? 504 : 500).json({
         ok: false,
-        error:
-          err?.message ||
-          "Timed out or failed while generating AI 7-day meal plan.",
+        error: msg,
       });
     }
+
 
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
