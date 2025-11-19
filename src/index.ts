@@ -17,21 +17,18 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ---------- Root health ----------
+// ======================================================================
+//                          HEALTH / ROOT
+// ======================================================================
+
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// ---------- OPEN GET ping for app proxy (debug only) ----------
-app.get("/proxy/build-list", (req: Request, res: Response) => {
-  res.status(200).json({
-    ok: true,
-    via: "app-proxy",
-    ping: req.query.ping ?? null,
-  });
-});
+// ======================================================================
+//                      HMAC VERIFICATION (APP PROXY)
+// ======================================================================
 
-// ---------- HMAC verification for App Proxy ----------
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -74,7 +71,10 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// ---------- Types ----------
+// ======================================================================
+//                            TYPES (INSTACART)
+// ======================================================================
+
 interface HcItem {
   name: string;
   quantity?: number;
@@ -97,16 +97,23 @@ interface HcRequestBody {
   items?: HcItem[];
   lineItems?: HcItem[];
   recipeLandingUrl?: string;
-  retailerKey?: string | null; // selected retailer from store picker (optional)
+  retailerKey?: string | null;
 }
 
 // ======================================================================
-//                      AI MEAL PLAN API ENDPOINTS
+//                      AI MEAL PLAN CORE HANDLERS
+// ======================================================================
+// We implement handlers once, then mount them under:
+//   - /api/meal-plan*   (direct backend calls)
+//   - /proxy/meal-plan* (Shopify App Proxy via /apps/instacart/...)
+//
+// On Shopify side, calls should be:
+//   POST /apps/instacart/meal-plan
+//   POST /apps/instacart/meal-plan/adjust
+//   POST /apps/instacart/meal-plan/from-pantry
 // ======================================================================
 
-// POST /api/meal-plan
-// - Generates a 7-day meal plan based on macros, budget, allergies, skill level
-app.post("/api/meal-plan", (req: Request, res: Response) => {
+function handleGenerateMealPlan(req: Request, res: Response) {
   try {
     const constraints = req.body as UserConstraints;
 
@@ -125,17 +132,15 @@ app.post("/api/meal-plan", (req: Request, res: Response) => {
     const weekPlan: WeekPlan = generateWeekPlan(constraints);
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
-    console.error("Error in /api/meal-plan:", err);
+    console.error("Error in generateMealPlan:", err);
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to generate meal plan",
     });
   }
-});
+}
 
-// POST /api/meal-plan/adjust
-// body: { weekPlan, actualIntake: { [date]: { caloriesDelta: number } } }
-app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
+function handleAdjustMealPlan(req: Request, res: Response) {
   try {
     const { weekPlan, actualIntake } = req.body as {
       weekPlan: WeekPlan;
@@ -159,17 +164,15 @@ app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
     const adjusted = adjustWeekPlan(weekPlan, actualIntake);
     return res.status(200).json({ ok: true, weekPlan: adjusted });
   } catch (err: any) {
-    console.error("Error in /api/meal-plan/adjust:", err);
+    console.error("Error in adjustMealPlan:", err);
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to adjust meal plan",
     });
   }
-});
+}
 
-// POST /api/meal-plan/from-pantry
-// body: { constraints, pantry: string[] }
-app.post("/api/meal-plan/from-pantry", (req: Request, res: Response) => {
+function handleMealPlanFromPantry(req: Request, res: Response) {
   try {
     const { constraints, pantry } = req.body as {
       constraints: UserConstraints;
@@ -198,56 +201,41 @@ app.post("/api/meal-plan/from-pantry", (req: Request, res: Response) => {
     const weekPlan: WeekPlan = generateFromPantry(constraints, pantry);
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
-    console.error("Error in /api/meal-plan/from-pantry:", err);
+    console.error("Error in mealPlanFromPantry:", err);
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to generate from pantry",
     });
   }
+}
+
+// ---------- Direct API (not via Shopify proxy) ----------
+app.post("/api/meal-plan", handleGenerateMealPlan);
+app.post("/api/meal-plan/adjust", handleAdjustMealPlan);
+app.post("/api/meal-plan/from-pantry", handleMealPlanFromPantry);
+
+// ---------- Shopify App Proxy versions ----------
+// Shopify: /apps/instacart/meal-plan → backend: /proxy/meal-plan
+app.post("/proxy/meal-plan", verifyAppProxy, handleGenerateMealPlan);
+app.post("/proxy/meal-plan/adjust", verifyAppProxy, handleAdjustMealPlan);
+app.post(
+  "/proxy/meal-plan/from-pantry",
+  verifyAppProxy,
+  handleMealPlanFromPantry
+);
+
+// ======================================================================
+//                  INSTACART / APP PROXY ROUTES (EXISTING)
+// ======================================================================
+
+// Simple debug GET for proxy root: /apps/instacart?ping=1
+app.get("/proxy/build-list", (req: Request, res: Response) => {
+  res.status(200).json({
+    ok: true,
+    via: "app-proxy",
+    ping: req.query.ping ?? null,
+  });
 });
-
-// ======================================================================
-//                AI MEAL PLAN VIA SHOPIFY APP PROXY
-// ======================================================================
-
-// POST /proxy/meal-plan
-// Called by Shopify App Proxy (/apps/meal-plan) to build smart 7-day plan
-app.post("/proxy/meal-plan", verifyAppProxy, (req: Request, res: Response) => {
-  try {
-    const raw = req.body as any;
-
-    // Support either { constraints: {...} } or plain constraints in the body
-    const constraints: UserConstraints =
-      raw && typeof raw === "object" && raw.constraints
-        ? (raw.constraints as UserConstraints)
-        : (raw as UserConstraints);
-
-    if (
-      !constraints ||
-      typeof constraints.dailyCalories !== "number" ||
-      typeof constraints.budgetPerDay !== "number"
-    ) {
-      return res.status(400).json({
-        ok: false,
-        error:
-          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
-      });
-    }
-
-    const weekPlan: WeekPlan = generateWeekPlan(constraints);
-    return res.status(200).json({ ok: true, weekPlan });
-  } catch (err: any) {
-    console.error("Error in /proxy/meal-plan:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "Failed to generate meal plan via proxy",
-    });
-  }
-});
-
-// ======================================================================
-//                      INSTACART / APP PROXY ROUTES
-// ======================================================================
 
 // ---------- GET /proxy/retailers (store picker support) ----------
 app.get(
@@ -425,7 +413,7 @@ app.post(
         Authorization: `Bearer ${apiKey}`,
       };
 
-      // ---------- 1) Call /products/products_link ----------
+      // 1) Shopping list / products_link
       const productsResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
@@ -451,8 +439,7 @@ app.post(
 
         if (productsResp.status === 403) {
           message =
-            "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. " +
-            "Please confirm that Product Links / Shopping List Pages are enabled for this key.";
+            "Forbidden – your Instacart API key or account is not authorized to use the shopping list endpoint. Please confirm that Product Links / Shopping List Pages are enabled for this key.";
         } else if (productsData && typeof productsData === "object") {
           if (productsData.error && typeof productsData.error === "object") {
             message =
@@ -491,7 +478,7 @@ app.post(
         });
       }
 
-      // ---------- 2) Call /products/recipe ----------
+      // 2) Optional recipe link
       let recipeProductsLinkUrl: string | null = null;
       let recipeError: string | null = null;
 
@@ -667,7 +654,10 @@ app.post(
   }
 );
 
-// ---------- Start server ----------
+// ======================================================================
+//                        START SERVER
+// ======================================================================
+
 app.listen(PORT, () => {
-  console.log(`Heirclark Instacart backend listening on port ${PORT}`);
+  console.log(`Heirclark backend listening on port ${PORT}`);
 });
