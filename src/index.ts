@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s default
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 60000); // 60s default
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -26,9 +26,10 @@ app.use(express.urlencoded({ extended: true }));
 //                         AI MEAL PLAN HELPERS
 // ======================================================================
 
-// Build a safe, minimal WeekPlan skeleton (used as local fallback)
+// Build a safe, minimal WeekPlan skeleton (used when AI fails)
 function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
   try {
+    // Use your existing generator if it’s implemented
     return generateWeekPlan(constraints);
   } catch {
     const days = Array.from({ length: 7 }).map((_, i) => ({
@@ -80,7 +81,7 @@ function fetchWithTimeout(
   options: any,
   timeoutMs: number
 ): Promise<globalThis.Response> {
-  const controller = new AbortController();
+  const controller = new AbortController(); // safe constructor in Node 18+
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   return fetch(url, { ...options, signal: controller.signal }).finally(() => {
@@ -88,132 +89,156 @@ function fetchWithTimeout(
   });
 }
 
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] (+ optional recipes[])
+// IMPORTANT: This function now ALWAYS returns a WeekPlan.
+// On any error / timeout / bad JSON → it returns buildFallbackWeekPlan(constraints).
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
 ): Promise<WeekPlan> {
+  // If no key, just return fallback
   if (!OPENAI_API_KEY) {
-    console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
-
-  const payload = {
-  model: OPENAI_MODEL,
-  temperature: 0.6,
-  response_format: { type: "json_object" as const },
-  messages: [
-    {
-      role: "system",
-      content:
-        "You are a nutrition coach creating practical 7-day meal plans for a health + grocery shopping app. " +
-        "Return ONLY valid JSON (no markdown). Include a day-level view AND, if possible, a recipes list with ingredients. " +
-        "Keep text concise and avoid long descriptions so the JSON stays small.",
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        instructions:
-          "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
-          "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
-        constraints,
-        pantry: pantry || [],
-        schema: {
-          mode: "ai",
-          generatedAt: "ISO 8601 timestamp string",
-          constraints:
-            "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
-          days: [
-            {
-              day: "1–7 (1-based index)",
-              label: "e.g., 'Day 1'",
-              meals: [
-                {
-                  type: "breakfast | lunch | dinner",
-                  recipeId: "matches id in recipes[].id",
-                  title: "Short recipe name",
-                  calories: "number",
-                  protein: "number",
-                  carbs: "number",
-                  fats: "number",
-                  portionLabel: "e.g. '6 oz', '1 plate'",
-                  notes: "short, practical instructions",
-                },
-              ],
-            },
-          ],
-          recipes: [
-            {
-              id: "unique id; referenced by meals[].recipeId",
-              name: "Recipe title",
-              ingredients: [
-                {
-                  name: "ingredient name",
-                  quantity: "number per serving",
-                  unit: "e.g. 'oz','cup','tbsp','each'",
-                  instacart_query:
-                    "optional; search string to use for Instacart",
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    },
-  ],
-};
-
-
-  const started = Date.now();
-  console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL, {
-    timeoutMs: OPENAI_TIMEOUT_MS,
-    hasPantry: !!pantry && pantry.length > 0,
-  });
-
-  const resp = await fetchWithTimeout(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(payload),
-    },
-    OPENAI_TIMEOUT_MS
-  );
-
-  const elapsed = Date.now() - started;
-  console.log("OpenAI /chat/completions finished in", elapsed, "ms");
-
-  if (!resp.ok) {
-    const txt = await resp.text();
-    console.error("OpenAI /chat/completions error:", resp.status, txt);
-    throw new Error(`OpenAI error: HTTP ${resp.status}`);
-  }
-
-  const json = await resp.json();
-  const choice = (json as any)?.choices?.[0];
-  const content = choice?.message?.content;
-  const finishReason = choice?.finish_reason;
-  const usage = (json as any)?.usage;
-
-  console.log("OpenAI finish_reason:", finishReason || "unknown");
-  if (usage) {
-    console.log("OpenAI usage:", usage);
-  }
-
-  // If OpenAI hit a length limit, the JSON will often be truncated.
-  if (finishReason && finishReason !== "stop") {
-    console.error(
-      "OpenAI did not finish cleanly (finish_reason != 'stop'). Using local fallback.",
-      finishReason
-    );
+    console.warn("OPENAI_API_KEY is not set – using fallback week plan.");
     return buildFallbackWeekPlan(constraints);
   }
 
+  const payload = {
+    model: OPENAI_MODEL,
+    temperature: 0.6,
+    response_format: { type: "json_object" as const },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a nutrition coach creating practical 7-day meal plans " +
+          "for a health + grocery shopping app. " +
+          "You MUST return ONLY valid JSON (no markdown). " +
+          "Keep text concise and avoid long descriptions so the JSON stays small.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions:
+            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
+            "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
+          constraints,
+          pantry: pantry || [],
+          schema: {
+            mode: "ai",
+            generatedAt: "ISO 8601 timestamp string",
+            constraints:
+              "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
+
+            // Minimal shape so the model doesn't go crazy with size
+            days: [
+              {
+                day: "1–7 (1-based index)",
+                label: "e.g., 'Day 1'",
+                meals: [
+                  {
+                    type: "breakfast | lunch | dinner",
+                    recipeId: "matches recipes[].id",
+                    title: "Short recipe name",
+                    calories: "number",
+                    protein: "number",
+                    carbs: "number",
+                    fats: "number",
+                    portionLabel: "e.g. '6 oz', '1 plate'",
+                    notes: "short, practical instructions",
+                  },
+                ],
+              },
+            ],
+
+            recipes: [
+              {
+                id: "unique id; referenced by meals[].recipeId",
+                name: "Recipe title",
+                ingredients: [
+                  {
+                    name: "ingredient name",
+                    quantity: "number per serving",
+                    unit: "e.g. 'oz','cup','tbsp','each'",
+                    instacart_query:
+                      "optional; search string to use for Instacart",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      },
+    ],
+  };
+
+  console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL, {
+    timeoutMs: OPENAI_TIMEOUT_MS,
+    hasPantry: !!(pantry && pantry.length),
+  });
+
+  const started = Date.now();
+  let resp: globalThis.Response;
+
+  // ---- Network / timeout protection ----
+  try {
+    resp = await fetchWithTimeout(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify(payload),
+      },
+      OPENAI_TIMEOUT_MS
+    );
+  } catch (err: any) {
+    const isAbort =
+      err?.name === "AbortError" ||
+      String(err?.message || "").toLowerCase().includes("aborted");
+
+    console.error(
+      "OpenAI /chat/completions fetch failed (network/timeout):",
+      err
+    );
+
+    if (isAbort) {
+      console.warn(
+        `OpenAI call aborted after ~${Math.round(
+          OPENAI_TIMEOUT_MS / 1000
+        )}s – returning fallback plan.`
+      );
+    }
+
+    return buildFallbackWeekPlan(constraints);
+  }
+
+  const duration = Date.now() - started;
+  console.log(
+    `OpenAI /chat/completions finished in ${duration} ms with status ${resp.status}`
+  );
+
+  // ---- HTTP error from OpenAI → fallback ----
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.error("OpenAI /chat/completions error:", resp.status, txt);
+    return buildFallbackWeekPlan(constraints);
+  }
+
+  // ---- Parse JSON body safely ----
+  let json: any;
+  try {
+    json = await resp.json();
+  } catch (err) {
+    console.error("Failed to decode OpenAI JSON body:", err);
+    return buildFallbackWeekPlan(constraints);
+  }
+
+  const content = json?.choices?.[0]?.message?.content;
+
   if (!content || typeof content !== "string") {
-    console.error("OpenAI response missing content:", json);
+    console.error("OpenAI response missing content field:", json);
     return buildFallbackWeekPlan(constraints);
   }
 
@@ -226,8 +251,8 @@ async function callOpenAiMealPlan(
     plan = JSON.parse(content);
   } catch (err) {
     console.error(
-      "Failed to parse OpenAI JSON, falling back to local plan. Error:",
-      err
+      "Failed to parse OpenAI JSON. Raw (first 800 chars):",
+      content.slice(0, 800)
     );
     return buildFallbackWeekPlan(constraints);
   }
@@ -245,7 +270,7 @@ async function callOpenAiMealPlan(
     anyPlan.recipes = [];
   }
 
-  // Explicitly mark that this came from OpenAI
+  // Explicitly mark that this came from AI
   anyPlan.mode = "ai";
   anyPlan.generatedAt = anyPlan.generatedAt || new Date().toISOString();
 
@@ -271,31 +296,8 @@ async function handleAiMealPlan(req: Request, res: Response) {
       });
     }
 
-    let weekPlan: WeekPlan;
-
-    try {
-      weekPlan = await callOpenAiMealPlan(constraints);
-    } catch (err: any) {
-      console.error("OpenAI meal plan generation failed:", err);
-
-      const isAbort =
-        err?.name === "AbortError" ||
-        String(err?.message || "").toLowerCase().includes("aborted");
-
-      const msg = isAbort
-        ? `Timed out talking to OpenAI (>${Math.round(
-            OPENAI_TIMEOUT_MS / 1000
-          )}s).`
-        : err?.message || "Failed while generating AI 7-day meal plan.";
-
-      // If OpenAI completely fails, we still give the user a local plan
-      const fallback = buildFallbackWeekPlan(constraints);
-      return res.status(isAbort ? 504 : 500).json({
-        ok: false,
-        error: msg,
-        weekPlan: fallback,
-      });
-    }
+    // This will either be an AI plan or a local fallback, but never throws.
+    const weekPlan = await callOpenAiMealPlan(constraints);
 
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
@@ -374,6 +376,7 @@ app.post("/api/meal-plan/from-pantry", async (req: Request, res: Response) => {
       });
     }
 
+    // Same idea: try AI, fall back to your pantry-based generator on failure.
     let weekPlan: WeekPlan;
     try {
       weekPlan = await callOpenAiMealPlan(constraints, pantry);
