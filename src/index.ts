@@ -64,15 +64,22 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
       ],
     }));
 
+    // NEW: include empty recipes[] so frontend can safely probe for it
     return {
       mode: "fallback",
       generatedAt: new Date().toISOString(),
       constraints,
       days,
+      // @ts-expect-error – WeekPlan may not formally have recipes yet,
+      // but we add it so hc-seven-day-plan.js can check safely.
+      recipes: [],
     } as unknown as WeekPlan;
   }
 }
 
+// This helper now asks OpenAI to return a WeekPlan that includes:
+// - days[]: with breakfast/lunch/dinner referencing recipeId
+// - recipes[]: each recipe has ingredients[] suitable for Instacart mapping
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -90,42 +97,111 @@ async function callOpenAiMealPlan(
       {
         role: "system",
         content:
-          "You are a nutrition coach creating detailed, practical 7-day meal plans. " +
-          "Return ONLY valid JSON matching the schema I give you. Do not include markdown.",
+          "You are a nutrition coach creating detailed, practical 7-day meal plans " +
+          "for a health + grocery shopping app. " +
+          "You MUST return ONLY valid JSON (no markdown) matching the schema I give you. " +
+          "Include both the day-level view AND a recipes list with structured ingredients " +
+          "that can be used to generate a grocery list.",
       },
       {
         role: "user",
         content: JSON.stringify({
           instructions:
-            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill.",
+            "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
+            "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
           constraints,
           pantry: pantry || [],
           schema: {
             mode: "ai",
             generatedAt: "ISO 8601 timestamp string",
-            constraints: "Echo of the inputs you received",
+            constraints: "Echo of the inputs you received (dailyCalories, macros, budget, etc.)",
+
+            // days[] is what the frontend uses to render the 7-day calendar
             days: [
               {
-                dayIndex: "0-based index (0–6)",
-                label: "e.g., 'Day 1' or 'Monday'",
-                note: "Short motivational or practical note for the day",
+                day: "1–7 (1-based index)",
+                index: "optional; 0-based or 1-based index – may include both",
+                isoDate: "YYYY-MM-DD string (optional but recommended)",
+                label: "e.g., 'Day 1 • Monday' or 'Day 1'",
+
+                note: "Short motivational or practical note for the day (optional)",
+
                 meals: [
                   {
+                    // REQUIRED: must be breakfast | lunch | dinner (lowercase)
                     type: "breakfast | lunch | dinner",
+
+                    // REQUIRED: id of a recipe that appears in recipes[].id
+                    recipeId:
+                      "String ID that matches the id of a recipe in recipes[]",
+
+                    // Short recipe title used in UI, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'
                     title:
-                      "Short recipe name, e.g., 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
+                      "Short recipe name for the meal card, may match recipe.name",
+
+                    // Approximate macros for this meal
                     calories: "number (approx calories for this meal)",
-                    protein: "grams of protein",
-                    carbs: "grams of carbs",
-                    fats: "grams of fats",
+                    protein: "number (grams of protein)",
+                    carbs: "number (grams of carbs)",
+                    fats: "number (grams of fats)",
+
+                    // Portion display used inline next to the recipe name
                     portionLabel:
-                      "optional; e.g., '6 oz', '1 bowl', '1 plate' (used inline next to title)",
+                      "optional; string like '6 oz', '1 bowl', '1 plate'",
                     portionOz:
-                      "optional; numeric oz value if relevant (e.g., 6)",
+                      "optional; numeric ounces if relevant (e.g., 6 for 6 oz)",
+
+                    servings:
+                      "optional; number of servings for this meal (default 1)",
+
                     notes:
-                      "optional; 1-2 sentence instructions or reminders for the meal",
-                    ingredients:
-                      "optional; array of ingredient strings for shopping list",
+                      "optional; 1–2 sentence instructions or reminders for the meal (quick, practical).",
+                  },
+                ],
+              },
+            ],
+
+            // recipes[] is what we aggregate into Instacart ingredients
+            recipes: [
+              {
+                id: "unique string id; must match meals[].recipeId",
+                name:
+                  "Recipe title, e.g. 'Broiled Salmon w/ Sweet Potatoes & Asparagus'",
+                mealType:
+                  "optional; 'breakfast' | 'lunch' | 'dinner' | other string",
+                defaultServings: "optional; number of servings per recipe",
+                tags:
+                  "optional; string tags like ['high_protein','plate_method']",
+
+                ingredients: [
+                  {
+                    id: "optional ingredient id; can be omitted",
+                    name:
+                      "ingredient name, e.g. 'Salmon fillet' (this is used for display and Instacart)",
+                    quantity:
+                      "number representing amount per SERVING (e.g. 6 for 6 oz)",
+                    unit:
+                      "unit like 'oz', 'cup', 'tbsp', 'each', 'medium', etc.",
+                    instacart_query:
+                      "optional; search string to use for Instacart, defaults to name if omitted",
+                    category:
+                      "optional; e.g. 'protein', 'carb', 'veggie', 'fruit', 'fat', etc.",
+                    pantry:
+                      "optional boolean; true if typically a pantry item (e.g. olive oil, spices)",
+                    optional:
+                      "optional boolean; true if user could skip this ingredient",
+                    displayText:
+                      "optional; nicer display label like 'Salmon fillet (fresh)', otherwise use name",
+
+                    // Optional mapping details for more advanced integrations
+                    productIds:
+                      "optional array of numeric or string product IDs (if you know them, else omit)",
+                    upcs:
+                      "optional array of UPC strings (if you know them, else omit)",
+                    measurements:
+                      "optional object for per-unit measurement details (e.g. { perUnitOz: 6 })",
+                    filters:
+                      "optional object for constraints (e.g. { organic: true })",
                   },
                 ],
               },
@@ -168,9 +244,18 @@ async function callOpenAiMealPlan(
   }
 
   // Make sure basic fields exist
-  if (!plan || !Array.isArray((plan as any).days)) {
-    console.error("OpenAI JSON did not match expected WeekPlan shape:", plan);
-    throw new Error("Invalid WeekPlan shape from OpenAI");
+  const anyPlan = plan as any;
+  if (!anyPlan || !Array.isArray(anyPlan.days)) {
+    console.error("OpenAI JSON did not include days[] as expected:", plan);
+    throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
+  }
+
+  // NEW: ensure recipes[] exists so frontend can aggregate ingredients
+  if (!Array.isArray(anyPlan.recipes)) {
+    console.warn(
+      "OpenAI JSON missing recipes[]; adding empty recipes array to keep frontend safe."
+    );
+    anyPlan.recipes = [];
   }
 
   return plan;
@@ -204,6 +289,7 @@ async function handleAiMealPlan(req: Request, res: Response) {
       weekPlan = buildFallbackWeekPlan(constraints);
     }
 
+    // IMPORTANT: this is what the frontend expects: { ok: true, weekPlan }
     return res.status(200).json({ ok: true, weekPlan });
   } catch (err: any) {
     console.error("Error in AI meal plan handler:", err);
