@@ -4,7 +4,7 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 
 // If you already have these types/services defined, keep these imports.
-// They’re used as a fallback if OpenAI is not configured or fails.
+// They’re used as a fallback for other endpoints.
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
 import {
   generateWeekPlan,
@@ -25,9 +25,8 @@ app.use(express.urlencoded({ extended: true }));
 //                         AI MEAL PLAN HELPERS
 // ======================================================================
 
-// Build a safe, minimal WeekPlan skeleton in case OpenAI fails
+// Build a safe, minimal WeekPlan skeleton (used in non-AI endpoints only)
 function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
-  // Use your existing generator if available
   try {
     return generateWeekPlan(constraints);
   } catch {
@@ -64,7 +63,6 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
       ],
     }));
 
-    // NEW: include empty recipes[] so frontend can safely probe for it
     return {
       mode: "fallback",
       generatedAt: new Date().toISOString(),
@@ -75,8 +73,7 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
   }
 }
 
-// NEW: small helper to enforce a timeout on OpenAI calls
-// IMPORTANT: use globalThis.Response so we don't collide with Express's Response type
+// Small helper to enforce timeout on OpenAI calls
 function fetchWithTimeout(
   url: string,
   options: any,
@@ -90,16 +87,14 @@ function fetchWithTimeout(
   );
 }
 
-// This helper now asks OpenAI to return a WeekPlan that includes:
-// - days[]: with breakfast/lunch/dinner referencing recipeId
-// - recipes[]: each recipe has ingredients[] suitable for Instacart mapping
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
 ): Promise<WeekPlan> {
   if (!OPENAI_API_KEY) {
-    console.warn("OPENAI_API_KEY is not set – using fallback week plan.");
-    return buildFallbackWeekPlan(constraints);
+    console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
+    throw new Error("OPENAI_API_KEY is not configured");
   }
 
   const payload = {
@@ -206,8 +201,6 @@ async function callOpenAiMealPlan(
                       "optional boolean; true if user could skip this ingredient",
                     displayText:
                       "optional; nicer display label like 'Salmon fillet (fresh)', otherwise use name",
-
-                    // Optional mapping details for more advanced integrations
                     productIds:
                       "optional array of numeric or string product IDs (if you know them, else omit)",
                     upcs:
@@ -226,7 +219,6 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  // NEW: use fetchWithTimeout so Shopify app proxy doesn't hang forever
   const resp = await fetchWithTimeout(
     "https://api.openai.com/v1/chat/completions",
     {
@@ -237,7 +229,7 @@ async function callOpenAiMealPlan(
       },
       body: JSON.stringify(payload),
     },
-    8000 // 8s timeout; adjust if you need shorter/longer
+    8000 // 8s timeout
   );
 
   if (!resp.ok) {
@@ -262,20 +254,22 @@ async function callOpenAiMealPlan(
     throw new Error("Failed to parse OpenAI meal plan JSON");
   }
 
-  // Make sure basic fields exist
   const anyPlan = plan as any;
   if (!anyPlan || !Array.isArray(anyPlan.days)) {
     console.error("OpenAI JSON did not include days[] as expected:", plan);
     throw new Error("Invalid WeekPlan shape from OpenAI (missing days[])");
   }
 
-  // NEW: ensure recipes[] exists so frontend can aggregate ingredients
   if (!Array.isArray(anyPlan.recipes)) {
     console.warn(
       "OpenAI JSON missing recipes[]; adding empty recipes array to keep frontend safe."
     );
     anyPlan.recipes = [];
   }
+
+  // Explicitly mark that this came from OpenAI
+  anyPlan.mode = "ai";
+  anyPlan.generatedAt = anyPlan.generatedAt || new Date().toISOString();
 
   return plan;
 }
@@ -303,9 +297,16 @@ async function handleAiMealPlan(req: Request, res: Response) {
 
     try {
       weekPlan = await callOpenAiMealPlan(constraints);
-    } catch (err) {
-      console.error("OpenAI meal plan generation failed, using fallback:", err);
-      weekPlan = buildFallbackWeekPlan(constraints);
+    } catch (err: any) {
+      console.error("OpenAI meal plan generation failed:", err);
+      // IMPORTANT: do NOT silently fall back here.
+      // Tell the frontend it was an AI failure so it can show the alert.
+      return res.status(504).json({
+        ok: false,
+        error:
+          err?.message ||
+          "Timed out or failed while generating AI 7-day meal plan.",
+      });
     }
 
     return res.status(200).json({ ok: true, weekPlan });
@@ -322,14 +323,10 @@ async function handleAiMealPlan(req: Request, res: Response) {
 //                      AI MEAL PLAN API ENDPOINTS
 // ======================================================================
 
-// Primary REST endpoint (used if you call Railway directly)
 app.post("/api/meal-plan", handleAiMealPlan);
-
-// App Proxy endpoint under /apps/instacart/meal-plan → /proxy/meal-plan
 app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
 
 // POST /api/meal-plan/adjust
-// body: { weekPlan, actualIntake: { [date]: { caloriesDelta: number } } }
 app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
   try {
     const { weekPlan, actualIntake } = req.body as {
@@ -363,7 +360,6 @@ app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
 });
 
 // POST /api/meal-plan/from-pantry
-// body: { constraints, pantry: string[] }
 app.post("/api/meal-plan/from-pantry", async (req: Request, res: Response) => {
   try {
     const { constraints, pantry } = req.body as {
@@ -415,7 +411,6 @@ app.post("/api/meal-plan/from-pantry", async (req: Request, res: Response) => {
 //                      INSTACART / APP PROXY ROUTES
 // ======================================================================
 
-// ---------- Types for Instacart payload ----------
 interface HcItem {
   name: string;
   quantity?: number;
@@ -438,18 +433,15 @@ interface HcRequestBody {
   items?: HcItem[];
   lineItems?: HcItem[];
   recipeLandingUrl?: string;
-  retailerKey?: string | null; // selected retailer from store picker (optional)
+  retailerKey?: string | null;
 }
 
-// ======================================================================
-//                 ROOT HEALTH + BASIC DEBUG ENDPOINTS
-// ======================================================================
-
+// Root health
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// Simple open GET ping for App Proxy (debug only)
+// Simple open GET ping for App Proxy
 app.get("/proxy/build-list", (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
@@ -458,10 +450,7 @@ app.get("/proxy/build-list", (req: Request, res: Response) => {
   });
 });
 
-// ======================================================================
-//                      HMAC VERIFICATION (APP PROXY)
-// ======================================================================
-
+// HMAC verification
 function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   try {
     const secret = process.env.SHOPIFY_API_SECRET;
@@ -504,10 +493,7 @@ function verifyAppProxy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// ======================================================================
-//                      INSTACART RETAILERS ENDPOINT
-// ======================================================================
-
+// Instacart retailers endpoint
 app.get(
   "/proxy/retailers",
   verifyAppProxy,
@@ -584,10 +570,7 @@ app.get(
   }
 );
 
-// ======================================================================
-//                      INSTACART BUILD-LIST ENDPOINT
-// ======================================================================
-
+// Instacart build-list endpoint
 app.post(
   "/proxy/build-list",
   verifyAppProxy,
@@ -686,7 +669,6 @@ app.post(
         Authorization: `Bearer ${apiKey}`,
       };
 
-      // ---------- 1) /products/products_link ----------
       const productsResp = await fetch(
         `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
         {
@@ -752,7 +734,7 @@ app.post(
         });
       }
 
-      // ---------- 2) /products/recipe ----------
+      // Optional: recipe endpoint (safe to keep as you had it)
       let recipeProductsLinkUrl: string | null = null;
       let recipeError: string | null = null;
 
