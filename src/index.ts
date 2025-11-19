@@ -3,6 +3,14 @@
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 
+// ---- AI Meal Plan imports ----
+import { UserConstraints, WeekPlan } from "./types/mealPlan";
+import {
+  generateWeekPlan,
+  adjustWeekPlan,
+  generateFromPantry,
+} from "./services/mealPlanner";
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -91,6 +99,118 @@ interface HcRequestBody {
   recipeLandingUrl?: string;
   retailerKey?: string | null; // selected retailer from store picker (optional)
 }
+
+// ======================================================================
+//                      AI MEAL PLAN API ENDPOINTS
+// ======================================================================
+
+// POST /api/meal-plan
+// - Generates a 7-day meal plan based on macros, budget, allergies, skill level
+app.post("/api/meal-plan", (req: Request, res: Response) => {
+  try {
+    const constraints = req.body as UserConstraints;
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.budgetPerDay !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
+      });
+    }
+
+    const weekPlan: WeekPlan = generateWeekPlan(constraints);
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err: any) {
+    console.error("Error in /api/meal-plan:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate meal plan",
+    });
+  }
+});
+
+// POST /api/meal-plan/adjust
+// body: { weekPlan, actualIntake: { [date]: { caloriesDelta: number } } }
+// - Adjusts future days when the user goes over/under calories
+app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
+  try {
+    const { weekPlan, actualIntake } = req.body as {
+      weekPlan: WeekPlan;
+      actualIntake: Record<string, { caloriesDelta: number }>;
+    };
+
+    if (!weekPlan || !Array.isArray(weekPlan.days)) {
+      return res.status(400).json({
+        ok: false,
+        error: "weekPlan with days[] is required.",
+      });
+    }
+
+    if (!actualIntake || typeof actualIntake !== "object") {
+      return res.status(400).json({
+        ok: false,
+        error: "actualIntake map is required.",
+      });
+    }
+
+    const adjusted = adjustWeekPlan(weekPlan, actualIntake);
+    return res.status(200).json({ ok: true, weekPlan: adjusted });
+  } catch (err: any) {
+    console.error("Error in /api/meal-plan/adjust:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to adjust meal plan",
+    });
+  }
+});
+
+// POST /api/meal-plan/from-pantry
+// body: { constraints, pantry: string[] }
+// - Generates a 7-day plan using what the user has in their fridge/pantry
+app.post("/api/meal-plan/from-pantry", (req: Request, res: Response) => {
+  try {
+    const { constraints, pantry } = req.body as {
+      constraints: UserConstraints;
+      pantry: string[];
+    };
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.budgetPerDay !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints. Expect at least dailyCalories and budgetPerDay as numbers.",
+      });
+    }
+
+    if (!Array.isArray(pantry)) {
+      return res.status(400).json({
+        ok: false,
+        error: "pantry must be an array of strings.",
+      });
+    }
+
+    const weekPlan: WeekPlan = generateFromPantry(constraints, pantry);
+    return res.status(200).json({ ok: true, weekPlan });
+  } catch (err: any) {
+    console.error("Error in /api/meal-plan/from-pantry:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate from pantry",
+    });
+  }
+});
+
+// ======================================================================
+//                      INSTACART / APP PROXY ROUTES
+// ======================================================================
 
 // ---------- GET /proxy/retailers (store picker support) ----------
 app.get(
