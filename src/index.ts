@@ -76,11 +76,12 @@ function buildFallbackWeekPlan(constraints: UserConstraints): WeekPlan {
 }
 
 // NEW: small helper to enforce a timeout on OpenAI calls
+// IMPORTANT: use globalThis.Response so we don't collide with Express's Response type
 function fetchWithTimeout(
   url: string,
   options: any,
   timeoutMs: number
-): Promise<Response> {
+): Promise<globalThis.Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -246,7 +247,7 @@ async function callOpenAiMealPlan(
   }
 
   const json = await resp.json();
-  const content = json?.choices?.[0]?.message?.content;
+  const content = (json as any)?.choices?.[0]?.message?.content;
 
   if (!content || typeof content !== "string") {
     console.error("OpenAI response missing content:", json);
