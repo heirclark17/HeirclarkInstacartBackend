@@ -16,7 +16,11 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
+
+// BUMPED: allow more time for detailed plans
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 45000); // 45s
+// NEW: cap but allow large, detailed responses
+const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 5500);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -52,6 +56,8 @@ async function callOpenAiMealPlan(
   const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
+    // NEW: keep the answer big, but bounded
+    max_output_tokens: OPENAI_MAX_TOKENS,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -99,7 +105,7 @@ async function callOpenAiMealPlan(
                         portionOz: { type: "number" },
                         servings: { type: "number" },
                         notes: { type: "string" },
-                        // optional: can also hold a short version of instructions if the model wants
+                        // optional: short-form instructions at meal level
                         instructions: {
                           anyOf: [
                             { type: "string" },
@@ -183,7 +189,7 @@ async function callOpenAiMealPlan(
                       ],
                     },
                   },
-                  // NEW: extremely detailed, step-by-step cooking instructions
+                  // Extremely detailed, step-by-step cooking instructions
                   instructions: {
                     anyOf: [
                       { type: "string" },
@@ -347,7 +353,7 @@ async function callOpenAiMealPlan(
         ? r.tags.map((t: any) => String(t))
         : undefined,
       ingredients,
-      // NEW: pass through detailed instructions for the frontend modal
+      // Pass through detailed instructions for the frontend modal
       instructions,
     };
   });
@@ -370,8 +376,7 @@ async function callOpenAiMealPlan(
           const rid = m.recipeId ? String(m.recipeId) : undefined;
           const recMeta = rid ? recipeMap.get(rid) : undefined;
 
-          // Optional short-form instructions at meal level (not required,
-          // frontend prefers recipe.instructions but can fall back to notes)
+          // Optional short-form instructions at meal level
           let mealInstructions: string | string[] | undefined;
           if (Array.isArray(m.instructions)) {
             mealInstructions = m.instructions.map((s: any) => String(s));
@@ -977,7 +982,7 @@ app.post(
 
         if (partnerLinkbackUrl) {
           recipePayload.landing_page_configuration = {
-            partner_linkback_url: partnerLinkbackUrl,
+            partner_linkback_url: partnerLinkback_url,
             enable_pantry_items: true,
           };
         }
