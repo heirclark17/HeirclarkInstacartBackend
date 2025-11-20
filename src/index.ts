@@ -49,7 +49,7 @@ async function callOpenAiMealPlan(
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const payload = {
+   const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
     response_format: {
@@ -64,25 +64,23 @@ async function callOpenAiMealPlan(
             mode: { type: "string" },
             generatedAt: { type: "string" },
             constraints: {
-              constraints: {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    dailyCalories: { type: "number" },
-    proteinGrams: { type: "number" },
-    carbsGrams: { type: "number" },
-    fatsGrams: { type: "number" },
-    budgetPerDay: { type: "number" },
-  },
-  required: [
-    "dailyCalories",
-    "proteinGrams",
-    "carbsGrams",
-    "fatsGrams",
-    "budgetPerDay", // 👈 add this line
-  ],
-},
-
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                dailyCalories: { type: "number" },
+                proteinGrams: { type: "number" },
+                carbsGrams: { type: "number" },
+                fatsGrams: { type: "number" },
+                budgetPerDay: { type: "number" },
+              },
+              required: [
+                "dailyCalories",
+                "proteinGrams",
+                "carbsGrams",
+                "fatsGrams",
+                "budgetPerDay",
+              ],
+            },
             days: {
               type: "array",
               items: {
@@ -196,7 +194,7 @@ async function callOpenAiMealPlan(
               },
             },
           },
-          required: ["days", "recipes"],
+          required: ["constraints", "days", "recipes"],
         },
       },
     } as const,
@@ -220,6 +218,7 @@ async function callOpenAiMealPlan(
       },
     ],
   };
+
 
   console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL);
 
