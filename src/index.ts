@@ -64,22 +64,25 @@ async function callOpenAiMealPlan(
             mode: { type: "string" },
             generatedAt: { type: "string" },
             constraints: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                dailyCalories: { type: "number" },
-                proteinGrams: { type: "number" },
-                carbsGrams: { type: "number" },
-                fatsGrams: { type: "number" },
-                budgetPerDay: { type: "number" },
-              },
-              required: [
-                "dailyCalories",
-                "proteinGrams",
-                "carbsGrams",
-                "fatsGrams",
-              ],
-            },
+              constraints: {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dailyCalories: { type: "number" },
+    proteinGrams: { type: "number" },
+    carbsGrams: { type: "number" },
+    fatsGrams: { type: "number" },
+    budgetPerDay: { type: "number" },
+  },
+  required: [
+    "dailyCalories",
+    "proteinGrams",
+    "carbsGrams",
+    "fatsGrams",
+    "budgetPerDay", // 👈 add this line
+  ],
+},
+
             days: {
               type: "array",
               items: {
