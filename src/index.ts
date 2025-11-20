@@ -769,11 +769,13 @@ app.post(
         line_items: instacartLineItems,
       };
 
-      if (partnerLinkbackUrl) {
-        instacartBody.landing_page_configuration = {
-          partner_linkback_url: partnerLinkback_url,
-        };
-      }
+     if (partnerLinkbackUrl) {
+  recipePayload.landing_page_configuration = {
+    partner_linkback_url: partnerLinkbackUrl,
+    enable_pantry_items: true,
+  };
+}
+
 
       if (retailerKey) {
         instacartBody.metadata = {
