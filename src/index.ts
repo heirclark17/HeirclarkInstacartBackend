@@ -261,7 +261,9 @@ async function callOpenAiMealPlan(
     console.log("RAW_OPENAI_CONTENT_END");
     aiJson = JSON.parse(content);
   } else if (msg?.content && typeof msg.content === "object") {
-    console.log("OpenAI message.content is already an object; using it directly.");
+    console.log(
+      "OpenAI message.content is already an object; using it directly."
+    );
     aiJson = msg.content;
   } else {
     console.error("OpenAI response missing usable JSON content:", raw);
@@ -769,13 +771,11 @@ app.post(
         line_items: instacartLineItems,
       };
 
-     if (partnerLinkbackUrl) {
-  recipePayload.landing_page_configuration = {
-    partner_linkback_url: partnerLinkbackUrl,
-    enable_pantry_items: true,
-  };
-}
-
+      if (partnerLinkbackUrl) {
+        instacartBody.landing_page_configuration = {
+          partner_linkback_url: partnerLinkbackUrl,
+        };
+      }
 
       if (retailerKey) {
         instacartBody.metadata = {
@@ -855,7 +855,7 @@ app.post(
         });
       }
 
-         // Optional: recipe endpoint (safe to keep as you had it)
+      // Optional: recipe endpoint
       let recipeProductsLinkUrl: string | null = null;
       let recipeError: string | null = null;
 
@@ -894,7 +894,6 @@ app.post(
               "Built from your Heirclark Wellness Plan 7-day nutrition recommendations.",
             ];
 
-        // 👇 THIS is where recipePayload is declared and used
         const recipePayload: any = {
           title: recipeTitle,
           ingredients: recipeIngredients,
@@ -1016,7 +1015,12 @@ app.post(
         recipe_products_link_url: recipeProductsLinkUrl,
         ...(recipeError ? { recipe_error: recipeError } : {}),
       });
-
+    } catch (err) {
+      console.error("Handler error in /proxy/build-list:", err);
+      return res.status(500).json({
+        ok: false,
+        error: "Server error in /proxy/build-list",
+      });
     }
   }
 );
