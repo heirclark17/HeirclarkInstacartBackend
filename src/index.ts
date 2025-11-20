@@ -3,8 +3,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 
-// If you already have these types/services defined, keep these imports.
-// They’re used as a fallback for non-AI endpoints.
+// Types / services
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
 import {
   generateWeekPlan,
@@ -17,17 +16,16 @@ const PORT = process.env.PORT || 3000;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s default
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 
 // ======================================================================
 //                         OPENAI HELPERS
 // ======================================================================
 
-// Enforce a timeout on OpenAI calls (so Railway doesn’t kill the process)
+// Enforce a timeout on OpenAI calls
 function fetchWithTimeout(
   url: string,
   options: any,
@@ -41,8 +39,6 @@ function fetchWithTimeout(
   });
 }
 
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
@@ -67,15 +63,35 @@ async function callOpenAiMealPlan(
           properties: {
             mode: { type: "string" },
             generatedAt: { type: "string" },
-            constraints: { type: "object" },
+            constraints: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                dailyCalories: { type: "number" },
+                proteinGrams: { type: "number" },
+                carbsGrams: { type: "number" },
+                fatsGrams: { type: "number" },
+                budgetPerDay: { type: "number" },
+              },
+              required: [
+                "dailyCalories",
+                "proteinGrams",
+                "carbsGrams",
+                "fatsGrams",
+              ],
+            },
             days: {
               type: "array",
               items: {
                 type: "object",
-                additionalProperties: true,
+                additionalProperties: false,
                 properties: {
-                  day: { anyOf: [{ type: "integer" }, { type: "string" }] },
-                  index: { anyOf: [{ type: "integer" }, { type: "string" }] },
+                  day: {
+                    anyOf: [{ type: "integer" }, { type: "string" }],
+                  },
+                  index: {
+                    anyOf: [{ type: "integer" }, { type: "string" }],
+                  },
                   isoDate: { type: "string" },
                   label: { type: "string" },
                   note: { type: "string" },
@@ -83,7 +99,7 @@ async function callOpenAiMealPlan(
                     type: "array",
                     items: {
                       type: "object",
-                      additionalProperties: true,
+                      additionalProperties: false,
                       properties: {
                         type: { type: "string" },
                         name: { type: "string" },
@@ -101,13 +117,14 @@ async function callOpenAiMealPlan(
                     },
                   },
                 },
+                required: ["meals"],
               },
             },
             recipes: {
               type: "array",
               items: {
                 type: "object",
-                additionalProperties: true,
+                additionalProperties: false,
                 properties: {
                   id: { type: "string" },
                   name: { type: "string" },
@@ -125,12 +142,15 @@ async function callOpenAiMealPlan(
                         { type: "string" },
                         {
                           type: "object",
-                          additionalProperties: true,
+                          additionalProperties: false,
                           properties: {
                             id: { type: "string" },
                             name: { type: "string" },
                             quantity: {
-                              anyOf: [{ type: "number" }, { type: "string" }],
+                              anyOf: [
+                                { type: "number" },
+                                { type: "string" },
+                              ],
                             },
                             unit: { type: "string" },
                             instacart_query: { type: "string" },
@@ -155,23 +175,21 @@ async function callOpenAiMealPlan(
                               type: "array",
                               items: {
                                 type: "object",
-                                additionalProperties: true,
+                                additionalProperties: false,
                                 properties: {
                                   quantity: { type: "number" },
                                   unit: { type: "string" },
                                 },
                               },
                             },
-                            filters: {
-                              type: "object",
-                              additionalProperties: true,
-                            },
                           },
+                          required: ["name"],
                         },
                       ],
                     },
                   },
                 },
+                required: ["id", "name", "ingredients"],
               },
             },
           },
@@ -224,6 +242,7 @@ async function callOpenAiMealPlan(
   const raw = (await resp.json()) as any;
   const msg = raw?.choices?.[0]?.message;
 
+  // Debug log
   try {
     console.log("OPENAI_RAW_MESSAGE", JSON.stringify(raw).slice(0, 2000));
   } catch {
@@ -267,9 +286,8 @@ async function callOpenAiMealPlan(
       recipeMap.set(id, { id, title: name });
     }
 
-    const ingredients =
-      Array.isArray(r.ingredients) ?
-        r.ingredients.map((ing: any) => {
+    const ingredients = Array.isArray(r.ingredients)
+      ? r.ingredients.map((ing: any) => {
           if (typeof ing === "string") {
             return {
               name: ing,
@@ -294,10 +312,9 @@ async function callOpenAiMealPlan(
             productIds: ing.productIds,
             upcs: ing.upcs,
             measurements: ing.measurements,
-            filters: ing.filters,
           };
-        }) :
-        [];
+        })
+      : [];
 
     return {
       id: id || name,
@@ -358,7 +375,7 @@ async function callOpenAiMealPlan(
   const weekPlan: WeekPlan = {
     mode: "ai",
     generatedAt: new Date().toISOString(),
-    constraints, // echo back the constraints we received
+    constraints,
     days: days as any,
     recipes: recipes as any,
   };
@@ -366,10 +383,6 @@ async function callOpenAiMealPlan(
   console.log("AI_WEEKPLAN_OK");
   return weekPlan;
 }
-
-// ======================================================================
-//                      AI MEAL PLAN HANDLER + ENDPOINTS
-// ======================================================================
 
 // ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
@@ -395,7 +408,7 @@ async function handleAiMealPlan(req: Request, res: Response) {
 
     let weekPlan: WeekPlan;
 
-    // 🚫 No fallback here – AI only
+    // AI only – no static fallback here
     try {
       weekPlan = await callOpenAiMealPlan(constraints);
       console.log("AI_WEEKPLAN_OK");
@@ -415,7 +428,6 @@ async function handleAiMealPlan(req: Request, res: Response) {
       });
     }
 
-    // If we got here, OpenAI succeeded
     return res.status(200).json({
       ok: true,
       weekPlan,
@@ -429,7 +441,6 @@ async function handleAiMealPlan(req: Request, res: Response) {
     });
   }
 }
-
 
 app.post("/api/meal-plan", handleAiMealPlan);
 app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
@@ -760,7 +771,7 @@ app.post(
 
       if (partnerLinkbackUrl) {
         instacartBody.landing_page_configuration = {
-          partner_linkback_url: partnerLinkbackUrl,
+          partner_linkback_url: partnerLinkback_url,
         };
       }
 
