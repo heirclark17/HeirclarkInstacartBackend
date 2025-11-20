@@ -40,7 +40,6 @@ function fetchWithTimeout(
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -100,6 +99,16 @@ async function callOpenAiMealPlan(
                         portionOz: { type: "number" },
                         servings: { type: "number" },
                         notes: { type: "string" },
+                        // optional: can also hold a short version of instructions if the model wants
+                        instructions: {
+                          anyOf: [
+                            { type: "string" },
+                            {
+                              type: "array",
+                              items: { type: "string" },
+                            },
+                          ],
+                        },
                       },
                     },
                   },
@@ -174,6 +183,16 @@ async function callOpenAiMealPlan(
                       ],
                     },
                   },
+                  // NEW: extremely detailed, step-by-step cooking instructions
+                  instructions: {
+                    anyOf: [
+                      { type: "string" },
+                      {
+                        type: "array",
+                        items: { type: "string" },
+                      },
+                    ],
+                  },
                 },
               },
             },
@@ -186,16 +205,23 @@ async function callOpenAiMealPlan(
       {
         role: "system",
         content:
-          "You are a nutrition coach creating detailed, practical 7-day meal plans " +
+          "You are a nutrition coach AND culinary instructor creating detailed, practical 7-day meal plans " +
           "for a health + grocery shopping app. " +
-          "Return ONLY JSON that matches the provided JSON schema.",
+          "Always return ONLY JSON that matches the provided JSON schema. " +
+          "For EVERY recipe you create in recipes[], you MUST include extremely detailed, step-by-step cooking " +
+          "instructions in recipes[].instructions (either a single long string or an array of step strings). " +
+          "Each recipe's instructions must include: exact cook times, temperatures in °F, pan/skillet/sheet pan type, " +
+          "knife cuts, seasoning order, and clear doneness cues (color, texture, smell), plus plating/serving guidance.",
       },
       {
         role: "user",
         content: JSON.stringify({
           instructions:
             "Create a 7-day meal plan that fits these macros, budget, allergies, and cooking skill. " +
-            "Breakfast, lunch, and dinner each day. Use realistic, simple recipes that are easy to cook.",
+            "Each day must have breakfast, lunch, and dinner. Use realistic, simple recipes that are easy to cook at home. " +
+            "For every recipe you include in recipes[], write extremely detailed, kitchen-grade, step-by-step cooking " +
+            "instructions in recipes[].instructions so that a beginner can follow them without guessing. " +
+            "Include prep steps, knife cuts, pan choices, temperatures, timing, seasoning order, and doneness cues.",
           constraints,
           pantry: pantry || [],
         }),
@@ -273,6 +299,14 @@ async function callOpenAiMealPlan(
       recipeMap.set(id, { id, title: name });
     }
 
+    // Normalize instructions from model: string or array of strings
+    let instructions: string | string[] | undefined;
+    if (Array.isArray(r.instructions)) {
+      instructions = r.instructions.map((step: any) => String(step));
+    } else if (typeof r.instructions === "string") {
+      instructions = r.instructions;
+    }
+
     const ingredients = Array.isArray(r.ingredients)
       ? r.ingredients.map((ing: any) => {
           if (typeof ing === "string") {
@@ -313,6 +347,8 @@ async function callOpenAiMealPlan(
         ? r.tags.map((t: any) => String(t))
         : undefined,
       ingredients,
+      // NEW: pass through detailed instructions for the frontend modal
+      instructions,
     };
   });
 
@@ -334,6 +370,15 @@ async function callOpenAiMealPlan(
           const rid = m.recipeId ? String(m.recipeId) : undefined;
           const recMeta = rid ? recipeMap.get(rid) : undefined;
 
+          // Optional short-form instructions at meal level (not required,
+          // frontend prefers recipe.instructions but can fall back to notes)
+          let mealInstructions: string | string[] | undefined;
+          if (Array.isArray(m.instructions)) {
+            mealInstructions = m.instructions.map((s: any) => String(s));
+          } else if (typeof m.instructions === "string") {
+            mealInstructions = m.instructions;
+          }
+
           return {
             type,
             recipeId: rid,
@@ -345,7 +390,8 @@ async function callOpenAiMealPlan(
             portionLabel: m.portionLabel,
             portionOz: m.portionOz,
             servings: m.servings,
-            notes: m.notes,
+            notes: m.notes || undefined,
+            instructions: mealInstructions,
           };
         })
       : [];
@@ -371,7 +417,6 @@ async function callOpenAiMealPlan(
   console.log("AI_WEEKPLAN_OK");
   return weekPlan;
 }
-
 
 // ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
