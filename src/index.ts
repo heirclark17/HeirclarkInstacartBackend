@@ -40,6 +40,7 @@ function fetchWithTimeout(
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -49,43 +50,29 @@ async function callOpenAiMealPlan(
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-   const payload = {
+  const payload = {
     model: OPENAI_MODEL,
     temperature: 0.6,
     response_format: {
       type: "json_schema",
       json_schema: {
         name: "week_plan",
-        strict: true,
+        // NOTE: we are NOT using strict: true here, to avoid schema meta errors
         schema: {
           type: "object",
-          additionalProperties: false,
           properties: {
             mode: { type: "string" },
             generatedAt: { type: "string" },
+
+            // Let OpenAI echo constraints, we don't over-specify
             constraints: {
               type: "object",
-              additionalProperties: false,
-              properties: {
-                dailyCalories: { type: "number" },
-                proteinGrams: { type: "number" },
-                carbsGrams: { type: "number" },
-                fatsGrams: { type: "number" },
-                budgetPerDay: { type: "number" },
-              },
-              required: [
-                "dailyCalories",
-                "proteinGrams",
-                "carbsGrams",
-                "fatsGrams",
-                "budgetPerDay",
-              ],
             },
+
             days: {
               type: "array",
               items: {
                 type: "object",
-                additionalProperties: false,
                 properties: {
                   day: {
                     anyOf: [{ type: "integer" }, { type: "string" }],
@@ -97,46 +84,33 @@ async function callOpenAiMealPlan(
                   label: { type: "string" },
                   note: { type: "string" },
                   meals: {
-  type: "array",
-  items: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      type: { type: "string" },
-      name: { type: "string" },
-      recipeId: { type: "string" },
-      title: { type: "string" },
-      calories: { type: "number" },
-      protein: { type: "number" },
-      carbs: { type: "number" },
-      fats: { type: "number" },
-      portionLabel: { type: "string" },
-      portionOz: { type: "number" },
-      servings: { type: "number" },
-      notes: { type: "string" },
-    },
-    required: [
-      "type",
-      "name",
-      "recipeId",
-      "title",
-      "calories",
-      "protein",
-      "carbs",
-      "fats",
-      "portionLabel",
-      "portionOz",
-      "servings",
-      "notes",
-    ],
-  },
-},
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        type: { type: "string" },
+                        name: { type: "string" },
+                        recipeId: { type: "string" },
+                        title: { type: "string" },
+                        calories: { type: "number" },
+                        protein: { type: "number" },
+                        carbs: { type: "number" },
+                        fats: { type: "number" },
+                        portionLabel: { type: "string" },
+                        portionOz: { type: "number" },
+                        servings: { type: "number" },
+                        notes: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
 
             recipes: {
               type: "array",
               items: {
                 type: "object",
-                additionalProperties: false,
                 properties: {
                   id: { type: "string" },
                   name: { type: "string" },
@@ -154,7 +128,6 @@ async function callOpenAiMealPlan(
                         { type: "string" },
                         {
                           type: "object",
-                          additionalProperties: false,
                           properties: {
                             id: { type: "string" },
                             name: { type: "string" },
@@ -187,25 +160,25 @@ async function callOpenAiMealPlan(
                               type: "array",
                               items: {
                                 type: "object",
-                                additionalProperties: false,
                                 properties: {
                                   quantity: { type: "number" },
                                   unit: { type: "string" },
                                 },
                               },
                             },
+                            filters: {
+                              type: "object",
+                            },
                           },
-                          required: ["name"],
                         },
                       ],
                     },
                   },
                 },
-                required: ["id", "name", "ingredients"],
               },
             },
           },
-          required: ["constraints", "days", "recipes"],
+          required: ["days", "recipes"],
         },
       },
     } as const,
@@ -229,7 +202,6 @@ async function callOpenAiMealPlan(
       },
     ],
   };
-
 
   console.log("Calling OpenAI /chat/completions with model:", OPENAI_MODEL);
 
@@ -327,6 +299,7 @@ async function callOpenAiMealPlan(
             productIds: ing.productIds,
             upcs: ing.upcs,
             measurements: ing.measurements,
+            filters: ing.filters,
           };
         })
       : [];
@@ -336,7 +309,9 @@ async function callOpenAiMealPlan(
       name,
       mealType: r.mealType,
       defaultServings: r.defaultServings,
-      tags: Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)) : undefined,
+      tags: Array.isArray(r.tags)
+        ? r.tags.map((t: any) => String(t))
+        : undefined,
       ingredients,
     };
   });
@@ -346,9 +321,7 @@ async function callOpenAiMealPlan(
     const dayNumber = d.day ?? idx + 1;
     const label =
       d.label ||
-      (typeof dayNumber === "number"
-        ? `Day ${dayNumber}`
-        : `Day ${idx + 1}`);
+      (typeof dayNumber === "number" ? `Day ${dayNumber}` : `Day ${idx + 1}`);
 
     const meals = Array.isArray(d.meals)
       ? d.meals.map((m: any) => {
@@ -398,6 +371,7 @@ async function callOpenAiMealPlan(
   console.log("AI_WEEKPLAN_OK");
   return weekPlan;
 }
+
 
 // ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
