@@ -1,14 +1,13 @@
 // src/routes/instacart.ts
 import express, { Request, Response } from "express";
-// Node 18+ global fetch
 
 const router = express.Router();
 
 const INSTACART_BASE_URL =
-  process.env.INSTACART_BASE_URL || "https://api.instacart.com";
+  process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // adjust to your real base
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
 
-// Helper to normalize price into a number
+// Helper: normalize anything that looks like a price into a number
 function normalizePrice(raw: any): number | null {
   if (raw == null) return null;
   if (typeof raw === "number") return raw;
@@ -31,8 +30,7 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       });
     }
 
-    // TODO: Replace with your real Instacart search endpoint.
-    // This path + params are PSEUDO and must match your developer docs.
+    // TODO: Replace with the actual Instacart endpoint + params
     const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(
       query
     )}`;
@@ -55,13 +53,13 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
 
     const data: any = await apiRes.json().catch(() => ({}));
 
+    // 1) Build a products[] array for the front-end to auto-fill rows
     const rawResults: any[] = Array.isArray(data?.results)
       ? data.results
       : Array.isArray(data?.items)
       ? data.items
       : [];
 
-    // Take the first 12 products & normalize
     const products = rawResults.slice(0, 12).map((p) => {
       const priceRaw =
         p.price ??
@@ -82,17 +80,25 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
         id: p.id ?? p.product_id ?? null,
         name: p.name ?? query,
         size: p.package_size ?? p.size ?? p.unit_size ?? null,
-        price: priceNumber, // numeric for math
+        price: priceNumber,          // numeric for math (cost per serving)
         price_display: priceDisplay, // pretty string for UI
         currency: p.currency ?? "USD",
         web_url: p.web_url ?? p.url ?? p.product_url ?? null,
       };
     });
 
+    // 2) Preserve any upstream deep-link URL (if your Instacart API returns one)
+    const products_link_url =
+      data.products_link_url ||
+      data.url ||
+      data.product_url ||
+      null;
+
     return res.json({
       success: true,
       query,
-      products,
+      products,           // <-- this is what hc-instacart-bridge.js uses
+      products_link_url,  // <-- this is what opens the Instacart page
     });
   } catch (err) {
     console.error("[Instacart] Unexpected error:", err);
