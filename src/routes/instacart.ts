@@ -15,23 +15,69 @@ function mapProduct(raw: any, fallbackQuery: string) {
 
   const name: string = (raw.name || raw.title || fallbackQuery || "").toString();
 
+  // ----- PRICE (NUMBER) -----
   let priceNumber: number | null = null;
+
+  // 1) direct numeric price
   if (typeof raw.price === "number") {
     priceNumber = raw.price;
   }
 
-  const priceDisplay: string | null =
-    raw.price_display ||
-    (typeof raw.price === "number" ? `$${raw.price.toFixed(2)}` : null) ||
-    null;
+  // 2) unit/base/current price as number
+  else if (typeof raw.unit_price === "number") {
+    priceNumber = raw.unit_price;
+  } else if (typeof raw.base_price === "number") {
+    priceNumber = raw.base_price;
+  } else if (typeof raw.current_price === "number") {
+    priceNumber = raw.current_price;
+  }
 
+  // 3) price in cents
+  else if (typeof raw.price_in_cents === "number") {
+    priceNumber = raw.price_in_cents / 100;
+  }
+
+  // 4) nested object like { amount: 12.34 }
+  else if (raw.current_price && typeof raw.current_price.amount === "number") {
+    priceNumber = raw.current_price.amount;
+  }
+
+  // 5) "9.99" or "$9.99" as string
+  else if (typeof raw.price === "string") {
+    const parsed = parseFloat(raw.price.replace(/[^\d.]/g, ""));
+    if (Number.isFinite(parsed)) priceNumber = parsed;
+  } else if (typeof raw.unit_price === "string") {
+    const parsed = parseFloat(raw.unit_price.replace(/[^\d.]/g, ""));
+    if (Number.isFinite(parsed)) priceNumber = parsed;
+  }
+
+  // ----- PRICE (DISPLAY STRING) -----
+  let priceDisplay: string | null = null;
+
+  if (typeof raw.price_display === "string" && raw.price_display.trim()) {
+    priceDisplay = raw.price_display;
+  } else if (typeof raw.price_text === "string" && raw.price_text.trim()) {
+    priceDisplay = raw.price_text;
+  } else if (typeof raw.display_price === "string" && raw.display_price.trim()) {
+    priceDisplay = raw.display_price;
+  } else if (typeof raw.price === "string" && raw.price.trim()) {
+    priceDisplay = raw.price;
+  } else if (typeof priceNumber === "number") {
+    priceDisplay = `$${priceNumber.toFixed(2)}`;
+  } else {
+    priceDisplay = null;
+  }
+
+  // ----- SIZE / WEIGHT -----
   const size: string =
     raw.size ||
     raw.package_size ||
     raw.unit_size ||
     raw.quantity_text ||
+    raw.package_text ||
     "";
 
+  // ----- PRODUCT URL -----
   const webUrl: string | null =
     raw.web_url ||
     raw.url ||
@@ -39,6 +85,7 @@ function mapProduct(raw: any, fallbackQuery: string) {
     raw.product_details_page_url ||
     null;
 
+  // ----- RETAILER NAME -----
   const retailerName: string =
     raw.retailer_name ||
     raw.store_name ||
@@ -54,6 +101,7 @@ function mapProduct(raw: any, fallbackQuery: string) {
     retailer_name: retailerName,
   };
 }
+
 
 router.post("/instacart/search", async (req: Request, res: Response) => {
   try {
