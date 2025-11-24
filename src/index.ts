@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import cors from "cors"; // ✅ NEW: CORS import
+import cors from "cors"; // ✅ CORS import
 
 // Types / services
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
@@ -17,7 +17,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 
-// ✅ NEW: Allow your Shopify storefront (and other origins) to call this backend
+// ✅ Allow your Shopify storefront (and other origins) to call this backend
 app.use(
   cors({
     origin: true, // you can tighten this later to your exact shop domain
@@ -26,7 +26,7 @@ app.use(
   })
 );
 
-// ✅ NEW: Preflight handling
+// ✅ Preflight handling
 app.options("*", cors());
 
 app.use(express.json());
@@ -722,6 +722,10 @@ async function instacartSearchHandler(
       return;
     }
 
+    // 🔁 Always have a public fallback URL ready
+    const fallbackSearchUrl =
+      "https://www.instacart.com/store/search?q=" + encodeURIComponent(q);
+
     console.log("Instacart per-item search for:", q);
 
     const lineItems = [
@@ -784,6 +788,7 @@ async function instacartSearchHandler(
     console.log("Instacart per-item products_link status:", resp.status);
     console.log("Instacart per-item products_link body:", text);
 
+    // ❌ If Instacart API errors, fall back to generic search URL
     if (!resp.ok) {
       let message = "";
 
@@ -807,34 +812,58 @@ async function instacartSearchHandler(
         message = `HTTP ${resp.status}`;
       }
 
-      res.status(resp.status).json({
-        ok: false,
+      console.error(
+        "Instacart per-item products_link error – using fallback search URL:",
+        message
+      );
+
+      // ✅ STILL return ok:true with a usable URL
+      res.status(200).json({
+        ok: true,
+        products_link_url: fallbackSearchUrl,
+        note: "fallback_search_url",
         error: `Instacart: ${message}`,
         status: resp.status,
-        details: data || text,
       });
       return;
     }
 
     const productsLinkUrl = data?.products_link_url;
+
+    // ❗ If Instacart didn’t include products_link_url, ALSO fall back
     if (!productsLinkUrl || typeof productsLinkUrl !== "string") {
-      res.status(500).json({
-        ok: false,
-        error: "Instacart did not return products_link_url",
-        details: data || text,
+      console.warn(
+        "Instacart did not return products_link_url, using fallback search URL"
+      );
+
+      res.status(200).json({
+        ok: true,
+        products_link_url: fallbackSearchUrl,
+        note: "fallback_search_url_no_products_link",
       });
       return;
     }
 
+    // 🎯 Happy path – we got a real Instacart products_link_url
     res.status(200).json({
       ok: true,
       products_link_url: productsLinkUrl,
     });
   } catch (err) {
     console.error("Handler error in Instacart search:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Server error in Instacart search",
+
+    // Last-resort: still give the public search URL instead of a hard error
+    const body = req.body as { query?: string };
+    const rawQ = (body?.query || "").trim();
+    const fallbackSearchUrl = rawQ
+      ? "https://www.instacart.com/store/search?q=" +
+        encodeURIComponent(rawQ)
+      : "https://www.instacart.com/store";
+
+    res.status(200).json({
+      ok: true,
+      products_link_url: fallbackSearchUrl,
+      note: "fallback_search_url_on_server_error",
     });
   }
 }
