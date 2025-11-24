@@ -1,10 +1,11 @@
-// src/routes/instacart.ts (for example)
+// src/routes/instacart.ts
 import express, { Request, Response } from "express";
-import fetch from "node-fetch";
+// NOTE: No node-fetch import – we use the global fetch from Node 18+
 
 const router = express.Router();
 
-const INSTACART_BASE_URL = process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // or your dev base
+const INSTACART_BASE_URL =
+  process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // or your dev base
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
 
 router.post("/instacart/search", async (req: Request, res: Response) => {
@@ -16,7 +17,9 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
 
     // TODO: Replace this with the *actual* Instacart Developer search endpoint you use.
     // This is PSEUDO-CODE – plug in the real path + params from your Instacart docs.
-    const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(query)}`;
+    const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(
+      query
+    )}`;
 
     const apiRes = await fetch(url, {
       headers: {
