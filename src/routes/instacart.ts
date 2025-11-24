@@ -1,18 +1,22 @@
 // src/routes/instacart.ts
 import express, { Request, Response } from "express";
 
+// Using Node 18+ global fetch
 const router = express.Router();
 
+// Base URL and API key for Instacart – configure these in Railway
 const INSTACART_BASE_URL =
   process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // TODO: set your real base
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
 
 /**
- * Map one Instacart product object into the shape your front end expects.
+ * Helper: map one raw Instacart product into the shape
+ * the front-end (modal + calculator) expects.
  */
 function mapProduct(raw: any, fallbackQuery: string) {
   if (!raw) return null;
 
+  // ----- NAME -----
   const name: string = (raw.name || raw.title || fallbackQuery || "").toString();
 
   // ----- PRICE (NUMBER) -----
@@ -23,7 +27,7 @@ function mapProduct(raw: any, fallbackQuery: string) {
     priceNumber = raw.price;
   }
 
-  // 2) unit/base/current price as number
+  // 2) other numeric price fields
   else if (typeof raw.unit_price === "number") {
     priceNumber = raw.unit_price;
   } else if (typeof raw.base_price === "number") {
@@ -102,7 +106,20 @@ function mapProduct(raw: any, fallbackQuery: string) {
   };
 }
 
-
+/**
+ * POST /instacart/search
+ *
+ * Expected front-end call (from Shopify):
+ *   POST { baseUrl }/api/instacart/search
+ *   body: { query: "SALMON", retailerKey?: string | null, recipeLandingUrl?: string }
+ *
+ * Response:
+ *   {
+ *     success: true,
+ *     products: [ { name, price, price_display, size, web_url, retailer_name }, ... ],
+ *     products_link_url: "https://www.instacart.com/store/..."
+ *   }
+ */
 router.post("/instacart/search", async (req: Request, res: Response) => {
   try {
     const query = (req.body.query || "").toString().trim();
@@ -110,12 +127,34 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: "Missing query" });
     }
 
-    // TODO: swap this for your actual Instacart endpoint + params
-    const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(
-      query
-    )}`;
+    // Optional extras from front-end – not strictly required here,
+    // but you can plumb them into the Instacart call if needed.
+    const retailerKey = req.body.retailerKey || null;
+    const recipeLandingUrl = req.body.recipeLandingUrl || null;
 
-    const apiRes = await fetch(url, {
+    if (!INSTACART_API_KEY) {
+      console.error("[Instacart] INSTACART_API_KEY is not set");
+      return res.status(500).json({
+        success: false,
+        error: "Instacart configuration missing",
+      });
+    }
+
+    // TODO: Replace this with your real Instacart Developer endpoint + query params
+    // This is pseudo – check Instacart docs for the correct path.
+    const searchUrl = new URL(
+      `${INSTACART_BASE_URL}/products/search`
+    );
+    searchUrl.searchParams.set("q", query);
+    if (retailerKey) {
+      searchUrl.searchParams.set("retailer_key", String(retailerKey));
+    }
+    if (recipeLandingUrl) {
+      searchUrl.searchParams.set("landing_url", String(recipeLandingUrl));
+    }
+
+    const apiRes = await fetch(searchUrl.toString(), {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${INSTACART_API_KEY}`,
         "Content-Type": "application/json",
@@ -137,7 +176,7 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
         .json({ success: false, error: "Instacart search failed" });
     }
 
-    // Adjust these keys to match your actual Instacart payload:
+    // Try to find the list of products in common keys
     const rawList: any[] =
       (Array.isArray(data?.products) && data.products) ||
       (Array.isArray(data?.items) && data.items) ||
@@ -148,16 +187,25 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       .map((p: any) => mapProduct(p, query))
       .filter((p: any) => p !== null);
 
-    // If we still don't have any products but backend gave us a link, at least return that
+    // Compose a products_link_url for deep-linking
     const products_link_url: string | null =
       data?.products_link_url ||
       (products[0] && products[0].web_url) ||
       null;
 
+    // Helpful debug log – you can comment this out once stable
+    console.log("[Instacart] search result keys:", data ? Object.keys(data) : []);
+    console.log(
+      "[Instacart] mapped products count:",
+      products.length,
+      "products_link_url:",
+      products_link_url
+    );
+
     return res.json({
       success: true,
-      products,          // 👈 this is what your modal + calculator use
-      products_link_url, // 👈 still keep this for deep-link fallback
+      products,
+      products_link_url,
     });
   } catch (err) {
     console.error("[Instacart] Unexpected error:", err);
