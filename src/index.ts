@@ -688,6 +688,180 @@ app.get(
 );
 
 // ======================================================================
+// OPTION C HELPER: FETCH A SINGLE PRODUCT DETAIL BY ID (for /proxy/instacart/return)
+// ======================================================================
+
+async function fetchInstacartProductDetail(productId: string) {
+  const apiKey = process.env.INSTACART_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing INSTACART_API_KEY");
+  }
+
+  const apiBase =
+    process.env.INSTACART_API_BASE || "https://connect.dev.instacart.tools";
+
+  // NOTE: This path is PSEUDO-CODE – adjust based on Instacart Connect docs.
+  // Example guess: /idp/v1/products/{product_uuid}
+  const url = `${apiBase.replace(
+    /\/$/,
+    ""
+  )}/idp/v1/products/${encodeURIComponent(productId)}`;
+
+  console.log("[Instacart] Fetching product detail:", url);
+
+  const resp = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+    },
+    15000
+  );
+
+  const txt = await resp.text();
+  let data: any;
+  try {
+    data = JSON.parse(txt);
+  } catch {
+    data = null;
+  }
+
+  console.log("[Instacart] Product detail status:", resp.status);
+  console.log("[Instacart] Product detail body:", txt);
+
+  if (!resp.ok) {
+    let msg = "";
+    if (data && typeof data === "object") {
+      if (data.error && typeof data.error === "object") {
+        msg =
+          data.error.message || JSON.stringify(data.error).slice(0, 200);
+      } else {
+        msg =
+          data.error ||
+          data.message ||
+          (Array.isArray(data.errors) && data.errors[0]?.message) ||
+          JSON.stringify(data).slice(0, 200);
+      }
+    } else {
+      msg = txt.slice(0, 200);
+    }
+    if (!msg) msg = `HTTP ${resp.status}`;
+    throw new Error(`Instacart product detail error: ${msg}`);
+  }
+
+  // Shape into a clean object for the frontend
+  const product = {
+    id: data.id ?? productId,
+    name: data.name ?? data.title ?? "",
+    price:
+      typeof data.price === "number"
+        ? data.price
+        : typeof data.price_in_cents === "number"
+        ? data.price_in_cents / 100
+        : null,
+    currency: data.currency ?? "USD",
+    size: data.size ?? data.package_size ?? "",
+    image_url:
+      data.image_url ||
+      (Array.isArray(data.images) && data.images.length > 0
+        ? data.images[0]
+        : ""),
+    retailer_key: data.retailer_key,
+    raw: data,
+  };
+
+  return product;
+}
+
+// ======================================================================
+// NEW (OPTION C CORE): /proxy/instacart/return
+// Instacart redirects here with product_id + your rowId.
+// This page postMessages the selected product back to the main app window.
+// ======================================================================
+
+app.get("/proxy/instacart/return", async (req: Request, res: Response) => {
+  try {
+    const { product_id, rowId } = req.query;
+
+    if (!product_id || typeof product_id !== "string") {
+      return res
+        .status(400)
+        .send("Missing product_id from Instacart return URL.");
+    }
+
+    const safeRowId =
+      typeof rowId === "string" && rowId.trim().length > 0
+        ? rowId.trim()
+        : `row-${Date.now()}`;
+
+    let product: any;
+    try {
+      product = await fetchInstacartProductDetail(product_id);
+    } catch (err) {
+      console.error("[Instacart] Error fetching product detail:", err);
+      // Even if product detail fails, send a minimal payload back
+      product = {
+        id: product_id,
+        name: "",
+        price: null,
+        currency: "USD",
+        size: "",
+        image_url: "",
+        raw_error: String((err as any)?.message || err),
+      };
+    }
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Heirclark · Instacart Selection</title>
+</head>
+<body>
+  <script>
+    (function () {
+      var payload = {
+        type: "HC_INSTACART_SELECTED",
+        rowId: ${JSON.stringify(safeRowId)},
+        product: ${JSON.stringify(product)}
+      };
+
+      try {
+        if (window.opener && typeof window.opener.postMessage === "function") {
+          // In production, restrict to your real origin, e.g.:
+          // window.opener.postMessage(payload, "https://heirclark.com");
+          window.opener.postMessage(payload, "*");
+        } else if (window.parent && window.parent !== window && typeof window.parent.postMessage === "function") {
+          window.parent.postMessage(payload, "*");
+        }
+      } catch (err) {
+        console.error("Error posting Instacart selection back to opener:", err);
+      }
+
+      setTimeout(function () {
+        window.close();
+      }, 250);
+    })();
+  </script>
+  <p>You can close this window.</p>
+</body>
+</html>
+    `.trim();
+
+    res.status(200).send(html);
+  } catch (err) {
+    console.error("[Instacart] /proxy/instacart/return error:", err);
+    res
+      .status(500)
+      .send("There was a problem retrieving the product from Instacart.");
+  }
+});
+
+// ======================================================================
 // NEW: SIMPLE PER-ITEM INSTACART SEARCH (for “CHECK PRICE ON INSTACART”)
 // ======================================================================
 
