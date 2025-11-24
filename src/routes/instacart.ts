@@ -3,125 +3,52 @@ import express, { Request, Response } from "express";
 
 const router = express.Router();
 
-const INSTACART_BASE_URL =
-  process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // adjust to your real base
-const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
-
-// Helper: normalize a single Instacart product into the shape the front-end expects
-function mapSingleProduct(p: any, fallbackQuery: string) {
-  if (!p) return null;
-
-  const name = (p.name || fallbackQuery || "").toString();
-
-  // Try to find a numeric price
-  let priceNumber: number | null = null;
-  if (typeof p.price === "number") {
-    priceNumber = p.price;
-  }
-
-  const priceDisplay =
-    p.price_display ||
-    (typeof p.price === "number" ? `$${p.price.toFixed(2)}` : null) ||
-    null;
-
-  const size =
-    p.size ||
-    p.package_size ||
-    p.unit_size ||
-    "";
-
-  const webUrl =
-    p.web_url ||
-    p.url ||
-    p.product_url ||
-    null;
-
-  const retailerName =
-    p.retailer_name ||
-    p.store_name ||
-    p.retailer ||
-    "";
-
-  return {
-    // These keys are what hc-instacart-bridge.js looks for:
-    name,
-    price: priceNumber,
-    price_display: priceDisplay,
-    size,
-    web_url: webUrl,
-    retailer_name: retailerName,
-  };
-}
+/**
+ * TEMP STUB VERSION
+ * -----------------
+ * This IGNOREs the real Instacart API and always returns a fake products[] array.
+ * Goal: prove front-end modal + calculator drawer integration works.
+ */
 
 router.post("/instacart/search", async (req: Request, res: Response) => {
   try {
-    const query = (req.body.query || "").toString().trim();
-    if (!query) {
-      return res.status(400).json({ success: false, error: "Missing query" });
-    }
+    const query = (req.body.query || "").toString().trim() || "Grocery item";
 
-    // TODO: Replace this with your real Instacart search endpoint + params
-    const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(
-      query
-    )}`;
-
-    const apiRes = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${INSTACART_API_KEY}`,
-        "Content-Type": "application/json",
+    // Fake set of products to feed the modal
+    const products = [
+      {
+        name: `${query} – 2 lb Family Pack`,
+        price: 18.99,
+        price_display: "$18.99",
+        size: "2 lb",
+        web_url: "https://www.instacart.com/store/items/example-2lb",
+        retailer_name: "Sample Market",
       },
-    });
-
-    const text = await apiRes.text();
-    let data: any = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch (e) {
-      console.error("[Instacart] Failed to parse JSON:", e);
-    }
-
-    if (!apiRes.ok) {
-      console.error("[Instacart] Search error:", apiRes.status, text);
-      return res.status(502).json({
-        success: false,
-        error: "Instacart search failed",
-      });
-    }
-
-    // Try to find the "first" product in the response, using same logic you had
-    const first =
-      data?.results?.[0] ||
-      data?.items?.[0] ||
-      data?.products?.[0] ||
-      null;
-
-    if (!first) {
-      return res.json({
-        success: true,
-        products: [],
-        products_link_url: null,
-        message: `No results for "${query}"`,
-      });
-    }
-
-    const mapped = mapSingleProduct(first, query);
-    const products = mapped ? [mapped] : [];
-
-    // Keep a top-level link field as well (optional)
-    const productUrl =
-      mapped?.web_url ||
-      data?.products_link_url ||
-      data?.url ||
-      data?.product_url ||
-      null;
+      {
+        name: `${query} – 1 lb`,
+        price: 9.99,
+        price_display: "$9.99",
+        size: "1 lb",
+        web_url: "https://www.instacart.com/store/items/example-1lb",
+        retailer_name: "Sample Market",
+      },
+      {
+        name: `${query} – 32 oz`,
+        price: 16.49,
+        price_display: "$16.49",
+        size: "32 oz",
+        web_url: "https://www.instacart.com/store/items/example-32oz",
+        retailer_name: "Sample Market",
+      },
+    ];
 
     return res.json({
       success: true,
-      products,           // ✅ this is what the modal looks for
-      products_link_url: productUrl, // optional fallback
+      products,              // ✅ what hc-instacart-bridge.js is looking for
+      products_link_url: null,
     });
   } catch (err) {
-    console.error("[Instacart] Unexpected error:", err);
+    console.error("[Instacart STUB] Unexpected error:", err);
     return res.status(500).json({
       success: false,
       error: "Server error",
