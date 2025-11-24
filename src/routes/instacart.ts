@@ -7,13 +7,57 @@ const INSTACART_BASE_URL =
   process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // adjust to your real base
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
 
-// Helper: normalize anything that looks like a price into a number
-function normalizePrice(raw: any): number | null {
-  if (raw == null) return null;
-  if (typeof raw === "number") return raw;
-  const asStr = String(raw);
-  const parsed = parseFloat(asStr.replace(/[^\d.]/g, ""));
-  return Number.isFinite(parsed) ? parsed : null;
+// Helper to normalize Instacart products into a shape the front-end expects
+function mapInstacartProducts(rawData: any) {
+  // Adjust these paths to match the actual Instacart response you get:
+  const rawProducts =
+    rawData?.products ||
+    rawData?.items ||
+    rawData?.results ||
+    [];
+
+  if (!Array.isArray(rawProducts)) return [];
+
+  return rawProducts.map((p: any) => {
+    const priceNumber =
+      typeof p.price === "number"
+        ? p.price
+        : undefined;
+
+    const priceDisplay =
+      p.price_display ||
+      (typeof p.price === "number"
+        ? `$${p.price.toFixed(2)}`
+        : undefined);
+
+    const size =
+      p.size ||
+      p.package_size ||
+      p.unit_size ||
+      "";
+
+    const webUrl =
+      p.web_url ||
+      p.url ||
+      p.product_url ||
+      null;
+
+    const retailerName =
+      p.retailer_name ||
+      p.store_name ||
+      p.retailer ||
+      "";
+
+    return {
+      // The front-end only cares about these keys:
+      name: p.name || "",
+      price: priceNumber ?? null,
+      price_display: priceDisplay ?? null,
+      size,
+      web_url: webUrl,
+      retailer_name: retailerName,
+    };
+  });
 }
 
 router.post("/instacart/search", async (req: Request, res: Response) => {
@@ -23,14 +67,8 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: "Missing query" });
     }
 
-    if (!INSTACART_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Instacart API key is not configured on the server",
-      });
-    }
-
-    // TODO: Replace with the actual Instacart endpoint + params
+    // TODO: Replace this path + params with your actual Instacart search endpoint.
+    // This is pseudo-code – plug in your real URL & params from the Instacart docs.
     const url = `${INSTACART_BASE_URL}/products/search?q=${encodeURIComponent(
       query
     )}`;
@@ -42,8 +80,15 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       },
     });
 
+    const text = await apiRes.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      console.error("[Instacart] Failed to parse JSON:", text);
+    }
+
     if (!apiRes.ok) {
-      const text = await apiRes.text().catch(() => "");
       console.error("[Instacart] Search error:", apiRes.status, text);
       return res.status(502).json({
         success: false,
@@ -51,54 +96,29 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
       });
     }
 
-    const data: any = await apiRes.json().catch(() => ({}));
+    // Normalize products for the modal
+    const products = mapInstacartProducts(data);
 
-    // 1) Build a products[] array for the front-end to auto-fill rows
-    const rawResults: any[] = Array.isArray(data?.results)
-      ? data.results
-      : Array.isArray(data?.items)
-      ? data.items
-      : [];
-
-    const products = rawResults.slice(0, 12).map((p) => {
-      const priceRaw =
-        p.price ??
-        p.unit_price ??
-        p.retail_price ??
-        p.pricing?.price ??
-        null;
-
-      const priceNumber = normalizePrice(priceRaw);
-      const priceDisplay =
-        typeof priceRaw === "string"
-          ? priceRaw
-          : priceNumber != null
-          ? `$${priceNumber.toFixed(2)}`
-          : null;
-
-      return {
-        id: p.id ?? p.product_id ?? null,
-        name: p.name ?? query,
-        size: p.package_size ?? p.size ?? p.unit_size ?? null,
-        price: priceNumber,          // numeric for math (cost per serving)
-        price_display: priceDisplay, // pretty string for UI
-        currency: p.currency ?? "USD",
-        web_url: p.web_url ?? p.url ?? p.product_url ?? null,
-      };
-    });
-
-    // 2) Preserve any upstream deep-link URL (if your Instacart API returns one)
-    const products_link_url =
-      data.products_link_url ||
-      data.url ||
-      data.product_url ||
+    // OPTIONAL: some Instacart responses also have a "products_link_url"
+    const productsLinkUrl =
+      data?.products_link_url ||
+      data?.url ||
+      data?.product_url ||
       null;
+
+    if (!products.length && !productsLinkUrl) {
+      return res.json({
+        success: true,
+        products: [],
+        products_link_url: null,
+        message: `No results for "${query}"`,
+      });
+    }
 
     return res.json({
       success: true,
-      query,
-      products,           // <-- this is what hc-instacart-bridge.js uses
-      products_link_url,  // <-- this is what opens the Instacart page
+      products,
+      products_link_url: productsLinkUrl,
     });
   } catch (err) {
     console.error("[Instacart] Unexpected error:", err);
