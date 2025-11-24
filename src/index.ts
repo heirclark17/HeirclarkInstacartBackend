@@ -40,7 +40,6 @@ function fetchWithTimeout(
 }
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -372,7 +371,6 @@ async function callOpenAiMealPlan(
   return weekPlan;
 }
 
-
 // ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
 // ======================================================================
@@ -678,6 +676,163 @@ app.get(
   }
 );
 
+// ======================================================================
+// NEW: SIMPLE PER-ITEM INSTACART SEARCH (for “CHECK PRICE ON INSTACART”)
+// ======================================================================
+
+app.post(
+  "/proxy/instacart/search",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const apiKey = process.env.INSTACART_API_KEY;
+      if (!apiKey) {
+        console.error("Missing INSTACART_API_KEY");
+        res
+          .status(500)
+          .json({ ok: false, error: "Missing INSTACART_API_KEY" });
+        return;
+      }
+
+      const apiBase =
+        process.env.INSTACART_API_BASE ||
+        "https://connect.dev.instacart.tools";
+
+      const { query, retailerKey, recipeLandingUrl } = req.body as {
+        query?: string;
+        retailerKey?: string | null;
+        recipeLandingUrl?: string;
+      };
+
+      const q = (query || "").trim();
+      if (!q) {
+        res.status(400).json({
+          ok: false,
+          error: "query is required (e.g., 'SALMON')",
+        });
+        return;
+      }
+
+      console.log("Instacart per-item search for:", q);
+
+      const lineItems = [
+        {
+          name: q,
+          quantity: 1,
+          unit: "each",
+          display_text: q,
+        },
+      ];
+
+      const instacartBody: any = {
+        title: `Heirclark: ${q}`,
+        link_type: "shopping_list",
+        instructions: [
+          `Quick price check from Heirclark for: ${q}.`,
+        ],
+        line_items: lineItems,
+      };
+
+      const partnerLinkbackUrl =
+        typeof recipeLandingUrl === "string" && recipeLandingUrl.trim()
+          ? recipeLandingUrl.trim()
+          : undefined;
+
+      if (partnerLinkbackUrl) {
+        instacartBody.landing_page_configuration = {
+          partner_linkback_url: partnerLinkbackUrl,
+        };
+      }
+
+      if (retailerKey) {
+        instacartBody.metadata = {
+          ...(instacartBody.metadata || {}),
+          heirclark_retailer_key: retailerKey,
+        };
+      }
+
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      };
+
+      const resp = await fetch(
+        `${apiBase.replace(/\/$/, "")}/idp/v1/products/products_link`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(instacartBody),
+        }
+      );
+
+      const text = await resp.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+
+      console.log("Instacart per-item products_link status:", resp.status);
+      console.log("Instacart per-item products_link body:", text);
+
+      if (!resp.ok) {
+        let message = "";
+
+        if (data && typeof data === "object") {
+          if (data.error && typeof data.error === "object") {
+            message =
+              data.error.message ||
+              JSON.stringify(data.error).slice(0, 200);
+          } else {
+            message =
+              data.error ||
+              data.message ||
+              (Array.isArray(data.errors) &&
+                data.errors[0]?.message) ||
+              JSON.stringify(data).slice(0, 200);
+          }
+        } else if (typeof text === "string") {
+          message = text.slice(0, 200);
+        }
+
+        if (!message) {
+          message = `HTTP ${resp.status}`;
+        }
+
+        res.status(resp.status).json({
+          ok: false,
+          error: `Instacart: ${message}`,
+          status: resp.status,
+          details: data || text,
+        });
+        return;
+      }
+
+      const productsLinkUrl = data?.products_link_url;
+      if (!productsLinkUrl || typeof productsLinkUrl !== "string") {
+        res.status(500).json({
+          ok: false,
+          error: "Instacart did not return products_link_url",
+          details: data || text,
+        });
+        return;
+      }
+
+      res.status(200).json({
+        ok: true,
+        products_link_url: productsLinkUrl,
+      });
+    } catch (err) {
+      console.error("Handler error in /proxy/instacart/search:", err);
+      res.status(500).json({
+        ok: false,
+        error: "Server error in /proxy/instacart/search",
+      });
+    }
+  }
+);
+
 // Instacart build-list endpoint
 app.post(
   "/proxy/build-list",
@@ -847,7 +1002,9 @@ app.post(
       let recipeError: string | null = null;
 
       try {
-        const recipeIngredients = instacartLineItems.map((li) => ({
+        const instacartLineItemsForRecipe = instacartLineItems;
+
+        const recipeIngredients = instacartLineItemsForRecipe.map((li) => ({
           name: li.name,
           display_text: li.display_text,
           product_ids: li.product_ids,
