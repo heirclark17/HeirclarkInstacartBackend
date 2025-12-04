@@ -671,6 +671,10 @@ app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
 app.post("/api/day-plan", handleAiDayPlan);
 app.post("/proxy/day-plan", verifyAppProxy, handleAiDayPlan);
 
+// NEW: direct app-style paths (e.g. if frontend calls /apps/instacart/day-plan)
+app.post("/apps/instacart/meal-plan", handleAiMealPlan);
+app.post("/apps/instacart/day-plan", handleAiDayPlan);
+
 // POST /api/meal-plan/adjust
 app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
   try {
@@ -1571,7 +1575,7 @@ app.post(
                 recipeData.message ||
                 (Array.isArray(recipeData.errors) &&
                   recipeData.errors[0]?.message) ||
-                JSON.stringify(recipeData).slice(0, 200);
+                JSON.stringify(recipeData);
             }
           } else if (typeof recipeText === "string") {
             msg = recipeText.slice(0, 200);
