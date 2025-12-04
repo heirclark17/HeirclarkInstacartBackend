@@ -382,6 +382,151 @@ async function callOpenAiMealPlan(
   return weekPlan;
 }
 
+// Call OpenAI to build a *single-day* plan (3 meals) instead of full week
+async function callOpenAiDayPlan(
+  constraints: UserConstraints,
+  dayPayload: {
+    dayIndex: number;
+    label: string;
+    isoDate: string;
+    meals: Array<{
+      type: string;
+      targets: {
+        calories?: number;
+        protein?: number;
+        carbs?: number;
+        fats?: number;
+      };
+    }>;
+  }
+): Promise<{ day: any; recipes: any[] }> {
+  if (!OPENAI_API_KEY) {
+    console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  const payload = {
+    model: OPENAI_MODEL,
+    temperature: 0.5,
+    response_format: { type: "json_object" as const },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a nutrition coach creating a ONE-DAY meal plan (breakfast, lunch, dinner) " +
+          "for a health + grocery shopping app. Always respond with strict JSON only.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions:
+            "Generate a simple, affordable 1-day meal plan with exactly 3 meals: breakfast, lunch, dinner. " +
+            "Match the calorie + macro targets per meal as closely as practical. Use realistic, easy recipes.",
+          constraints,
+          day: dayPayload,
+          requiredJsonShape: {
+            day: {
+              day: dayPayload.dayIndex,
+              label: dayPayload.label,
+              isoDate: dayPayload.isoDate,
+              meals: [
+                {
+                  type: "breakfast | lunch | dinner",
+                  title: "string",
+                  recipeId: "string",
+                  calories: "number",
+                  protein: "number",
+                  carbs: "number",
+                  fats: "number",
+                  portionLabel: "string",
+                  servings: "number",
+                  ingredients: [
+                    {
+                      name: "string",
+                      quantity: "number",
+                      unit: "string",
+                      instacart_query: "string",
+                    },
+                  ],
+                  instructions: ["string", "string"],
+                },
+              ],
+            },
+            recipes: [
+              {
+                id: "string (must match recipeId)",
+                name: "string",
+                ingredients: [
+                  {
+                    name: "string",
+                    quantity: "number",
+                    unit: "string",
+                    instacart_query: "string",
+                  },
+                ],
+                instructions: ["string", "string"],
+                calories: "number",
+                protein: "number",
+                carbs: "number",
+                fats: "number",
+              },
+            ],
+          },
+        }),
+      },
+    ],
+  };
+
+  console.log(
+    "Calling OpenAI /chat/completions (single day) with model:",
+    OPENAI_MODEL,
+    "for day",
+    dayPayload.dayIndex
+  );
+
+  const resp = await fetchWithTimeout(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    },
+    OPENAI_TIMEOUT_MS
+  );
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.error("OpenAI /chat/completions DAY error:", resp.status, txt);
+    throw new Error(`OpenAI day-plan error: HTTP ${resp.status}`);
+  }
+
+  const raw = (await resp.json()) as any;
+  const msg = raw?.choices?.[0]?.message;
+
+  let parsed: any;
+  if (typeof msg?.content === "string") {
+    const content = msg.content.trim();
+    console.log("RAW_DAY_OPENAI_CONTENT_START");
+    console.log(content.slice(0, 1000));
+    console.log("RAW_DAY_OPENAI_CONTENT_END");
+    parsed = JSON.parse(content);
+  } else if (msg?.parsed) {
+    parsed = msg.parsed;
+  } else if (msg?.content && typeof msg.content === "object") {
+    parsed = msg.content;
+  } else {
+    throw new Error("OpenAI day-plan response missing JSON content");
+  }
+
+  const day = parsed.day || parsed.Day || parsed.dayPlan || {};
+  const recipes = Array.isArray(parsed.recipes) ? parsed.recipes : [];
+
+  return { day, recipes };
+}
+
 // ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
 // ======================================================================
@@ -440,8 +585,91 @@ async function handleAiMealPlan(req: Request, res: Response) {
   }
 }
 
+// ---------- SINGLE-DAY MEAL PLAN HANDLER (for split prompts) ----------
+async function handleAiDayPlan(req: Request, res: Response) {
+  try {
+    const {
+      constraints,
+      day,
+    }: {
+      constraints: UserConstraints;
+      day: {
+        dayIndex: number;
+        label: string;
+        isoDate: string;
+        meals: Array<{
+          type: string;
+          targets: {
+            calories?: number;
+            protein?: number;
+            carbs?: number;
+            fats?: number;
+          };
+        }>;
+      };
+    } = req.body;
+
+    if (
+      !constraints ||
+      typeof constraints.dailyCalories !== "number" ||
+      typeof constraints.proteinGrams !== "number" ||
+      typeof constraints.carbsGrams !== "number" ||
+      typeof constraints.fatsGrams !== "number"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid constraints for day-plan. Expected dailyCalories, proteinGrams, carbsGrams, fatsGrams as numbers.",
+      });
+    }
+
+    if (!day || typeof day.dayIndex !== "number" || !Array.isArray(day.meals)) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid day payload. Expected { dayIndex, label, isoDate, meals[] }.",
+      });
+    }
+
+    let result: { day: any; recipes: any[] };
+
+    try {
+      result = await callOpenAiDayPlan(constraints, day);
+    } catch (err: any) {
+      console.error("OpenAI single-day plan generation failed:", err);
+      const msg = String(err?.message || "");
+      const lower = msg.toLowerCase();
+      const isAbort =
+        err?.name === "AbortError" ||
+        lower.includes("aborted") ||
+        lower.includes("timeout");
+
+      return res.status(isAbort ? 504 : 500).json({
+        ok: false,
+        error: msg || "Failed while generating AI day plan.",
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      day: result.day,
+      recipes: result.recipes || [],
+    });
+  } catch (err: any) {
+    console.error("Error in AI day plan handler:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate AI day plan",
+    });
+  }
+}
+
 app.post("/api/meal-plan", handleAiMealPlan);
 app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
+
+// NEW: per-day endpoints for split prompts
+app.post("/api/day-plan", handleAiDayPlan);
+app.post("/proxy/day-plan", verifyAppProxy, handleAiDayPlan);
 
 // POST /api/meal-plan/adjust
 app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
