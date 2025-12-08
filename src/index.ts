@@ -528,6 +528,210 @@ async function callOpenAiDayPlan(
 }
 
 // ======================================================================
+//                 WEIGHT VISION (IMAGE + MORPH TARGETS)
+// ======================================================================
+
+type WeightVisionRequest = {
+  height_cm: number;
+  weight_kg: number;
+  waist_cm?: number;
+  gender: string;
+  body_fat?: number;
+  pose?: string;
+  style?: string;
+};
+
+type WeightVisionResult = {
+  image_url: string;
+  morph_targets: {
+    chest: number;
+    waist: number;
+    hips: number;
+    arms: number;
+    thighs: number;
+  };
+  prompt_used: string;
+  pose: string;
+  style: string;
+};
+
+// ChatGPT 4.1-mini → JSON (prompt + morph targets) + DALL·E 3 → silhouette
+async function callOpenAiWeightVision(
+  params: WeightVisionRequest
+): Promise<WeightVisionResult> {
+  if (!OPENAI_API_KEY) {
+    console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  const {
+    height_cm,
+    weight_kg,
+    waist_cm,
+    gender,
+    body_fat,
+    pose = "front",
+    style = "simple silhouette, plain background",
+  } = params;
+
+  const chatPayload = {
+    model: OPENAI_MODEL,
+    response_format: { type: "json_object" as const },
+    temperature: 0.4,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You generate JSON for a fitness body-vision app.\n\n" +
+          "Input: height_cm, weight_kg, waist_cm, gender, body_fat, pose, style.\n" +
+          "Output JSON fields:\n" +
+          "  - image_prompt: string (for an AI silhouette image)\n" +
+          "  - morph_targets: { chest, waist, hips, arms, thighs } (each 0.0-1.0)\n\n" +
+          "Rules:\n" +
+          " - ONLY return valid JSON, no markdown, no commentary.\n" +
+          " - morph_targets must always include all 5 fields and be between 0 and 1.\n" +
+          " - image_prompt should describe a neutral, front-facing, full-body silhouette unless pose says otherwise.\n",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          height_cm,
+          weight_kg,
+          waist_cm,
+          gender,
+          body_fat,
+          pose,
+          style,
+        }),
+      },
+    ],
+  };
+
+  console.log("Calling OpenAI (WeightVision chat) with model:", OPENAI_MODEL);
+
+  const chatResp = await fetchWithTimeout(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(chatPayload),
+    },
+    OPENAI_TIMEOUT_MS
+  );
+
+  if (!chatResp.ok) {
+    const txt = await chatResp.text();
+    console.error(
+      "OpenAI /chat/completions (weight-vision) error:",
+      chatResp.status,
+      txt
+    );
+    throw new Error(`OpenAI weight-vision chat error: HTTP ${chatResp.status}`);
+  }
+
+  const chatRaw = (await chatResp.json()) as any;
+  const chatMsg = chatRaw?.choices?.[0]?.message;
+
+  let cfg: any;
+  if (typeof chatMsg?.content === "string") {
+    const content = chatMsg.content.trim();
+    console.log("RAW_WEIGHT_VISION_CONTENT_START");
+    console.log(content.slice(0, 1000));
+    console.log("RAW_WEIGHT_VISION_CONTENT_END");
+    cfg = JSON.parse(content);
+  } else if (chatMsg?.parsed) {
+    cfg = chatMsg.parsed;
+  } else if (chatMsg?.content && typeof chatMsg.content === "object") {
+    cfg = chatMsg.content;
+  } else {
+    throw new Error("OpenAI weight-vision chat missing JSON content");
+  }
+
+  const imagePrompt: string =
+    cfg.image_prompt ||
+    `Full-body ${gender || "person"} silhouette, ${height_cm} cm, ${weight_kg} kg, neutral stance, ${style}`;
+
+  const morphTargets = {
+    chest: clamp01(cfg?.morph_targets?.chest ?? 0.3),
+    waist: clamp01(cfg?.morph_targets?.waist ?? 0.3),
+    hips: clamp01(cfg?.morph_targets?.hips ?? 0.3),
+    arms: clamp01(cfg?.morph_targets?.arms ?? 0.3),
+    thighs: clamp01(cfg?.morph_targets?.thighs ?? 0.3),
+  };
+
+  // Now generate the actual silhouette image with DALL·E 3
+  const imgPayload = {
+    model: "dall-e-3",
+    prompt: imagePrompt,
+    n: 1,
+    size: "1024x1024",
+    response_format: "b64_json",
+  };
+
+  console.log("Calling OpenAI /images/generations for WeightVision");
+
+  const imgResp = await fetchWithTimeout(
+    "https://api.openai.com/v1/images/generations",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(imgPayload),
+    },
+    OPENAI_TIMEOUT_MS
+  );
+
+  if (!imgResp.ok) {
+    const txt = await imgResp.text();
+    console.error(
+      "OpenAI /images/generations error:",
+      imgResp.status,
+      txt
+    );
+    throw new Error(
+      `OpenAI images.generation error: HTTP ${imgResp.status}`
+    );
+  }
+
+  const imgRaw = (await imgResp.json()) as any;
+  const imgData = Array.isArray(imgRaw?.data) ? imgRaw.data[0] : null;
+
+  if (!imgData) {
+    throw new Error("OpenAI images.generation returned no data entry");
+  }
+
+  const base64: string | undefined = imgData.b64_json;
+  const image_url = base64
+    ? `data:image/png;base64,${base64}`
+    : imgData.url || "";
+
+  if (!image_url) {
+    throw new Error("OpenAI images.generation response missing image URL/data");
+  }
+
+  return {
+    image_url,
+    morph_targets: morphTargets,
+    prompt_used: imagePrompt,
+    pose,
+    style,
+  };
+}
+
+function clamp01(v: any): number {
+  const n = typeof v === "number" ? v : Number(v);
+  if (Number.isNaN(n)) return 0.3;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+// ======================================================================
 //                      AI MEAL PLAN HANDLER + ENDPOINTS
 // ======================================================================
 
@@ -664,6 +868,71 @@ async function handleAiDayPlan(req: Request, res: Response) {
   }
 }
 
+// ---------- WEIGHT VISION HANDLER ----------
+async function handleWeightVisionImage(req: Request, res: Response) {
+  try {
+    const body = req.body as Partial<WeightVisionRequest>;
+
+    const height_cm = Number(body.height_cm);
+    const weight_kg = Number(body.weight_kg);
+    const gender = (body.gender || "").toString().trim();
+
+    if (!Number.isFinite(height_cm) || !Number.isFinite(weight_kg) || !gender) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Invalid body data. Expected numeric height_cm, weight_kg, and non-empty gender.",
+      });
+    }
+
+    const waist_cm =
+      typeof body.waist_cm === "number"
+        ? body.waist_cm
+        : body.waist_cm != null
+        ? Number(body.waist_cm)
+        : undefined;
+
+    const body_fat =
+      typeof body.body_fat === "number"
+        ? body.body_fat
+        : body.body_fat != null
+        ? Number(body.body_fat)
+        : undefined;
+
+    const pose = body.pose || "front";
+    const style =
+      body.style || "simple fitness silhouette, neutral background";
+
+    const result = await callOpenAiWeightVision({
+      height_cm,
+      weight_kg,
+      waist_cm,
+      gender,
+      body_fat,
+      pose,
+      style,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+    });
+  } catch (err: any) {
+    console.error("Error in WeightVision image handler:", err);
+    const msg = String(err?.message || "");
+    const lower = msg.toLowerCase();
+    const isAbort =
+      err?.name === "AbortError" ||
+      lower.includes("aborted") ||
+      lower.includes("timeout");
+
+    return res.status(isAbort ? 504 : 500).json({
+      ok: false,
+      error: msg || "Failed to generate weight-vision image",
+    });
+  }
+}
+
 app.post("/api/meal-plan", handleAiMealPlan);
 app.post("/proxy/meal-plan", verifyAppProxy, handleAiMealPlan);
 
@@ -674,6 +943,11 @@ app.post("/proxy/day-plan", verifyAppProxy, handleAiDayPlan);
 // NEW: direct app-style paths (e.g. if frontend calls /apps/instacart/day-plan)
 app.post("/apps/instacart/meal-plan", handleAiMealPlan);
 app.post("/apps/instacart/day-plan", handleAiDayPlan);
+
+// NEW: WEIGHT VISION IMAGE ENDPOINTS
+app.post("/api/weight-vision/image", handleWeightVisionImage);
+app.post("/proxy/weight-vision/image", verifyAppProxy, handleWeightVisionImage);
+app.post("/apps/weight-vision/image", handleWeightVisionImage);
 
 // POST /api/meal-plan/adjust
 app.post("/api/meal-plan/adjust", (req: Request, res: Response) => {
