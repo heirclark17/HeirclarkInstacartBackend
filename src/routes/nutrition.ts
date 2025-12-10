@@ -1,16 +1,16 @@
 import { Router, Request, Response } from "express";
+import { v4 as uuidv4 } from "uuid";
 import { todayDateOnly } from "../utils/date";
 import {
   computeDailyTotals,
   computeRemaining,
   getMealsForDate,
   getStaticDailyTargets,
-  // new imports from your nutritionService
   memoryStore,
   addMealForUser,
   Meal,
-  NutritionItem
-} from "../services/nutritionService";
+  NutritionItem,
+} from "../utils/services/nutritionService"; // 👈 fixed path
 import { computeStreak } from "../services/streakService";
 
 export const nutritionRouter = Router();
@@ -40,7 +40,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     const {
       datetime,
       label,
-      items
+      items,
     }: {
       datetime?: string;
       label?: string;
@@ -50,7 +50,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: "items is required and must be a non-empty array"
+        error: "items is required and must be a non-empty array",
       });
     }
 
@@ -74,7 +74,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
         fat: item.fat ?? 0,
         fiber: item.fiber ?? 0,
         sugar: item.sugar ?? 0,
-        sodium: item.sodium ?? 0
+        sodium: item.sodium ?? 0,
       };
     });
 
@@ -84,10 +84,10 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
     // Build a Meal (without userId; addMealForUser will attach it)
     const meal: Omit<Meal, "userId"> = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      id: uuidv4(),
       datetime: iso,
       label,
-      items: normalizedItems
+      items: normalizedItems,
     };
 
     // Log against the current user in memoryStore
@@ -95,13 +95,13 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
     return res.status(201).json({
       ok: true,
-      meal
+      meal,
     });
   } catch (err: any) {
     console.error("Error in POST /api/v1/nutrition/meal:", err);
     return res.status(500).json({
       ok: false,
-      error: err?.message || "Failed to log meal"
+      error: err?.message || "Failed to log meal",
     });
   }
 });
@@ -134,6 +134,6 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
       .sort((a: Meal, b: Meal) =>
         a.datetime < b.datetime ? 1 : -1
       )
-      .slice(0, 5)
+      .slice(0, 5),
   });
 });
