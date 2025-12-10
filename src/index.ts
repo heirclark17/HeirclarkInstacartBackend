@@ -121,12 +121,12 @@ app.post(
       const systemPrompt = `
 You are a nutrition assistant for a calorie tracking app.
 
-Given a food photo, estimate:
-- A short, human-readable meal name
-- Total calories (kcal)
-- Protein (grams)
-- Carbohydrates (grams)
-- Fat (grams)
+Given a single food photo, you must:
+1. Infer a short human-readable meal name.
+2. Estimate total calories, protein (g), carbs (g), and fat (g) for the plate in the photo.
+3. Provide a confidence score from 0–100 (where 100 means very confident).
+4. Break down the plate into a list of component foods with approximate macros.
+5. Suggest 1–3 realistic, healthier swaps (e.g., 'swap fries for roasted potatoes', 'use grilled chicken instead of fried').
 
 Respond ONLY as valid JSON with this exact shape:
 
@@ -136,37 +136,146 @@ Respond ONLY as valid JSON with this exact shape:
   "protein": number,
   "carbs": number,
   "fats": number,
-  "explanation": string
+  "confidence": number,          // 0–100
+  "foods": [
+    {
+      "name": string,
+      "calories": number,
+      "protein": number,
+      "carbs": number,
+      "fats": number
+    }
+  ],
+  "swaps": string[],             // list of short healthier swap suggestions
+  "explanation": string          // 1–3 short sentences explaining your estimate
 }
-
-"explanation" should briefly explain your assumptions (portion size, ingredients, etc.).
 `.trim();
 
-     const body = {
-  model: OPENAI_MODEL, // make sure this is vision-capable, e.g. "gpt-4.1" or "gpt-4.1-mini"
-  response_format: { type: "json_object" },
-  messages: [
-    {
-      role: "system",
-      content: systemPrompt,
-    },
-    {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: "Estimate the nutrition for this meal photo.",
-        },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:${mimeType};base64,${base64}`,
+      const body = {
+        model: OPENAI_MODEL, // must be a vision-capable model, e.g. "gpt-4.1" or "gpt-4.1-mini"
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
           },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Estimate the nutrition for this meal photo.",
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${base64}`,
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const openaiResp = await fetchWithTimeout(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify(body),
         },
-      ],
-    },
-  ],
-};
+        OPENAI_TIMEOUT_MS
+      );
+
+      const json = await openaiResp.json();
+      if (!openaiResp.ok) {
+        console.error("OpenAI error:", openaiResp.status, json);
+        return res.status(500).json({
+          ok: false,
+          error:
+            json?.error?.message ||
+            `OpenAI API error (status ${openaiResp.status})`,
+        });
+      }
+
+      const rawContent = json?.choices?.[0]?.message?.content;
+      if (typeof rawContent !== "string") {
+        console.error("Unexpected OpenAI content:", rawContent);
+        return res.status(500).json({
+          ok: false,
+          error: "Unexpected OpenAI response format",
+        });
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch (e) {
+        console.error("Failed to parse OpenAI JSON content:", rawContent);
+        return res.status(500).json({
+          ok: false,
+          error: "Failed to parse AI nutrition JSON",
+          raw: rawContent,
+        });
+      }
+
+      const mealName =
+        typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
+
+      const calories = Number(parsed.calories) || 0;
+      const protein = Number(parsed.protein) || 0;
+      const carbs = Number(parsed.carbs) || 0;
+      const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
+
+      const confidence = Math.max(
+        0,
+        Math.min(100, Number(parsed.confidence) || 0)
+      );
+
+      const foods = Array.isArray(parsed.foods)
+        ? parsed.foods
+            .map((f: any) => ({
+              name: String(f.name || "").trim() || "Food item",
+              calories: Number(f.calories) || 0,
+              protein: Number(f.protein) || 0,
+              carbs: Number(f.carbs) || 0,
+              fats: Number(f.fats ?? f.fat ?? 0) || 0,
+            }))
+            .filter((f: any) => f.name)
+        : [];
+
+      const swaps = Array.isArray(parsed.swaps)
+        ? parsed.swaps.map((s: any) => String(s)).filter(Boolean)
+        : [];
+
+      const explanation =
+        typeof parsed.explanation === "string" ? parsed.explanation : "";
+
+      return res.status(200).json({
+        ok: true,
+        mealName,
+        calories,
+        protein,
+        carbs,
+        fats,
+        confidence,
+        foods,
+        swaps,
+        explanation,
+      });
+    } catch (err: any) {
+      console.error("AI nutrition estimation failed:", err);
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "AI nutrition estimation failed",
+      });
+    }
+  }
+);
+
 
 
       const openaiResp = await fetchWithTimeout(
