@@ -3,17 +3,17 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";
 import morgan from "morgan";
-import multer from "multer"; // 👈 NEW
+import multer from "multer";
 
 // Types / services
-import { UserConstraints, WeekPlan } from "./types/mealPlan";
+import { UserConstraints } from "./types/mealPlan";
 import {
   generateWeekPlan,
   adjustWeekPlan,
   generateFromPantry,
 } from "./services/mealPlanner";
 
-// 🔥 Calorie / nutrition feature routers
+// Calorie / nutrition feature routers
 import { mealsRouter } from "./routes/meals";
 import { nutritionRouter } from "./routes/nutrition";
 import { hydrationRouter } from "./routes/hydration";
@@ -26,7 +26,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 
-// 👇 Multer instance for in-memory file uploads
+// Multer instance for in-memory file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -34,7 +34,7 @@ const upload = multer({
   },
 });
 
-// 👇 Helper type so TS knows about req.file
+// Helper type so TS knows about req.file
 type MulterRequest = Request & { file?: any };
 
 // ======================================================================
@@ -63,12 +63,12 @@ app.use(express.urlencoded({ extended: true }));
 //                       HEALTH CHECK + NUTRITION ROUTES
 // ======================================================================
 
-// ✅ Simple health check
+// Simple health check
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// ✅ Mount calorie / nutrition routes
+// Mount calorie / nutrition routes
 app.use("/api/v1/meals", mealsRouter);
 app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
@@ -177,9 +177,6 @@ Respond ONLY as valid JSON with this exact shape:
         ],
       };
 
-     
-
-
       const openaiResp = await fetchWithTimeout(
         "https://api.openai.com/v1/chat/completions",
         {
@@ -225,7 +222,7 @@ Respond ONLY as valid JSON with this exact shape:
         });
       }
 
-          const mealName =
+      const mealName =
         typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
 
       const calories = Number(parsed.calories) || 0;
@@ -269,7 +266,12 @@ Respond ONLY as valid JSON with this exact shape:
         swaps,
         explanation,
       });
-
+    } catch (err: any) {
+      console.error("AI nutrition estimation failed:", err);
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "AI nutrition estimation failed",
+      });
     }
   }
 );
@@ -359,10 +361,7 @@ async function callOpenAiMealPlan(
                             id: { type: "string" },
                             name: { type: "string" },
                             quantity: {
-                              anyOf: [
-                                { type: "number" },
-                                { type: "string" },
-                              ],
+                              anyOf: [{ type: "number" }, { type: "string" }],
                             },
                             unit: { type: "string" },
                             instacart_query: { type: "string" },
@@ -373,10 +372,7 @@ async function callOpenAiMealPlan(
                             productIds: {
                               type: "array",
                               items: {
-                                anyOf: [
-                                  { type: "number" },
-                                  { type: "string" },
-                                ],
+                                anyOf: [{ type: "number" }, { type: "string" }],
                               },
                             },
                             upcs: {
@@ -428,7 +424,9 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  // ... rest of your existing callOpenAiMealPlan implementation
+  // TODO: implement actual OpenAI call + map into WeekPlan
+  // left as-is so it doesn't break existing imports
+  return payload;
 }
 
 // ======================================================================
