@@ -225,12 +225,35 @@ Respond ONLY as valid JSON with this exact shape:
         });
       }
 
-      const mealName =
+          const mealName =
         typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
+
       const calories = Number(parsed.calories) || 0;
       const protein = Number(parsed.protein) || 0;
       const carbs = Number(parsed.carbs) || 0;
       const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
+
+      const confidence = Math.max(
+        0,
+        Math.min(100, Number(parsed.confidence) || 0)
+      );
+
+      const foods = Array.isArray(parsed.foods)
+        ? parsed.foods
+            .map((f: any) => ({
+              name: String(f.name || "").trim() || "Food item",
+              calories: Number(f.calories) || 0,
+              protein: Number(f.protein) || 0,
+              carbs: Number(f.carbs) || 0,
+              fats: Number(f.fats ?? f.fat ?? 0) || 0,
+            }))
+            .filter((f: any) => f.name)
+        : [];
+
+      const swaps = Array.isArray(parsed.swaps)
+        ? parsed.swaps.map((s: any) => String(s)).filter(Boolean)
+        : [];
+
       const explanation =
         typeof parsed.explanation === "string" ? parsed.explanation : "";
 
@@ -241,14 +264,12 @@ Respond ONLY as valid JSON with this exact shape:
         protein,
         carbs,
         fats,
+        confidence,
+        foods,
+        swaps,
         explanation,
       });
-    } catch (err: any) {
-      console.error("AI nutrition estimation failed:", err);
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "AI nutrition estimation failed",
-      });
+
     }
   }
 );
