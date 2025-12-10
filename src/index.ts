@@ -1,6 +1,8 @@
+import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors"; // ✅ CORS import
+import morgan from "morgan";
 
 // Types / services
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
@@ -9,6 +11,12 @@ import {
   adjustWeekPlan,
   generateFromPantry,
 } from "./services/mealPlanner";
+
+// 🔥 NEW: Calorie / nutrition feature routers
+import { mealsRouter } from "./routes/meals";
+import { nutritionRouter } from "./routes/nutrition";
+import { hydrationRouter } from "./routes/hydration";
+import { weightRouter } from "./routes/weight";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,7 +29,7 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 app.use(
   cors({
     origin: true, // you can tighten this later to your exact shop domain
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
     allowedHeaders: ["Content-Type"],
   })
 );
@@ -29,8 +37,17 @@ app.use(
 // ✅ Preflight handling
 app.options("*", cors());
 
+// ✅ Request logging
+app.use(morgan("dev"));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// 🔥 Mount calorie / nutrition routes (Cal AI backend)
+app.use("/api/v1/meals", mealsRouter);
+app.use("/api/v1/nutrition", nutritionRouter);
+app.use("/api/v1/hydration", hydrationRouter);
+app.use("/api/v1/weight", weightRouter);
 
 // ======================================================================
 //                         OPENAI HELPERS
@@ -269,7 +286,7 @@ async function callOpenAiMealPlan(
   const rawDays = Array.isArray(aiJson.days) ? aiJson.days : [];
   const rawRecipes = Array.isArray(aiJson.recipes) ? aiJson.recipes : [];
 
-  // Build recipe map & normalize recipes into Recipe[]
+  // Build recipe map & normalize recipes into Recipe[]  
   const recipeMap = new Map<string, { id: string; title: string }>();
 
   const recipes = rawRecipes.map((r: any) => {
@@ -335,7 +352,8 @@ async function callOpenAiMealPlan(
 
     const meals = Array.isArray(d.meals)
       ? d.meals.map((m: any) => {
-          const rawType = (m.type || m.name || "").toString().toLowerCase();
+          const rawType = (m.type || m.name || "").toString().lowerCase?.() ??
+            (m.type || m.name || "").toString().toLowerCase();
           let type: string = "other";
           if (rawType.includes("breakfast")) type = "breakfast";
           else if (rawType.includes("lunch")) type = "lunch";
@@ -1887,6 +1905,20 @@ app.post(
         error: "Server error in /proxy/build-list",
       });
     }
+  }
+);
+
+// ======================================================================
+//                      GLOBAL ERROR HANDLER
+// ======================================================================
+
+app.use(
+  (err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error("Unhandled error:", err);
+    res.status(500).json({
+      ok: false,
+      error: err?.message || "Internal server error",
+    });
   }
 );
 
