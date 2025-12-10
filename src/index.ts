@@ -3,7 +3,7 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";
 import morgan from "morgan";
-import multer from "multer"; // 👈 NEW: for handling image uploads
+import multer from "multer"; // 👈 NEW
 
 // Types / services
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
@@ -26,13 +26,16 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 
-// 👇 NEW: Multer instance for in-memory file uploads
+// 👇 Multer instance for in-memory file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 8 * 1024 * 1024, // 8 MB max
+    fileSize: 8 * 1024 * 1024, // 8 MB
   },
 });
+
+// 👇 Helper type so TS knows about req.file
+type MulterRequest = Request & { file?: any };
 
 // ======================================================================
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
@@ -60,17 +63,12 @@ app.use(express.urlencoded({ extended: true }));
 //                       HEALTH CHECK + NUTRITION ROUTES
 // ======================================================================
 
-// ✅ Simple health check: should respond at
-// https://heirclarkinstacartbackend-production.up.railway.app/
+// ✅ Simple health check
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
 // ✅ Mount calorie / nutrition routes
-// These give you:
-//   POST /api/v1/nutrition/meal
-//   GET  /api/v1/nutrition/day-summary
-//   + whatever is in the other routers
 app.use("/api/v1/meals", mealsRouter);
 app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
@@ -97,13 +95,10 @@ function fetchWithTimeout(
 //          AI PHOTO → NUTRITION ENDPOINT (Guess from Food Photo)
 // ======================================================================
 
-// Frontend calls:
-//   POST {HC_BACKEND_BASE}/api/ai/guess-nutrition-from-photo
-// with multipart/form-data, field name: "image"
 app.post(
   "/api/ai/guess-nutrition-from-photo",
   upload.single("image"),
-  async (req: Request, res: Response) => {
+  async (req: MulterRequest, res: Response) => {
     try {
       if (!OPENAI_API_KEY) {
         console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
@@ -148,7 +143,7 @@ Respond ONLY as valid JSON with this exact shape:
 `.trim();
 
       const body = {
-        model: OPENAI_MODEL, // ⚠️ ensure this is a vision-capable model in your env, e.g. "gpt-4.1"
+        model: OPENAI_MODEL, // ⚠️ make sure this is a vision-capable model in your env
         response_format: { type: "json_object" },
         messages: [
           {
@@ -214,9 +209,8 @@ Respond ONLY as valid JSON with this exact shape:
         });
       }
 
-      const mealName = typeof parsed.mealName === "string"
-        ? parsed.mealName
-        : "Meal";
+      const mealName =
+        typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
       const calories = Number(parsed.calories) || 0;
       const protein = Number(parsed.protein) || 0;
       const carbs = Number(parsed.carbs) || 0;
@@ -243,10 +237,10 @@ Respond ONLY as valid JSON with this exact shape:
   }
 );
 
-// ... 🔽 everything below here is exactly what you already had
-// (AI meal-plan helpers, WeightVision, Instacart handlers, etc.)
+// ======================================================================
+//          (REST OF YOUR EXISTING OPENAI MEAL PLAN LOGIC)
+// ======================================================================
 
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
@@ -397,10 +391,8 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  // ... (rest of your existing code unchanged)
+  // ... rest of your existing callOpenAiMealPlan implementation
 }
-
-// (KEEP all the rest of your handlers exactly as-is)
 
 // ======================================================================
 //                      GLOBAL ERROR HANDLER
@@ -424,4 +416,4 @@ app.listen(PORT, () => {
   console.log(`Heirclark backend listening on port ${PORT}`);
 });
 
-export default app; // (optional, but nice for testing)
+export default app;
