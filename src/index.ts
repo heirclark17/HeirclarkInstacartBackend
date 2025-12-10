@@ -142,27 +142,32 @@ Respond ONLY as valid JSON with this exact shape:
 "explanation" should briefly explain your assumptions (portion size, ingredients, etc.).
 `.trim();
 
-      const body = {
-        model: OPENAI_MODEL, // ⚠️ make sure this is a vision-capable model in your env
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
+     const body = {
+  model: OPENAI_MODEL, // make sure this is vision-capable, e.g. "gpt-4.1" or "gpt-4.1-mini"
+  response_format: { type: "json_object" },
+  messages: [
+    {
+      role: "system",
+      content: systemPrompt,
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "Estimate the nutrition for this meal photo.",
+        },
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:${mimeType};base64,${base64}`,
           },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_image",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
-              },
-            ],
-          },
-        ],
-      };
+        },
+      ],
+    },
+  ],
+};
+
 
       const openaiResp = await fetchWithTimeout(
         "https://api.openai.com/v1/chat/completions",
