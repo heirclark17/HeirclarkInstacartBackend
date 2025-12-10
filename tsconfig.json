@@ -10,7 +10,9 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "lib": ["ES2020", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]
