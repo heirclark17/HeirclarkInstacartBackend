@@ -88,10 +88,12 @@ function fetchWithTimeout(
 // (AI meal-plan helpers, WeightVision, Instacart handlers, etc.)
 
 // Call OpenAI to build a WeekPlan that includes days[] + recipes[]
+// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
-): Promise<WeekPlan> {
+) {
+
   if (!OPENAI_API_KEY) {
     console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
     throw new Error("OPENAI_API_KEY is not configured");
