@@ -82,7 +82,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
           fiber: body.fiber,
           sugar: body.sugar,
           sodium: body.sodium,
-        },
+        } as NutritionItem,
       ];
     }
 
@@ -95,28 +95,32 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     }
 
     // ---------- normalise + validate items ----------
-    const normalizedItems: NutritionItem[] = itemsSource.map((item, idx) => {
-      if (!item || typeof item.name !== "string") {
-        throw new Error(`items[${idx}].name is required (string)`);
-      }
-      if (
-        typeof item.calories !== "number" ||
-        !Number.isFinite(item.calories)
-      ) {
-        throw new Error(`items[${idx}].calories is required (number)`);
-      }
+    const normalizedItems: NutritionItem[] = itemsSource.map(
+      (item: NutritionItem, idx: number) => {
+        if (!item || typeof item.name !== "string") {
+          throw new Error(`items[${idx}].name is required (string)`);
+        }
+        if (
+          typeof item.calories !== "number" ||
+          !Number.isFinite(item.calories)
+        ) {
+          throw new Error(`items[${idx}].calories is required (number)`);
+        }
 
-      return {
-        name: item.name.trim(),
-        calories: item.calories,
-        protein: item.protein ?? 0,
-        carbs: item.carbs ?? 0,
-        fat: item.fat ?? 0,
-        fiber: item.fiber ?? 0,
-        sugar: item.sugar ?? 0,
-        sodium: item.sodium ?? 0,
-      };
-    });
+        const normalized: NutritionItem = {
+          name: item.name.trim(),
+          calories: Number(item.calories),
+          protein: Number(item.protein ?? 0),
+          carbs: Number(item.carbs ?? 0),
+          fat: Number(item.fat ?? 0),
+          fiber: Number(item.fiber ?? 0),
+          sugar: Number(item.sugar ?? 0),
+          sodium: Number(item.sodium ?? 0),
+        };
+
+        return normalized;
+      }
+    );
 
     const iso = datetime
       ? new Date(datetime).toISOString()
