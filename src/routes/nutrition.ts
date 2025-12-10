@@ -19,43 +19,83 @@ export const nutritionRouter = Router();
  * POST /api/v1/nutrition/meal
  * Logs a full meal with one or more items into the in-memory store.
  *
- * Body:
- * {
- *   datetime?: string,             // ISO datetime; defaults to now
- *   label?: string,                // "Breakfast", "Lunch", "Snack"
- *   items: Array<{
- *     name: string;
- *     calories: number;
- *     protein?: number;
- *     carbs?: number;
- *     fat?: number;
- *     fiber?: number;
- *     sugar?: number;
- *     sodium?: number;
- *   }>
- * }
+ * Accepts EITHER:
+ *  A) {
+ *       datetime?: string,
+ *       label?: string,
+ *       items: NutritionItem[]
+ *     }
+ *
+ *  OR (single-item convenience):
+ *  B) {
+ *       datetime?: string,
+ *       label?: string,
+ *       name: string,
+ *       calories: number,
+ *       protein?: number,
+ *       carbs?: number,
+ *       fat?: number,
+ *       fiber?: number,
+ *       sugar?: number,
+ *       sodium?: number
+ *     }
  */
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
   try {
-    const {
-      datetime,
-      label,
-      items,
-    }: {
+    const body = req.body as {
       datetime?: string;
       label?: string;
       items?: NutritionItem[];
-    } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
+      // single-item fallback fields
+      name?: string;
+      calories?: number;
+      protein?: number;
+      carbs?: number;
+      fat?: number;
+      fiber?: number;
+      sugar?: number;
+      sodium?: number;
+    };
+
+    const { datetime, label } = body;
+
+    // ---------- shape-normalisation: items[] OR single item ----------
+    let itemsSource: NutritionItem[] | undefined;
+
+    if (Array.isArray(body.items) && body.items.length > 0) {
+      // normal multi-item shape
+      itemsSource = body.items;
+    } else if (
+      typeof body.name === "string" &&
+      body.name.trim() &&
+      typeof body.calories !== "undefined"
+    ) {
+      // single-item convenience shape
+      itemsSource = [
+        {
+          name: body.name,
+          calories: Number(body.calories),
+          protein: body.protein,
+          carbs: body.carbs,
+          fat: body.fat,
+          fiber: body.fiber,
+          sugar: body.sugar,
+          sodium: body.sodium,
+        },
+      ];
+    }
+
+    if (!Array.isArray(itemsSource) || itemsSource.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: "items is required and must be a non-empty array",
+        error:
+          "items is required (array) OR provide name + calories for a single item.",
       });
     }
 
-    // Normalize + validate items
-    const normalizedItems: NutritionItem[] = items.map((item, idx) => {
+    // ---------- normalise + validate items ----------
+    const normalizedItems: NutritionItem[] = itemsSource.map((item, idx) => {
       if (!item || typeof item.name !== "string") {
         throw new Error(`items[${idx}].name is required (string)`);
       }
