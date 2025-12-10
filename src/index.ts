@@ -3,6 +3,7 @@ import express, { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";
 import morgan from "morgan";
+import multer from "multer"; // 👈 NEW: for handling image uploads
 
 // Types / services
 import { UserConstraints, WeekPlan } from "./types/mealPlan";
@@ -24,6 +25,14 @@ const PORT = process.env.PORT || 3000;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
+
+// 👇 NEW: Multer instance for in-memory file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 8 * 1024 * 1024, // 8 MB max
+  },
+});
 
 // ======================================================================
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
@@ -84,6 +93,156 @@ function fetchWithTimeout(
   });
 }
 
+// ======================================================================
+//          AI PHOTO → NUTRITION ENDPOINT (Guess from Food Photo)
+// ======================================================================
+
+// Frontend calls:
+//   POST {HC_BACKEND_BASE}/api/ai/guess-nutrition-from-photo
+// with multipart/form-data, field name: "image"
+app.post(
+  "/api/ai/guess-nutrition-from-photo",
+  upload.single("image"),
+  async (req: Request, res: Response) => {
+    try {
+      if (!OPENAI_API_KEY) {
+        console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
+        return res.status(500).json({
+          ok: false,
+          error: "OPENAI_API_KEY is not configured",
+        });
+      }
+
+      if (!req.file || !req.file.buffer) {
+        return res.status(400).json({
+          ok: false,
+          error: "Image file is required (field name: 'image')",
+        });
+      }
+
+      const mimeType = req.file.mimetype || "image/jpeg";
+      const base64 = req.file.buffer.toString("base64");
+
+      const systemPrompt = `
+You are a nutrition assistant for a calorie tracking app.
+
+Given a food photo, estimate:
+- A short, human-readable meal name
+- Total calories (kcal)
+- Protein (grams)
+- Carbohydrates (grams)
+- Fat (grams)
+
+Respond ONLY as valid JSON with this exact shape:
+
+{
+  "mealName": string,
+  "calories": number,
+  "protein": number,
+  "carbs": number,
+  "fats": number,
+  "explanation": string
+}
+
+"explanation" should briefly explain your assumptions (portion size, ingredients, etc.).
+`.trim();
+
+      const body = {
+        model: OPENAI_MODEL, // ⚠️ ensure this is a vision-capable model in your env, e.g. "gpt-4.1"
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_image",
+                image_url: {
+                  url: `data:${mimeType};base64,${base64}`,
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const openaiResp = await fetchWithTimeout(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify(body),
+        },
+        OPENAI_TIMEOUT_MS
+      );
+
+      const json = await openaiResp.json();
+      if (!openaiResp.ok) {
+        console.error("OpenAI error:", openaiResp.status, json);
+        return res.status(500).json({
+          ok: false,
+          error:
+            json?.error?.message ||
+            `OpenAI API error (status ${openaiResp.status})`,
+        });
+      }
+
+      const rawContent = json?.choices?.[0]?.message?.content;
+      if (typeof rawContent !== "string") {
+        console.error("Unexpected OpenAI content:", rawContent);
+        return res.status(500).json({
+          ok: false,
+          error: "Unexpected OpenAI response format",
+        });
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch (e) {
+        console.error("Failed to parse OpenAI JSON content:", rawContent);
+        return res.status(500).json({
+          ok: false,
+          error: "Failed to parse AI nutrition JSON",
+          raw: rawContent,
+        });
+      }
+
+      const mealName = typeof parsed.mealName === "string"
+        ? parsed.mealName
+        : "Meal";
+      const calories = Number(parsed.calories) || 0;
+      const protein = Number(parsed.protein) || 0;
+      const carbs = Number(parsed.carbs) || 0;
+      const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
+      const explanation =
+        typeof parsed.explanation === "string" ? parsed.explanation : "";
+
+      return res.status(200).json({
+        ok: true,
+        mealName,
+        calories,
+        protein,
+        carbs,
+        fats,
+        explanation,
+      });
+    } catch (err: any) {
+      console.error("AI nutrition estimation failed:", err);
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "AI nutrition estimation failed",
+      });
+    }
+  }
+);
+
 // ... 🔽 everything below here is exactly what you already had
 // (AI meal-plan helpers, WeightVision, Instacart handlers, etc.)
 
@@ -93,7 +252,6 @@ async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
 ) {
-
   if (!OPENAI_API_KEY) {
     console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
     throw new Error("OPENAI_API_KEY is not configured");
