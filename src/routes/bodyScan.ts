@@ -4,30 +4,53 @@ import FormData from "form-data";
 
 export const bodyScanRouter = Router();
 
+// Base URL of your Python microservice on Railway
+// Example: https://heirclark-body-scan-service-production.up.railway.app
 const BODY_SCAN_SERVICE_BASE =
   process.env.BODY_SCAN_SERVICE_BASE ||
-  "https://heirclark-body-scan-service.up.railway.app";
+  "http://localhost:8000"; // fallback for local testing
 
+/**
+ * POST /api/v1/body-scan
+ *
+ * Expects multipart/form-data with fields:
+ *   - user_id
+ *   - front (image file)
+ *   - side  (image file)
+ *   - back  (image file)
+ *
+ * Multer already populated req.files via upload.fields() in index.ts.
+ */
 bodyScanRouter.post(
   "/api/v1/body-scan",
   async (req: Request, res: Response) => {
     try {
-      // expecting multipart/form-data with fields:
-      // userId, front, side, back
-      const userId = (req.body.userId as string) || "anonymous";
-
-      const files = (req as any).files || {}; // depending on your multer config
-
-      const form = new FormData();
-      form.append("user_id", userId);
-
-      if (!files.front || !files.side || !files.back) {
-        return res.status(400).json({
-          error:
-            "Missing required images. Need front, side, and back photos.",
+      // Ensure ENV variable is set
+      if (!BODY_SCAN_SERVICE_BASE) {
+        console.error("BODY_SCAN_SERVICE_BASE env var is missing.");
+        return res.status(500).json({
+          ok: false,
+          error: "Body scan service is not configured",
         });
       }
 
+      const files = (req as any).files || {};
+      const userId = (req.body.userId as string) || "anonymous";
+
+      // Validate required images
+      if (!files.front || !files.side || !files.back) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "Missing required images. Must include 'front', 'side', and 'back' fields.",
+        });
+      }
+
+      // Build form-data to send to Python service
+      const form = new FormData();
+      form.append("user_id", userId);
+
+      // Append each file
       form.append("front", files.front[0].buffer, {
         filename: files.front[0].originalname || "front.jpg",
         contentType: files.front[0].mimetype || "image/jpeg",
@@ -43,20 +66,32 @@ bodyScanRouter.post(
         contentType: files.back[0].mimetype || "image/jpeg",
       });
 
-      const url = `${BODY_SCAN_SERVICE_BASE}/api/v1/body-scan`;
+      const pythonUrl = `${BODY_SCAN_SERVICE_BASE}/api/v1/body-scan`;
 
-      const resp = await axios.post(url, form, {
+      console.log(`[BodyScan] Forwarding request to: ${pythonUrl}`);
+
+      // Call the Python SMPL-X microservice
+      const resp = await axios.post(pythonUrl, form, {
         headers: form.getHeaders(),
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
+        timeout: 90000, // 90 seconds for heavy SMPL-X compute
       });
 
-      // Just proxy the body directly back to your frontend
-      return res.status(200).json(resp.data);
+      // Forward the response straight back to Shopify
+      return res.status(200).json({
+        ok: true,
+        ...resp.data,
+      });
     } catch (err: any) {
-      console.error("[BodyScan] error:", err?.message || err);
+      console.error("[BodyScan] Error calling Python service:", err?.message);
+
       const status = err?.response?.status || 500;
-      const data = err?.response?.data || { error: "Body scan failed" };
+      const data = err?.response?.data || {
+        ok: false,
+        error: "Body scan failed at proxy step",
+      };
+
       return res.status(status).json(data);
     }
   }
