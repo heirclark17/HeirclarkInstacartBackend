@@ -12,6 +12,7 @@ import {
   NutritionItem,
 } from "../utils/services/nutritionService"; // 👈 fixed path
 import { computeStreak } from "../services/streakService";
+import { estimateMealFromText } from "../services/aiNutritionService"; // 👈 NEW
 
 export const nutritionRouter = Router();
 
@@ -150,6 +151,56 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/v1/nutrition/ai/meal-from-text
+ *
+ * Body:
+ * {
+ *   text: string;          // user description of the meal
+ *   localTimeIso?: string; // optional local time ISO; helps pick B/L/D/S
+ * }
+ *
+ * Response:
+ * {
+ *   ok: true,
+ *   calories: number,
+ *   protein: number,
+ *   carbs: number,
+ *   fat: number,
+ *   label: "Breakfast" | "Lunch" | "Dinner" | "Snack" | null,
+ *   mealName: string,
+ *   explanation: string
+ * }
+ */
+nutritionRouter.post(
+  "/ai/meal-from-text",
+  async (req: Request, res: Response) => {
+    try {
+      const { text, localTimeIso } = req.body || {};
+
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({
+          ok: false,
+          error: "Missing or invalid 'text' in request body.",
+        });
+      }
+
+      const estimate = await estimateMealFromText(text, localTimeIso);
+
+      return res.json({
+        ok: true,
+        ...estimate,
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/v1/nutrition/ai/meal-from-text:", err);
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "Failed to generate meal estimate.",
+      });
+    }
+  }
+);
+
 // GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const date = (req.query.date as string) || todayDateOnly();
@@ -167,7 +218,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
       : Math.min(100, Math.max(40, 100 - remaining.sugar / 2));
 
   res.json({
-    ok: true,              // 👈 added for consistency with other APIs
+    ok: true, // 👈 added for consistency with other APIs
     date,
     targets,
     consumed,
