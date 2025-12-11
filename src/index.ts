@@ -19,6 +19,9 @@ import { nutritionRouter } from "./routes/nutrition";
 import { hydrationRouter } from "./routes/hydration";
 import { weightRouter } from "./routes/weight";
 
+// ⭐ NEW: Body Scan router (Tier 3 SMPL-X microservice proxy)
+import { bodyScanRouter } from "./routes/bodyScan";
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -73,6 +76,19 @@ app.use("/api/v1/meals", mealsRouter);
 app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
 app.use("/api/v1/weight", weightRouter);
+
+// ⭐ NEW: Body Scan (front/side/back photos → SMPL-X microservice)
+// This middleware ensures requests to the bodyScanRouter have
+// req.files.front / req.files.side / req.files.back populated.
+const bodyScanUpload = upload.fields([
+  { name: "front", maxCount: 1 },
+  { name: "side", maxCount: 1 },
+  { name: "back", maxCount: 1 },
+]);
+
+// The bodyScanRouter itself should define the route path, e.g.
+// router.post("/api/v1/body-scan", ...)
+app.use(bodyScanUpload, bodyScanRouter);
 
 // ======================================================================
 //                         OPENAI HELPERS
