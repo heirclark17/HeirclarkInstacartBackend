@@ -4,17 +4,29 @@ import FormData from "form-data";
 
 export const bodyScanRouter = Router();
 
-// Base URL of your Python microservice on Railway
-// Example: https://heirclark-body-scan-service-production.up.railway.app
-const BODY_SCAN_SERVICE_BASE =
-  process.env.BODY_SCAN_SERVICE_BASE ||
-  "http://localhost:8000"; // fallback for local testing
+// --- Resolve and validate the Python microservice base URL ---
+const RAW_BODY_SCAN_SERVICE_BASE = process.env.BODY_SCAN_SERVICE_BASE;
+
+// If env is missing, DO NOT silently fall back to localhost in production.
+// We'll still allow localhost for dev, but make it explicit.
+const BODY_SCAN_SERVICE_BASE = (RAW_BODY_SCAN_SERVICE_BASE || "").replace(
+  /\/+$/g,
+  ""
+);
+
+if (!BODY_SCAN_SERVICE_BASE) {
+  console.warn(
+    "[BodyScan] BODY_SCAN_SERVICE_BASE is not set. " +
+      "In Railway, set it to your Python service URL, e.g. " +
+      "https://heirclark-body-scan-service-production.up.railway.app"
+  );
+}
 
 /**
  * POST /api/v1/body-scan
  *
  * Expects multipart/form-data with fields:
- *   - user_id
+ *   - userId (from frontend)
  *   - front (image file)
  *   - side  (image file)
  *   - back  (image file)
@@ -25,12 +37,11 @@ bodyScanRouter.post(
   "/api/v1/body-scan",
   async (req: Request, res: Response) => {
     try {
-      // Ensure ENV variable is set
       if (!BODY_SCAN_SERVICE_BASE) {
-        console.error("BODY_SCAN_SERVICE_BASE env var is missing.");
+        console.error("[BodyScan] BODY_SCAN_SERVICE_BASE env var is missing.");
         return res.status(500).json({
           ok: false,
-          error: "Body scan service is not configured",
+          error: "Body scan service is not configured on the backend.",
         });
       }
 
@@ -39,6 +50,7 @@ bodyScanRouter.post(
 
       // Validate required images
       if (!files.front || !files.side || !files.back) {
+        console.warn("[BodyScan] Missing required image fields in req.files");
         return res.status(400).json({
           ok: false,
           error:
@@ -46,11 +58,11 @@ bodyScanRouter.post(
         });
       }
 
-      // Build form-data to send to Python service
+      // --- Build form-data to send to Python service ---
       const form = new FormData();
+      // Python service expects "user_id"
       form.append("user_id", userId);
 
-      // Append each file
       form.append("front", files.front[0].buffer, {
         filename: files.front[0].originalname || "front.jpg",
         contentType: files.front[0].mimetype || "image/jpeg",
@@ -68,15 +80,20 @@ bodyScanRouter.post(
 
       const pythonUrl = `${BODY_SCAN_SERVICE_BASE}/api/v1/body-scan`;
 
-      console.log(`[BodyScan] Forwarding request to: ${pythonUrl}`);
+      console.log("[BodyScan] Forwarding request to:", pythonUrl);
 
-      // Call the Python SMPL-X microservice
+      // --- Call the Python SMPL-X microservice ---
       const resp = await axios.post(pythonUrl, form, {
         headers: form.getHeaders(),
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
-        timeout: 90000, // 90 seconds for heavy SMPL-X compute
+        timeout: 90_000, // 90 seconds
       });
+
+      console.log(
+        "[BodyScan] Python service response status:",
+        resp.status
+      );
 
       // Forward the response straight back to Shopify
       return res.status(200).json({
@@ -84,13 +101,19 @@ bodyScanRouter.post(
         ...resp.data,
       });
     } catch (err: any) {
-      console.error("[BodyScan] Error calling Python service:", err?.message);
+      console.error("[BodyScan] Error calling Python service:", {
+        message: err?.message,
+        code: err?.code,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
 
       const status = err?.response?.status || 500;
-      const data = err?.response?.data || {
-        ok: false,
-        error: "Body scan failed at proxy step",
-      };
+      const data =
+        err?.response?.data || {
+          ok: false,
+          error: "Body scan failed at proxy step",
+        };
 
       return res.status(status).json(data);
     }
