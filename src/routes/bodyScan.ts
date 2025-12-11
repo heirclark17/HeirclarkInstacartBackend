@@ -4,35 +4,9 @@ import FormData from "form-data";
 
 export const bodyScanRouter = Router();
 
-// --- Resolve and validate the Python microservice base URL ---
-const RAW_BODY_SCAN_SERVICE_BASE = process.env.BODY_SCAN_SERVICE_BASE;
+const RAW_BODY_SCAN_SERVICE_BASE = process.env.BODY_SCAN_SERVICE_BASE || "";
+const BODY_SCAN_SERVICE_BASE = RAW_BODY_SCAN_SERVICE_BASE.replace(/\/+$/g, "");
 
-// If env is missing, DO NOT silently fall back to localhost in production.
-// We'll still allow localhost for dev, but make it explicit.
-const BODY_SCAN_SERVICE_BASE = (RAW_BODY_SCAN_SERVICE_BASE || "").replace(
-  /\/+$/g,
-  ""
-);
-
-if (!BODY_SCAN_SERVICE_BASE) {
-  console.warn(
-    "[BodyScan] BODY_SCAN_SERVICE_BASE is not set. " +
-      "In Railway, set it to your Python service URL, e.g. " +
-      "https://heirclark-body-scan-service-production.up.railway.app"
-  );
-}
-
-/**
- * POST /api/v1/body-scan
- *
- * Expects multipart/form-data with fields:
- *   - userId (from frontend)
- *   - front (image file)
- *   - side  (image file)
- *   - back  (image file)
- *
- * Multer already populated req.files via upload.fields() in index.ts.
- */
 bodyScanRouter.post(
   "/api/v1/body-scan",
   async (req: Request, res: Response) => {
@@ -41,12 +15,22 @@ bodyScanRouter.post(
         console.error("[BodyScan] BODY_SCAN_SERVICE_BASE env var is missing.");
         return res.status(500).json({
           ok: false,
-          error: "Body scan service is not configured on the backend.",
+          error: "Body scan service is not configured",
         });
       }
 
       const files = (req as any).files || {};
-      const userId = (req.body.userId as string) || "anonymous";
+
+      // 🔎 pull user id from query OR body (both camelCase and snake_case)
+      const qUserId =
+        typeof req.query.userId === "string" ? req.query.userId : undefined;
+      const bodyUserIdCamel =
+        typeof req.body?.userId === "string" ? req.body.userId : undefined;
+      const bodyUserIdSnake =
+        typeof req.body?.user_id === "string" ? req.body.user_id : undefined;
+
+      const userId =
+        bodyUserIdSnake || bodyUserIdCamel || qUserId || "anonymous";
 
       // Validate required images
       if (!files.front || !files.side || !files.back) {
@@ -58,9 +42,9 @@ bodyScanRouter.post(
         });
       }
 
-      // --- Build form-data to send to Python service ---
       const form = new FormData();
-      // Python service expects "user_id"
+
+      // Python expects this exact field name:
       form.append("user_id", userId);
 
       form.append("front", files.front[0].buffer, {
@@ -79,23 +63,15 @@ bodyScanRouter.post(
       });
 
       const pythonUrl = `${BODY_SCAN_SERVICE_BASE}/api/v1/body-scan`;
-
       console.log("[BodyScan] Forwarding request to:", pythonUrl);
 
-      // --- Call the Python SMPL-X microservice ---
       const resp = await axios.post(pythonUrl, form, {
         headers: form.getHeaders(),
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
-        timeout: 90_000, // 90 seconds
+        timeout: 90_000,
       });
 
-      console.log(
-        "[BodyScan] Python service response status:",
-        resp.status
-      );
-
-      // Forward the response straight back to Shopify
       return res.status(200).json({
         ok: true,
         ...resp.data,
@@ -109,13 +85,29 @@ bodyScanRouter.post(
       });
 
       const status = err?.response?.status || 500;
-      const data =
-        err?.response?.data || {
-          ok: false,
-          error: "Body scan failed at proxy step",
-        };
+      const upstream = err?.response?.data;
 
-      return res.status(status).json(data);
+      let errorMessage = "Body scan failed at proxy step";
+
+      if (upstream) {
+        if (typeof upstream === "string") {
+          errorMessage = `Body scan failed: ${upstream}`;
+        } else if (typeof upstream === "object") {
+          if (typeof upstream.error === "string") {
+            errorMessage = upstream.error;
+          } else if (typeof upstream.detail === "string") {
+            errorMessage = upstream.detail;
+          }
+        }
+      } else if (err?.message) {
+        errorMessage = `Body scan failed: ${err.message}`;
+      }
+
+      return res.status(status).json({
+        ok: false,
+        error: errorMessage,
+      });
     }
   }
 );
+
