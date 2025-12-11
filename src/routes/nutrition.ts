@@ -201,6 +201,131 @@ nutritionRouter.post(
   }
 );
 
+/**
+ * Helper: look up a product by barcode using Open Food Facts
+ * and normalize to a simple macro object.
+ */
+async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+} | null> {
+  const trimmed = (barcode || "").trim();
+  if (!trimmed) return null;
+
+  const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(
+    trimmed
+  )}.json`;
+
+  // NOTE: relies on global fetch (Node 18+). For older Node, add your own fetch implementation.
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    console.warn(
+      "[lookupBarcodeOpenFoodFacts] Non-200 from OFF:",
+      resp.status
+    );
+    return null;
+  }
+
+  const data: any = await resp.json().catch(() => null);
+  if (!data || data.status !== 1 || !data.product) {
+    // status === 0 → product not found
+    return null;
+  }
+
+  const product = data.product;
+  const nutr = product.nutriments || {};
+
+  // Prefer per serving if available, fall back to per 100g
+  const caloriesRaw =
+    nutr["energy-kcal_serving"] ??
+    nutr["energy-kcal_100g"] ??
+    nutr["energy-kcal"] ??
+    null;
+  const proteinRaw =
+    nutr["proteins_serving"] ?? nutr["proteins_100g"] ?? null;
+  const carbsRaw =
+    nutr["carbohydrates_serving"] ?? nutr["carbohydrates_100g"] ?? null;
+  const fatRaw =
+    nutr["fat_serving"] ?? nutr["fat_100g"] ?? null;
+
+  const name: string =
+    product.product_name ||
+    product.generic_name ||
+    (product.brands
+      ? `${product.brands} ${product.product_name || ""}`.trim()
+      : "Unknown product");
+
+  const toNum = (v: any): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  return {
+    name,
+    calories: toNum(caloriesRaw),
+    protein: toNum(proteinRaw),
+    carbs: toNum(carbsRaw),
+    fat: toNum(fatRaw),
+  };
+}
+
+/**
+ * GET /api/v1/nutrition/lookup-barcode?code=1234567890
+ *
+ * Used by the barcode scanner on the calorie counter page.
+ * Returns a flattened macro response:
+ * {
+ *   ok: true,
+ *   code: string,
+ *   source: "openfoodfacts",
+ *   name: string,
+ *   calories: number,
+ *   protein: number,
+ *   carbs: number,
+ *   fat: number
+ * }
+ */
+nutritionRouter.get(
+  "/lookup-barcode",
+  async (req: Request, res: Response) => {
+    try {
+      const code = (req.query.code as string) || "";
+
+      if (!code || !code.trim()) {
+        return res.status(400).json({
+          ok: false,
+          error: "Missing 'code' query parameter.",
+        });
+      }
+
+      const result = await lookupBarcodeOpenFoodFacts(code);
+      if (!result) {
+        return res.status(404).json({
+          ok: false,
+          code,
+          error: "No product found for this barcode.",
+        });
+      }
+
+      return res.json({
+        ok: true,
+        code,
+        source: "openfoodfacts",
+        ...result,
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/v1/nutrition/lookup-barcode:", err);
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "Failed to look up barcode.",
+      });
+    }
+  }
+);
+
 // GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const date = (req.query.date as string) || todayDateOnly();
