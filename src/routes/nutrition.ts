@@ -167,6 +167,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
       : Math.min(100, Math.max(40, 100 - remaining.sugar / 2));
 
   res.json({
+    ok: true,              // 👈 added for consistency with other APIs
     date,
     targets,
     consumed,
@@ -180,4 +181,63 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
       )
       .slice(0, 5),
   });
+});
+
+/**
+ * DELETE /api/v1/nutrition/reset-day
+ *
+ * Clears all logged meals for the given date (or today by default)
+ * for the current in-memory user. Used by the "Reset the day" button.
+ *
+ * Optional query:
+ *   ?date=YYYY-MM-DD   – if not provided, today is used.
+ */
+nutritionRouter.delete("/reset-day", (req: Request, res: Response) => {
+  try {
+    const date = (req.query.date as string) || todayDateOnly();
+    const userId = memoryStore.userId;
+
+    // We assume memoryStore keeps a flat array of meals for the user.
+    // Filter out any meals that belong to this user AND fall on the given date.
+    if (!Array.isArray((memoryStore as any).meals)) {
+      console.warn(
+        "[nutrition.reset-day] memoryStore.meals is not an array – nothing to clear."
+      );
+      return res.status(200).json({
+        ok: true,
+        date,
+        removedMeals: 0,
+        message: "Nothing to clear for this date.",
+      });
+    }
+
+    const allMeals = (memoryStore as any).meals as Meal[];
+    const beforeCount = allMeals.length;
+
+    const keptMeals = allMeals.filter((m: Meal) => {
+      // Different user? keep
+      if (m.userId !== userId) return true;
+
+      // Compare only the date portion of datetime
+      const mealDate = m.datetime.slice(0, 10); // "YYYY-MM-DD"
+      return mealDate !== date;
+    });
+
+    (memoryStore as any).meals = keptMeals;
+
+    const removedMeals = beforeCount - keptMeals.length;
+
+    return res.status(200).json({
+      ok: true,
+      date,
+      removedMeals,
+      message: `Cleared ${removedMeals} meal(s) for ${date}.`,
+    });
+  } catch (err: any) {
+    console.error("Error in DELETE /api/v1/nutrition/reset-day:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to reset day",
+    });
+  }
 });
