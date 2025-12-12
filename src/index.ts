@@ -19,7 +19,7 @@ import { nutritionRouter } from "./routes/nutrition";
 import { hydrationRouter } from "./routes/hydration";
 import { weightRouter } from "./routes/weight";
 
-// ⭐ NEW: Body Scan router (Tier 3 SMPL-X microservice proxy)
+// ⭐ Body Scan router (Tier 3 SMPL-X microservice proxy)
 import { bodyScanRouter } from "./routes/bodyScan";
 
 const app = express();
@@ -48,7 +48,7 @@ app.use(
   cors({
     origin: true, // later you can lock this to your Shopify domain
     methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
-    allowedHeaders: ["Content-Type"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -77,18 +77,21 @@ app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
 app.use("/api/v1/weight", weightRouter);
 
-// ⭐ NEW: Body Scan (front/side/back photos → SMPL-X microservice)
-// This middleware ensures requests to the bodyScanRouter have
-// req.files.front / req.files.side / req.files.back populated.
+// ======================================================================
+//                       BODY SCAN ROUTE (FIXED)
+// ======================================================================
+// IMPORTANT FIX:
+// This multer.fields middleware MUST NOT be mounted globally.
+// If it runs on every request, it will break other uploads (like "image")
+// with: "Unexpected field".
 const bodyScanUpload = upload.fields([
   { name: "front", maxCount: 1 },
   { name: "side", maxCount: 1 },
   { name: "back", maxCount: 1 },
 ]);
 
-// The bodyScanRouter itself should define the route path, e.g.
-// router.post("/api/v1/body-scan", ...)
-app.use(bodyScanUpload, bodyScanRouter);
+// ✅ Only apply bodyScanUpload to body-scan endpoints
+app.use("/api/v1/body-scan", bodyScanUpload, bodyScanRouter);
 
 // ======================================================================
 //                         OPENAI HELPERS
@@ -142,7 +145,7 @@ Given a single food photo, you must:
 2. Estimate total calories, protein (g), carbs (g), and fat (g) for the plate in the photo.
 3. Provide a confidence score from 0–100 (where 100 means very confident).
 4. Break down the plate into a list of component foods with approximate macros.
-5. Suggest 1–3 realistic, healthier swaps (e.g., 'swap fries for roasted potatoes', 'use grilled chicken instead of fried').
+5. Suggest 1–3 realistic, healthier swaps.
 
 Respond ONLY as valid JSON with this exact shape:
 
@@ -152,41 +155,27 @@ Respond ONLY as valid JSON with this exact shape:
   "protein": number,
   "carbs": number,
   "fats": number,
-  "confidence": number,          // 0–100
+  "confidence": number,
   "foods": [
-    {
-      "name": string,
-      "calories": number,
-      "protein": number,
-      "carbs": number,
-      "fats": number
-    }
+    { "name": string, "calories": number, "protein": number, "carbs": number, "fats": number }
   ],
-  "swaps": string[],             // list of short healthier swap suggestions
-  "explanation": string          // 1–3 short sentences explaining your estimate
+  "swaps": string[],
+  "explanation": string
 }
 `.trim();
 
       const body = {
-        model: OPENAI_MODEL, // must be a vision-capable model, e.g. "gpt-4.1" or "gpt-4.1-mini"
+        model: OPENAI_MODEL,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: [
-              {
-                type: "text",
-                text: "Estimate the nutrition for this meal photo.",
-              },
+              { type: "text", text: "Estimate the nutrition for this meal photo." },
               {
                 type: "image_url",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
+                image_url: { url: `data:${mimeType};base64,${base64}` },
               },
             ],
           },
@@ -229,7 +218,7 @@ Respond ONLY as valid JSON with this exact shape:
       let parsed: any;
       try {
         parsed = JSON.parse(rawContent);
-      } catch (e) {
+      } catch {
         console.error("Failed to parse OpenAI JSON content:", rawContent);
         return res.status(500).json({
           ok: false,
@@ -296,7 +285,6 @@ Respond ONLY as valid JSON with this exact shape:
 //          (REST OF YOUR EXISTING OPENAI MEAL PLAN LOGIC)
 // ======================================================================
 
-// Call OpenAI to build a WeekPlan that includes days[] + recipes[]
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
@@ -362,10 +350,7 @@ async function callOpenAiMealPlan(
                   title: { type: "string" },
                   mealType: { type: "string" },
                   defaultServings: { type: "number" },
-                  tags: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
+                  tags: { type: "array", items: { type: "string" } },
                   ingredients: {
                     type: "array",
                     items: {
@@ -391,10 +376,7 @@ async function callOpenAiMealPlan(
                                 anyOf: [{ type: "number" }, { type: "string" }],
                               },
                             },
-                            upcs: {
-                              type: "array",
-                              items: { type: "string" },
-                            },
+                            upcs: { type: "array", items: { type: "string" } },
                             measurements: {
                               type: "array",
                               items: {
@@ -440,8 +422,6 @@ async function callOpenAiMealPlan(
     ],
   };
 
-  // TODO: implement actual OpenAI call + map into WeekPlan
-  // left as-is so it doesn't break existing imports
   return payload;
 }
 
@@ -449,15 +429,13 @@ async function callOpenAiMealPlan(
 //                      GLOBAL ERROR HANDLER
 // ======================================================================
 
-app.use(
-  (err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("Unhandled error:", err);
-    res.status(500).json({
-      ok: false,
-      error: err?.message || "Internal server error",
-    });
-  }
-);
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({
+    ok: false,
+    error: err?.message || "Internal server error",
+  });
+});
 
 // ======================================================================
 //                      START SERVER
