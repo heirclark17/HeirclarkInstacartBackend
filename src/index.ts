@@ -22,6 +22,9 @@ import { weightRouter } from "./routes/weight";
 // ⭐ Body Scan router (Tier 3 SMPL-X microservice proxy)
 import { bodyScanRouter } from "./routes/bodyScan";
 
+// ✅ NEW: Fitbit integration router
+import { fitbitRouter } from "./routes/fitbit";
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -63,7 +66,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ======================================================================
-//                       HEALTH CHECK + NUTRITION ROUTES
+//                       HEALTH CHECK + ROUTES
 // ======================================================================
 
 // Simple health check
@@ -76,6 +79,9 @@ app.use("/api/v1/meals", mealsRouter);
 app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
 app.use("/api/v1/weight", weightRouter);
+
+// ✅ NEW: Fitbit integration routes (OAuth + token refresh + today activity)
+app.use("/api/v1/integrations/fitbit", fitbitRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (FIXED)
