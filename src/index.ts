@@ -22,8 +22,11 @@ import { weightRouter } from "./routes/weight";
 // ⭐ Body Scan router (Tier 3 SMPL-X microservice proxy)
 import { bodyScanRouter } from "./routes/bodyScan";
 
-// ✅ NEW: Fitbit integration router
+// ✅ Fitbit integration router
 import { fitbitRouter } from "./routes/fitbit";
+
+// ✅ NEW: Apple Health bridge router (link + sync + today)
+import { appleHealthRouter } from "./routes/appleHealth";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -80,8 +83,11 @@ app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
 app.use("/api/v1/weight", weightRouter);
 
-// ✅ NEW: Fitbit integration routes (OAuth + token refresh + today activity)
+// ✅ Fitbit integration routes (OAuth + token refresh + today activity)
 app.use("/api/v1/integrations/fitbit", fitbitRouter);
+
+// ✅ NEW: Apple Health bridge routes (link + sync + today)
+app.use("/api/v1/wearables/apple", appleHealthRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (FIXED)
