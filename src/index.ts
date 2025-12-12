@@ -23,7 +23,8 @@ import { weightRouter } from "./routes/weight";
 import { bodyScanRouter } from "./routes/bodyScan";
 
 // ✅ Fitbit integration router
-import { fitbitRouter } from "./routes/fitbit";
+import fitbitRouter from "./routes/fitbit";
+
 
 // ✅ NEW: Apple Health bridge router (link + sync + today)
 import { appleHealthRouter } from "./routes/appleHealth";
