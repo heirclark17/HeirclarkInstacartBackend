@@ -25,9 +25,16 @@ import { bodyScanRouter } from "./routes/bodyScan";
 // ✅ Fitbit integration router
 import fitbitRouter from "./routes/fitbit";
 
-
-// ✅ NEW: Apple Health bridge router (link + sync + today)
+// ✅ Existing: Apple Health bridge router (link + sync + today)
 import { appleHealthRouter } from "./routes/appleHealth";
+
+// ✅ NEW: Website ↔ iPhone Shortcut Health Bridge router
+// Provides:
+//  - POST /api/v1/health/pair/start
+//  - POST /api/v1/health/pair/complete
+//  - POST /api/v1/health/ingest
+//  - GET  /api/v1/health/metrics?shopifyCustomerId=...
+import { healthBridgeRouter } from "./routes/healthBridge";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -87,8 +94,11 @@ app.use("/api/v1/weight", weightRouter);
 // ✅ Fitbit integration routes (OAuth + token refresh + today activity)
 app.use("/api/v1/integrations/fitbit", fitbitRouter);
 
-// ✅ NEW: Apple Health bridge routes (link + sync + today)
+// ✅ Existing: Apple Health bridge routes (link + sync + today)
 app.use("/api/v1/wearables/apple", appleHealthRouter);
+
+// ✅ NEW: Shortcut-based Health Bridge (iPhone → backend → website)
+app.use("/api/v1/health", healthBridgeRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (FIXED)
