@@ -1,6 +1,5 @@
 import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
-import crypto from "crypto";
 import cors from "cors";
 import morgan from "morgan";
 import multer from "multer";
@@ -37,7 +36,7 @@ import { appleHealthRouter } from "./routes/appleHealth";
 import { healthBridgeRouter } from "./routes/healthBridge";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -46,9 +45,7 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
 // Multer instance for in-memory file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 8 * 1024 * 1024, // 8 MB
-  },
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB
 });
 
 // Helper type so TS knows about req.file
@@ -73,16 +70,22 @@ app.options("*", cors());
 app.use(morgan("dev"));
 
 // JSON/body parsing
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ======================================================================
 //                       HEALTH CHECK + ROUTES
 // ======================================================================
 
-// Simple health check
+// ✅ Root landing
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
+});
+
+// ✅ IMPORTANT: This is the endpoint you were calling in PowerShell.
+// Railway logs showed GET /health 404 — this fixes that.
+app.get("/health", (_req: Request, res: Response) => {
+  res.status(200).send("ok");
 });
 
 // Mount calorie / nutrition routes
@@ -127,10 +130,9 @@ function fetchWithTimeout(
 ): Promise<globalThis.Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
-
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
-    clearTimeout(id);
-  });
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(id)
+  );
 }
 
 // ======================================================================
@@ -447,6 +449,19 @@ async function callOpenAiMealPlan(
 
   return payload;
 }
+
+// ======================================================================
+//                 NOT FOUND HANDLER (clean JSON 404)
+// ======================================================================
+
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    ok: false,
+    error: "Not Found",
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
 
 // ======================================================================
 //                      GLOBAL ERROR HANDLER
