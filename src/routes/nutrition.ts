@@ -326,6 +326,182 @@ nutritionRouter.get(
   }
 );
 
+/**
+ * GET /api/v1/nutrition/history
+ *
+ * Query:
+ *  - days?: number (default 7, min 1, max 365)
+ *  - end?: YYYY-MM-DD (default today)
+ *  - shopifyCustomerId?: string (optional now; falls back to memoryStore.userId)
+ *
+ * Response:
+ *  {
+ *    ok: true,
+ *    range: { start, end },
+ *    days: [
+ *      {
+ *        date: "YYYY-MM-DD",
+ *        totals: { calories, protein, carbs, fat, fiber, sugar, sodium },
+ *        targets: { calories, protein, carbs, fat, fiber, sugar, sodium },
+ *        meals: number
+ *      }
+ *    ]
+ *  }
+ *
+ * Notes:
+ * - Zero-fills days with no meals (important for charts).
+ * - Uses your existing nutritionService helpers.
+ */
+nutritionRouter.get("/history", (req: Request, res: Response) => {
+  try {
+    // ---------------------------
+    // Small local helpers
+    // ---------------------------
+    const clampInt = (v: any, def: number, min: number, max: number) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return def;
+      const i = Math.floor(n);
+      return Math.max(min, Math.min(max, i));
+    };
+
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+
+    const formatDateOnly = (d: Date) =>
+      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+    const parseDateOnly = (s: string): Date | null => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "").trim());
+      if (!m) return null;
+
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const da = Number(m[3]);
+      if (!y || mo < 1 || mo > 12 || da < 1 || da > 31) return null;
+
+      const d = new Date(y, mo - 1, da);
+      if (
+        d.getFullYear() !== y ||
+        d.getMonth() !== mo - 1 ||
+        d.getDate() !== da
+      ) {
+        return null;
+      }
+      return d;
+    };
+
+    const addDays = (date: Date, delta: number) => {
+      const d = new Date(date);
+      d.setDate(d.getDate() + delta);
+      return d;
+    };
+
+    const userId =
+      (req.query.shopifyCustomerId
+        ? String(req.query.shopifyCustomerId)
+        : "")?.trim() || memoryStore.userId;
+
+    const days = clampInt(req.query.days, 7, 1, 365);
+
+    const endStrRaw =
+      typeof req.query.end === "string" ? String(req.query.end).trim() : "";
+    const endStr = endStrRaw || todayDateOnly();
+
+    const endDate = parseDateOnly(endStr);
+    if (!endDate) {
+      return res.status(400).json({
+        ok: false,
+        error: "Invalid 'end' date. Expected YYYY-MM-DD.",
+      });
+    }
+
+    const startDate = addDays(endDate, -(days - 1));
+    const startStr = formatDateOnly(startDate);
+    const endOutStr = formatDateOnly(endDate);
+
+    const outDays: Array<{
+      date: string;
+      totals: {
+        calories: number;
+        protein: number;
+        carbs: number;
+        fat: number;
+        fiber: number;
+        sugar: number;
+        sodium: number;
+      };
+      targets: any;
+      meals: number;
+    }> = [];
+
+    for (let i = 0; i < days; i++) {
+      const d = addDays(startDate, i);
+      const dateStr = formatDateOnly(d);
+
+      // IMPORTANT: your getMealsForDate signature differs in some places.
+      // We'll try (userId, date) first; if it throws, fall back to (date).
+      let mealsForDay: Meal[] = [];
+      try {
+        mealsForDay = (getMealsForDate as any)(userId, dateStr) || [];
+      } catch {
+        mealsForDay = (getMealsForDate as any)(dateStr) || [];
+      }
+
+      // Totals: try computeDailyTotals(meals[]) first; if your older helper expects a date, fallback.
+      let totalsAny: any = null;
+      try {
+        totalsAny = (computeDailyTotals as any)(mealsForDay);
+      } catch {
+        totalsAny = (computeDailyTotals as any)(dateStr);
+      }
+      totalsAny = totalsAny || {};
+
+      // Targets: try per-user targets; fallback to global targets.
+      let targetsAny: any = null;
+      try {
+        targetsAny = (getStaticDailyTargets as any)(userId);
+      } catch {
+        targetsAny = (getStaticDailyTargets as any)();
+      }
+      targetsAny = targetsAny || {};
+
+      outDays.push({
+        date: dateStr,
+        totals: {
+          calories: Number(totalsAny.calories ?? 0) || 0,
+          protein: Number(totalsAny.protein ?? 0) || 0,
+          carbs: Number(totalsAny.carbs ?? 0) || 0,
+          fat: Number(totalsAny.fat ?? 0) || 0,
+          fiber: Number(totalsAny.fiber ?? 0) || 0,
+          sugar: Number(totalsAny.sugar ?? 0) || 0,
+          sodium: Number(totalsAny.sodium ?? 0) || 0,
+        },
+        targets: {
+          calories: Number(targetsAny.calories ?? 0) || 0,
+          protein: Number(targetsAny.protein ?? 0) || 0,
+          carbs: Number(targetsAny.carbs ?? 0) || 0,
+          fat: Number(targetsAny.fat ?? 0) || 0,
+          fiber: Number(targetsAny.fiber ?? 0) || 0,
+          sugar: Number(targetsAny.sugar ?? 0) || 0,
+          sodium: Number(targetsAny.sodium ?? 0) || 0,
+        },
+        meals: Array.isArray(mealsForDay) ? mealsForDay.length : 0,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      range: { start: startStr, end: endOutStr },
+      days: outDays,
+    });
+  } catch (err: any) {
+    console.error("Error in GET /api/v1/nutrition/history:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to load history",
+    });
+  }
+});
+
 // GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const date = (req.query.date as string) || todayDateOnly();
@@ -352,9 +528,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
     streak,
     recentMeals: meals
       .slice()
-      .sort((a: Meal, b: Meal) =>
-        a.datetime < b.datetime ? 1 : -1
-      )
+      .sort((a: Meal, b: Meal) => (a.datetime < b.datetime ? 1 : -1))
       .slice(0, 5),
   });
 });
