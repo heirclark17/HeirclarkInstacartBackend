@@ -16,11 +16,11 @@ import { estimateMealFromText } from "../services/aiNutritionService"; // 👈 N
 
 export const nutritionRouter = Router();
 
+// Debug: confirm the deployed build is actually loading this file
 console.log("[nutrition] routes loaded:", {
   hasHistory: true,
   build: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unknown",
 });
-
 
 /**
  * POST /api/v1/nutrition/meal
@@ -228,10 +228,7 @@ async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
   // NOTE: relies on global fetch (Node 18+). For older Node, add your own fetch implementation.
   const resp = await fetch(url);
   if (!resp.ok) {
-    console.warn(
-      "[lookupBarcodeOpenFoodFacts] Non-200 from OFF:",
-      resp.status
-    );
+    console.warn("[lookupBarcodeOpenFoodFacts] Non-200 from OFF:", resp.status);
     return null;
   }
 
@@ -254,8 +251,7 @@ async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
     nutr["proteins_serving"] ?? nutr["proteins_100g"] ?? null;
   const carbsRaw =
     nutr["carbohydrates_serving"] ?? nutr["carbohydrates_100g"] ?? null;
-  const fatRaw =
-    nutr["fat_serving"] ?? nutr["fat_100g"] ?? null;
+  const fatRaw = nutr["fat_serving"] ?? nutr["fat_100g"] ?? null;
 
   const name: string =
     product.product_name ||
@@ -338,31 +334,17 @@ nutritionRouter.get(
  * Query:
  *  - days?: number (default 7, min 1, max 365)
  *  - end?: YYYY-MM-DD (default today)
- *  - shopifyCustomerId?: string (optional now; falls back to memoryStore.userId)
- *
- * Response:
- *  {
- *    ok: true,
- *    range: { start, end },
- *    days: [
- *      {
- *        date: "YYYY-MM-DD",
- *        totals: { calories, protein, carbs, fat, fiber, sugar, sodium },
- *        targets: { calories, protein, carbs, fat, fiber, sugar, sodium },
- *        meals: number
- *      }
- *    ]
- *  }
+ *  - shopifyCustomerId?: string (optional; falls back to memoryStore.userId)
  *
  * Notes:
  * - Zero-fills days with no meals (important for charts).
- * - Uses your existing nutritionService helpers.
+ * - Compatible with both possible signatures:
+ *    getMealsForDate(date) vs getMealsForDate(userId, date)
+ *    computeDailyTotals(date) vs computeDailyTotals(meals[])
+ *    getStaticDailyTargets() vs getStaticDailyTargets(userId)
  */
 nutritionRouter.get("/history", (req: Request, res: Response) => {
   try {
-    // ---------------------------
-    // Small local helpers
-    // ---------------------------
     const clampInt = (v: any, def: number, min: number, max: number) => {
       const n = Number(v);
       if (!Number.isFinite(n)) return def;
@@ -371,7 +353,6 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
     };
 
     const pad2 = (n: number) => String(n).padStart(2, "0");
-
     const formatDateOnly = (d: Date) =>
       `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -435,7 +416,15 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
         sugar: number;
         sodium: number;
       };
-      targets: any;
+      targets: {
+        calories: number;
+        protein: number;
+        carbs: number;
+        fat: number;
+        fiber: number;
+        sugar: number;
+        sodium: number;
+      };
       meals: number;
     }> = [];
 
@@ -443,8 +432,7 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       const d = addDays(startDate, i);
       const dateStr = formatDateOnly(d);
 
-      // IMPORTANT: your getMealsForDate signature differs in some places.
-      // We'll try (userId, date) first; if it throws, fall back to (date).
+      // Meals: try (userId, date) then fallback to (date)
       let mealsForDay: Meal[] = [];
       try {
         mealsForDay = (getMealsForDate as any)(userId, dateStr) || [];
@@ -452,7 +440,7 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
         mealsForDay = (getMealsForDate as any)(dateStr) || [];
       }
 
-      // Totals: try computeDailyTotals(meals[]) first; if your older helper expects a date, fallback.
+      // Totals: try (meals[]) then fallback to (date)
       let totalsAny: any = null;
       try {
         totalsAny = (computeDailyTotals as any)(mealsForDay);
@@ -461,7 +449,7 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       }
       totalsAny = totalsAny || {};
 
-      // Targets: try per-user targets; fallback to global targets.
+      // Targets: try (userId) then fallback to ()
       let targetsAny: any = null;
       try {
         targetsAny = (getStaticDailyTargets as any)(userId);
@@ -525,7 +513,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
       : Math.min(100, Math.max(40, 100 - remaining.sugar / 2));
 
   res.json({
-    ok: true, // 👈 added for consistency with other APIs
+    ok: true,
     date,
     targets,
     consumed,
@@ -553,8 +541,6 @@ nutritionRouter.delete("/reset-day", (req: Request, res: Response) => {
     const date = (req.query.date as string) || todayDateOnly();
     const userId = memoryStore.userId;
 
-    // We assume memoryStore keeps a flat array of meals for the user.
-    // Filter out any meals that belong to this user AND fall on the given date.
     if (!Array.isArray((memoryStore as any).meals)) {
       console.warn(
         "[nutrition.reset-day] memoryStore.meals is not an array – nothing to clear."
@@ -571,10 +557,7 @@ nutritionRouter.delete("/reset-day", (req: Request, res: Response) => {
     const beforeCount = allMeals.length;
 
     const keptMeals = allMeals.filter((m: Meal) => {
-      // Different user? keep
       if (m.userId !== userId) return true;
-
-      // Compare only the date portion of datetime
       const mealDate = m.datetime.slice(0, 10); // "YYYY-MM-DD"
       return mealDate !== date;
     });
