@@ -16,6 +16,12 @@ import { estimateMealFromText } from "../services/aiNutritionService"; // 👈 N
 
 export const nutritionRouter = Router();
 
+console.log("[nutrition] routes loaded:", {
+  hasHistory: true,
+  build: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unknown",
+});
+
+
 /**
  * POST /api/v1/nutrition/meal
  * Logs a full meal with one or more items into the in-memory store.
