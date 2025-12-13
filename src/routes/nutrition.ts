@@ -247,8 +247,7 @@ async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
     nutr["energy-kcal_100g"] ??
     nutr["energy-kcal"] ??
     null;
-  const proteinRaw =
-    nutr["proteins_serving"] ?? nutr["proteins_100g"] ?? null;
+  const proteinRaw = nutr["proteins_serving"] ?? nutr["proteins_100g"] ?? null;
   const carbsRaw =
     nutr["carbohydrates_serving"] ?? nutr["carbohydrates_100g"] ?? null;
   const fatRaw = nutr["fat_serving"] ?? nutr["fat_100g"] ?? null;
@@ -496,14 +495,124 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD
+/**
+ * ✅ NEW: GET /api/v1/nutrition/day
+ *
+ * Query:
+ *  - date?: YYYY-MM-DD (default today)
+ *  - shopifyCustomerId?: string (optional; falls back to memoryStore.userId)
+ *
+ * Used by: History "click day → expand meals" UI
+ */
+nutritionRouter.get("/day", (req: Request, res: Response) => {
+  try {
+    const dateRaw = typeof req.query.date === "string" ? req.query.date : "";
+    const date = (dateRaw || todayDateOnly()).trim();
+
+    const userId =
+      (req.query.shopifyCustomerId
+        ? String(req.query.shopifyCustomerId)
+        : "")?.trim() || memoryStore.userId;
+
+    // Meals: try (userId, date) then fallback to (date)
+    let mealsForDay: Meal[] = [];
+    try {
+      mealsForDay = (getMealsForDate as any)(userId, date) || [];
+    } catch {
+      mealsForDay = (getMealsForDate as any)(date) || [];
+    }
+
+    const sorted = mealsForDay
+      .slice()
+      .sort((a: Meal, b: Meal) => (a.datetime < b.datetime ? 1 : -1));
+
+    // Totals: try (meals[]) then fallback to (date)
+    let totalsAny: any = null;
+    try {
+      totalsAny = (computeDailyTotals as any)(mealsForDay);
+    } catch {
+      totalsAny = (computeDailyTotals as any)(date);
+    }
+    totalsAny = totalsAny || {};
+
+    // Targets: try (userId) then fallback to ()
+    let targetsAny: any = null;
+    try {
+      targetsAny = (getStaticDailyTargets as any)(userId);
+    } catch {
+      targetsAny = (getStaticDailyTargets as any)();
+    }
+    targetsAny = targetsAny || {};
+
+    return res.json({
+      ok: true,
+      date,
+      meals: sorted,
+      totals: {
+        calories: Number(totalsAny.calories ?? 0) || 0,
+        protein: Number(totalsAny.protein ?? 0) || 0,
+        carbs: Number(totalsAny.carbs ?? 0) || 0,
+        fat: Number(totalsAny.fat ?? 0) || 0,
+        fiber: Number(totalsAny.fiber ?? 0) || 0,
+        sugar: Number(totalsAny.sugar ?? 0) || 0,
+        sodium: Number(totalsAny.sodium ?? 0) || 0,
+      },
+      targets: {
+        calories: Number(targetsAny.calories ?? 0) || 0,
+        protein: Number(targetsAny.protein ?? 0) || 0,
+        carbs: Number(targetsAny.carbs ?? 0) || 0,
+        fat: Number(targetsAny.fat ?? 0) || 0,
+        fiber: Number(targetsAny.fiber ?? 0) || 0,
+        sugar: Number(targetsAny.sugar ?? 0) || 0,
+        sodium: Number(targetsAny.sodium ?? 0) || 0,
+      },
+    });
+  } catch (err: any) {
+    console.error("Error in GET /api/v1/nutrition/day:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to load meals for day",
+    });
+  }
+});
+
+// GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD&shopifyCustomerId=...
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const date = (req.query.date as string) || todayDateOnly();
 
-  const targets = getStaticDailyTargets();
-  const consumed = computeDailyTotals(date);
+  const userId =
+    (req.query.shopifyCustomerId
+      ? String(req.query.shopifyCustomerId)
+      : "")?.trim() || memoryStore.userId;
+
+  // Targets: try (userId) then fallback to ()
+  const targets: any = (() => {
+    try {
+      return (getStaticDailyTargets as any)(userId);
+    } catch {
+      return (getStaticDailyTargets as any)();
+    }
+  })();
+
+  // Meals: try (userId, date) then fallback to (date)
+  const meals: Meal[] = (() => {
+    try {
+      return (getMealsForDate as any)(userId, date) || [];
+    } catch {
+      return (getMealsForDate as any)(date) || [];
+    }
+  })();
+
+  // Totals: try (meals[]) then fallback to (date)
+  const consumed: any = (() => {
+    try {
+      return (computeDailyTotals as any)(meals);
+    } catch {
+      return (computeDailyTotals as any)(date);
+    }
+  })();
+
   const remaining = computeRemaining(targets, consumed);
-  const meals = getMealsForDate(date);
   const streak = computeStreak();
 
   // Placeholder health score until AI is added
