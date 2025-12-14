@@ -16,18 +16,22 @@ if (!DATABASE_URL) {
 
 /**
  * Railway / managed Postgres commonly requires SSL.
- * If you connect over Railway’s public proxy, rejectUnauthorized:false prevents cert issues.
  */
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: false }
+    : undefined,
 });
 
 const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 function genToken(): string {
-  // URL-safe token
   return crypto.randomBytes(24).toString("base64url");
+}
+
+function normStr(v: any) {
+  return String(v ?? "").trim();
 }
 
 function toIntOrNull(v: any): number | null {
@@ -37,13 +41,15 @@ function toIntOrNull(v: any): number | null {
   return Math.trunc(n);
 }
 
+/* ======================================================================
+   PAIRING FLOW
+   ====================================================================== */
+
 /**
  * POST /api/v1/health/pair/start
- * Body: { shopifyCustomerId: "123" }
- * Returns: { ok: true, pairingToken, expiresAt }
  */
 healthBridgeRouter.post("/pair/start", async (req: Request, res: Response) => {
-  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
+  const shopifyCustomerId = normStr(req.body?.shopifyCustomerId);
   if (!shopifyCustomerId) {
     return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
   }
@@ -52,9 +58,7 @@ healthBridgeRouter.post("/pair/start", async (req: Request, res: Response) => {
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
   try {
-    // Keep table small: remove expired tokens
     await pool.query("DELETE FROM hc_pairing_tokens WHERE expires_at < NOW()");
-
     await pool.query(
       `
       INSERT INTO hc_pairing_tokens (pairing_token, shopify_customer_id, expires_at)
@@ -64,7 +68,7 @@ healthBridgeRouter.post("/pair/start", async (req: Request, res: Response) => {
     );
 
     return res.json({ ok: true, pairingToken, expiresAt: expiresAt.toISOString() });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[healthBridge] pair/start failed:", err);
     return res.status(500).json({ ok: false, error: "pair/start failed" });
   }
@@ -72,11 +76,9 @@ healthBridgeRouter.post("/pair/start", async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/health/pair/complete
- * Body: { pairingToken: "..." }
- * Returns: { ok: true, deviceKey }
  */
 healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) => {
-  const pairingToken = String(req.body?.pairingToken || "").trim();
+  const pairingToken = normStr(req.body?.pairingToken);
   if (!pairingToken) {
     return res.status(400).json({ ok: false, error: "Missing pairingToken" });
   }
@@ -85,7 +87,6 @@ healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) =>
   try {
     await client.query("BEGIN");
 
-    // lock row so token can only be used once
     const tok = await client.query(
       `
       SELECT shopify_customer_id, expires_at
@@ -101,20 +102,16 @@ healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) =>
       return res.status(401).json({ ok: false, error: "Invalid or expired pairingToken" });
     }
 
-    const shopifyCustomerId = String(tok.rows[0].shopify_customer_id || "");
     const expiresAt = new Date(tok.rows[0].expires_at);
-
     if (Date.now() > expiresAt.getTime()) {
-      // token expired: delete + reject
       await client.query("DELETE FROM hc_pairing_tokens WHERE pairing_token = $1", [pairingToken]);
       await client.query("COMMIT");
       return res.status(401).json({ ok: false, error: "pairingToken expired" });
     }
 
-    // one-time use: delete token
+    const shopifyCustomerId = tok.rows[0].shopify_customer_id;
     await client.query("DELETE FROM hc_pairing_tokens WHERE pairing_token = $1", [pairingToken]);
 
-    // create deviceKey
     const deviceKey = genToken();
     await client.query(
       `
@@ -126,7 +123,7 @@ healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) =>
 
     await client.query("COMMIT");
     return res.json({ ok: true, deviceKey });
-  } catch (err: any) {
+  } catch (err) {
     await client.query("ROLLBACK");
     console.error("[healthBridge] pair/complete failed:", err);
     return res.status(500).json({ ok: false, error: "pair/complete failed" });
@@ -135,29 +132,55 @@ healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) =>
   }
 });
 
+/* ======================================================================
+   ✅ DEVICE REGISTRATION (NEW)
+   ====================================================================== */
+
 /**
- * POST /api/v1/health/ingest
- * Body:
- * {
- *   deviceKey: "...",
- *   ts: "2025-12-13T17:22:00Z",
- *   steps?: number,
- *   activeCalories?: number,
- *   latestHeartRateBpm?: number,
- *   workoutsToday?: number
- * }
- * Returns: { ok: true }
+ * POST /api/v1/health/devices
+ * POST /api/v1/health/device (alias)
  */
+async function createDevice(req: Request, res: Response) {
+  const shopifyCustomerId = normStr(req.body?.shopifyCustomerId);
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+  }
+
+  const deviceKey = genToken();
+
+  try {
+    await pool.query(
+      `
+      INSERT INTO hc_health_devices (device_key, shopify_customer_id)
+      VALUES ($1, $2)
+      `,
+      [deviceKey, shopifyCustomerId]
+    );
+
+    return res.json({ ok: true, deviceKey });
+  } catch (err) {
+    console.error("[healthBridge] device create failed:", err);
+    return res.status(500).json({ ok: false, error: "device create failed" });
+  }
+}
+
+healthBridgeRouter.post("/devices", createDevice);
+healthBridgeRouter.post("/device", createDevice);
+
+/* ======================================================================
+   INGEST
+   ====================================================================== */
+
 healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
-  const deviceKey = String(req.body?.deviceKey || "").trim();
-  const tsRaw = String(req.body?.ts || "").trim();
+  const deviceKey = normStr(req.body?.deviceKey);
+  const tsRaw = normStr(req.body?.ts);
 
   if (!deviceKey) return res.status(400).json({ ok: false, error: "Missing deviceKey" });
   if (!tsRaw) return res.status(400).json({ ok: false, error: "Missing ts" });
 
   const ts = new Date(tsRaw);
   if (Number.isNaN(ts.getTime())) {
-    return res.status(400).json({ ok: false, error: "ts must be a valid ISO date string" });
+    return res.status(400).json({ ok: false, error: "Invalid ts" });
   }
 
   const steps = toIntOrNull(req.body?.steps);
@@ -169,7 +192,6 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
   try {
     await client.query("BEGIN");
 
-    // lock device row to update last_seen safely
     const dev = await client.query(
       `
       SELECT shopify_customer_id
@@ -185,19 +207,20 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
       return res.status(401).json({ ok: false, error: "Invalid deviceKey" });
     }
 
-    const shopifyCustomerId = String(dev.rows[0].shopify_customer_id || "");
+    const shopifyCustomerId = dev.rows[0].shopify_customer_id;
 
     await client.query(
       `UPDATE hc_health_devices SET last_seen_at = NOW() WHERE device_key = $1`,
       [deviceKey]
     );
 
-    // upsert latest snapshot per user
     await client.query(
       `
       INSERT INTO hc_health_latest (
-        shopify_customer_id, ts, steps, active_calories, latest_heart_rate_bpm, workouts_today, received_at, source
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'shortcut')
+        shopify_customer_id, ts, steps, active_calories,
+        latest_heart_rate_bpm, workouts_today, received_at, source
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'shortcut')
       ON CONFLICT (shopify_customer_id)
       DO UPDATE SET
         ts = EXCLUDED.ts,
@@ -220,7 +243,7 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
 
     await client.query("COMMIT");
     return res.json({ ok: true });
-  } catch (err: any) {
+  } catch (err) {
     await client.query("ROLLBACK");
     console.error("[healthBridge] ingest failed:", err);
     return res.status(500).json({ ok: false, error: "ingest failed" });
@@ -229,12 +252,12 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
   }
 });
 
-/**
- * GET /api/v1/health/metrics?shopifyCustomerId=123
- * Returns: { ok: true, data: null | { ... } }
- */
+/* ======================================================================
+   METRICS + DEVICES
+   ====================================================================== */
+
 healthBridgeRouter.get("/metrics", async (req: Request, res: Response) => {
-  const shopifyCustomerId = String(req.query?.shopifyCustomerId || "").trim();
+  const shopifyCustomerId = normStr(req.query?.shopifyCustomerId);
   if (!shopifyCustomerId) {
     return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
   }
@@ -242,15 +265,7 @@ healthBridgeRouter.get("/metrics", async (req: Request, res: Response) => {
   try {
     const out = await pool.query(
       `
-      SELECT
-        shopify_customer_id,
-        ts,
-        steps,
-        active_calories,
-        latest_heart_rate_bpm,
-        workouts_today,
-        received_at,
-        source
+      SELECT *
       FROM hc_health_latest
       WHERE shopify_customer_id = $1
       `,
@@ -275,18 +290,14 @@ healthBridgeRouter.get("/metrics", async (req: Request, res: Response) => {
         source: r.source,
       },
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[healthBridge] metrics failed:", err);
     return res.status(500).json({ ok: false, error: "metrics failed" });
   }
 });
 
-/**
- * GET /api/v1/health/devices?shopifyCustomerId=123
- * Returns: { ok: true, devices: [{ deviceKey, createdAt, lastSeenAt }, ...] }
- */
 healthBridgeRouter.get("/devices", async (req: Request, res: Response) => {
-  const shopifyCustomerId = String(req.query?.shopifyCustomerId || "").trim();
+  const shopifyCustomerId = normStr(req.query?.shopifyCustomerId);
   if (!shopifyCustomerId) {
     return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
   }
@@ -297,7 +308,7 @@ healthBridgeRouter.get("/devices", async (req: Request, res: Response) => {
       SELECT device_key, created_at, last_seen_at
       FROM hc_health_devices
       WHERE shopify_customer_id = $1
-      ORDER BY last_seen_at DESC
+      ORDER BY last_seen_at DESC NULLS LAST
       `,
       [shopifyCustomerId]
     );
@@ -310,29 +321,18 @@ healthBridgeRouter.get("/devices", async (req: Request, res: Response) => {
         lastSeenAt: r.last_seen_at,
       })),
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[healthBridge] devices failed:", err);
     return res.status(500).json({ ok: false, error: "devices failed" });
   }
 });
 
-/**
- * DELETE /api/v1/health/device
- * Body: { shopifyCustomerId: "123", deviceKey: "..." }
- * Returns: { ok: true }
- *
- * This "disconnects" by deleting the device row.
- * After this, ingests using that deviceKey will fail as "Invalid deviceKey".
- */
 healthBridgeRouter.delete("/device", async (req: Request, res: Response) => {
-  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
-  const deviceKey = String(req.body?.deviceKey || "").trim();
+  const shopifyCustomerId = normStr(req.body?.shopifyCustomerId);
+  const deviceKey = normStr(req.body?.deviceKey);
 
-  if (!shopifyCustomerId) {
-    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
-  }
-  if (!deviceKey) {
-    return res.status(400).json({ ok: false, error: "Missing deviceKey" });
+  if (!shopifyCustomerId || !deviceKey) {
+    return res.status(400).json({ ok: false, error: "Missing params" });
   }
 
   try {
@@ -349,7 +349,7 @@ healthBridgeRouter.delete("/device", async (req: Request, res: Response) => {
     }
 
     return res.json({ ok: true });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[healthBridge] delete device failed:", err);
     return res.status(500).json({ ok: false, error: "delete device failed" });
   }
