@@ -55,15 +55,18 @@ type MulterRequest = Request & { file?: any };
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
 // ======================================================================
 
+// ✅ CORS: add Accept + keep Authorization/Content-Type
+// Also enables credentials if you ever set cookies (safe even if you don't)
 app.use(
   cors({
     origin: true, // later you can lock this to your Shopify domain
     methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+    credentials: true,
   })
 );
 
-// Preflight
+// ✅ Preflight
 app.options("*", cors());
 
 // Logging
@@ -214,6 +217,7 @@ Respond ONLY as valid JSON with this exact shape:
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${OPENAI_API_KEY}`,
+            Accept: "application/json",
           },
           body: JSON.stringify(body),
         },
