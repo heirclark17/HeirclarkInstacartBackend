@@ -10,43 +10,22 @@ import {
   addMealForUser,
   Meal,
   NutritionItem,
-} from "../utils/services/nutritionService"; // 👈 fixed path
+} from "../utils/services/nutritionService";
 import { computeStreak } from "../services/streakService";
-import { estimateMealFromText } from "../services/aiNutritionService"; // 👈 NEW
+import { estimateMealFromText } from "../services/aiNutritionService";
 
 export const nutritionRouter = Router();
 
-// Debug: confirm the deployed build is actually loading this file
 console.log("[nutrition] routes loaded:", {
   hasHistory: true,
   build: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unknown",
 });
 
-/**
- * POST /api/v1/nutrition/meal
- * Logs a full meal with one or more items into the in-memory store.
- *
- * Accepts EITHER:
- *  A) {
- *       datetime?: string,
- *       label?: string,
- *       items: NutritionItem[]
- *     }
- *
- *  OR (single-item convenience):
- *  B) {
- *       datetime?: string,
- *       label?: string,
- *       name: string,
- *       calories: number,
- *       protein?: number,
- *       carbs?: number,
- *       fat?: number,
- *       fiber?: number,
- *       sugar?: number,
- *       sodium?: number
- *     }
- */
+/* ======================================================================
+   POST /api/v1/nutrition/meal
+   Accepts:
+   - items[] form OR single-item convenience fields
+   ====================================================================== */
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
   try {
     const body = req.body as {
@@ -54,7 +33,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       label?: string;
       items?: NutritionItem[];
 
-      // single-item fallback fields
       name?: string;
       calories?: number;
       protein?: number;
@@ -67,18 +45,15 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
     const { datetime, label } = body;
 
-    // ---------- shape-normalisation: items[] OR single item ----------
     let itemsSource: NutritionItem[] | undefined;
 
     if (Array.isArray(body.items) && body.items.length > 0) {
-      // normal multi-item shape
       itemsSource = body.items;
     } else if (
       typeof body.name === "string" &&
       body.name.trim() &&
       typeof body.calories !== "undefined"
     ) {
-      // single-item convenience shape
       itemsSource = [
         {
           name: body.name,
@@ -101,7 +76,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       });
     }
 
-    // ---------- normalise + validate items ----------
     const normalizedItems: NutritionItem[] = itemsSource.map(
       (item: NutritionItem, idx: number) => {
         if (!item || typeof item.name !== "string") {
@@ -114,7 +88,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
           throw new Error(`items[${idx}].calories is required (number)`);
         }
 
-        const normalized: NutritionItem = {
+        return {
           name: item.name.trim(),
           calories: Number(item.calories),
           protein: Number(item.protein ?? 0),
@@ -124,8 +98,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
           sugar: Number(item.sugar ?? 0),
           sodium: Number(item.sodium ?? 0),
         };
-
-        return normalized;
       }
     );
 
@@ -133,7 +105,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       ? new Date(datetime).toISOString()
       : new Date().toISOString();
 
-    // Build a Meal (without userId; addMealForUser will attach it)
     const meal: Omit<Meal, "userId"> = {
       id: uuidv4(),
       datetime: iso,
@@ -141,13 +112,9 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       items: normalizedItems,
     };
 
-    // Log against the current user in memoryStore
     addMealForUser(memoryStore.userId, meal);
 
-    return res.status(201).json({
-      ok: true,
-      meal,
-    });
+    return res.status(201).json({ ok: true, meal });
   } catch (err: any) {
     console.error("Error in POST /api/v1/nutrition/meal:", err);
     return res.status(500).json({
@@ -157,60 +124,41 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
   }
 });
 
-/**
- * POST /api/v1/nutrition/ai/meal-from-text
- *
- * Body:
- * {
- *   text: string;          // user description of the meal
- *   localTimeIso?: string; // optional local time ISO; helps pick B/L/D/S
- * }
- *
- * Response:
- * {
- *   ok: true,
- *   calories: number,
- *   protein: number,
- *   carbs: number,
- *   fat: number,
- *   label: "Breakfast" | "Lunch" | "Dinner" | "Snack" | null,
- *   mealName: string,
- *   explanation: string
- * }
- */
-nutritionRouter.post(
-  "/ai/meal-from-text",
-  async (req: Request, res: Response) => {
-    try {
-      const { text, localTimeIso } = req.body || {};
+/* ======================================================================
+   POST /api/v1/nutrition/ai/meal-from-text
+   ====================================================================== */
+nutritionRouter.post("/ai/meal-from-text", async (req: Request, res: Response) => {
+  try {
+    const { text, localTimeIso } = req.body || {};
 
-      if (!text || typeof text !== "string") {
-        return res.status(400).json({
-          ok: false,
-          error: "Missing or invalid 'text' in request body.",
-        });
-      }
-
-      const estimate = await estimateMealFromText(text, localTimeIso);
-
-      return res.json({
-        ok: true,
-        ...estimate,
-      });
-    } catch (err: any) {
-      console.error("Error in POST /api/v1/nutrition/ai/meal-from-text:", err);
-      return res.status(500).json({
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({
         ok: false,
-        error: err?.message || "Failed to generate meal estimate.",
+        error: "Missing or invalid 'text' in request body.",
       });
     }
-  }
-);
 
-/**
- * Helper: look up a product by barcode using Open Food Facts
- * and normalize to a simple macro object.
- */
+    const estimate = await estimateMealFromText(text, localTimeIso);
+
+    return res.json({
+      ok: true,
+      ...estimate,
+    });
+  } catch (err: any) {
+    console.error("Error in POST /api/v1/nutrition/ai/meal-from-text:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate meal estimate.",
+    });
+  }
+});
+
+/* ======================================================================
+   Barcode Lookup (Open Food Facts)
+   - NEW: POST /barcode/lookup (what your frontend expects)
+   - Keep: GET /lookup-barcode?code=... for backward compatibility
+   ====================================================================== */
+
 async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
   name: string;
   calories: number;
@@ -225,28 +173,21 @@ async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
     trimmed
   )}.json`;
 
-  // NOTE: relies on global fetch (Node 18+). For older Node, add your own fetch implementation.
   const resp = await fetch(url);
-  if (!resp.ok) {
-    console.warn("[lookupBarcodeOpenFoodFacts] Non-200 from OFF:", resp.status);
-    return null;
-  }
+  if (!resp.ok) return null;
 
   const data: any = await resp.json().catch(() => null);
-  if (!data || data.status !== 1 || !data.product) {
-    // status === 0 → product not found
-    return null;
-  }
+  if (!data || data.status !== 1 || !data.product) return null;
 
   const product = data.product;
   const nutr = product.nutriments || {};
 
-  // Prefer per serving if available, fall back to per 100g
   const caloriesRaw =
     nutr["energy-kcal_serving"] ??
     nutr["energy-kcal_100g"] ??
     nutr["energy-kcal"] ??
     null;
+
   const proteinRaw = nutr["proteins_serving"] ?? nutr["proteins_100g"] ?? null;
   const carbsRaw =
     nutr["carbohydrates_serving"] ?? nutr["carbohydrates_100g"] ?? null;
@@ -274,74 +215,61 @@ async function lookupBarcodeOpenFoodFacts(barcode: string): Promise<{
 }
 
 /**
- * GET /api/v1/nutrition/lookup-barcode?code=1234567890
- *
- * Used by the barcode scanner on the calorie counter page.
- * Returns a flattened macro response:
- * {
- *   ok: true,
- *   code: string,
- *   source: "openfoodfacts",
- *   name: string,
- *   calories: number,
- *   protein: number,
- *   carbs: number,
- *   fat: number
- * }
+ * ✅ NEW (frontend-friendly):
+ * POST /api/v1/nutrition/barcode/lookup
+ * Body: { barcode: string }
  */
-nutritionRouter.get(
-  "/lookup-barcode",
-  async (req: Request, res: Response) => {
-    try {
-      const code = (req.query.code as string) || "";
-
-      if (!code || !code.trim()) {
-        return res.status(400).json({
-          ok: false,
-          error: "Missing 'code' query parameter.",
-        });
-      }
-
-      const result = await lookupBarcodeOpenFoodFacts(code);
-      if (!result) {
-        return res.status(404).json({
-          ok: false,
-          code,
-          error: "No product found for this barcode.",
-        });
-      }
-
-      return res.json({
-        ok: true,
-        code,
-        source: "openfoodfacts",
-        ...result,
-      });
-    } catch (err: any) {
-      console.error("Error in GET /api/v1/nutrition/lookup-barcode:", err);
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to look up barcode.",
-      });
+nutritionRouter.post("/barcode/lookup", async (req: Request, res: Response) => {
+  try {
+    const barcode = String(req.body?.barcode || "").trim();
+    if (!barcode) {
+      return res.status(400).json({ ok: false, error: "Missing 'barcode' in body." });
     }
+
+    const result = await lookupBarcodeOpenFoodFacts(barcode);
+    if (!result) {
+      return res.status(404).json({ ok: false, error: "No product found for this barcode." });
+    }
+
+    return res.json({ ok: true, ...result });
+  } catch (err: any) {
+    console.error("Error in POST /api/v1/nutrition/barcode/lookup:", err);
+    return res.status(500).json({ ok: false, error: err?.message || "Barcode lookup failed." });
   }
-);
+});
 
 /**
- * GET /api/v1/nutrition/history
- *
- * Query:
- *  - days?: number (default 7, min 1, max 365)
- *  - end?: YYYY-MM-DD (default today)
- *  - shopifyCustomerId?: string (optional; falls back to memoryStore.userId)
- *
- * Notes:
- * - Zero-fills days with no meals (important for charts).
- * - Compatible with both possible signatures:
- *    getMealsForDate(date) vs getMealsForDate(userId, date)
- *    computeDailyTotals(date) vs computeDailyTotals(meals[])
- *    getStaticDailyTargets() vs getStaticDailyTargets(userId)
+ * Legacy:
+ * GET /api/v1/nutrition/lookup-barcode?code=123
  */
+nutritionRouter.get("/lookup-barcode", async (req: Request, res: Response) => {
+  try {
+    const code = String(req.query.code || "").trim();
+    if (!code) {
+      return res.status(400).json({ ok: false, error: "Missing 'code' query parameter." });
+    }
+
+    const result = await lookupBarcodeOpenFoodFacts(code);
+    if (!result) {
+      return res.status(404).json({ ok: false, code, error: "No product found for this barcode." });
+    }
+
+    return res.json({
+      ok: true,
+      code,
+      source: "openfoodfacts",
+      ...result,
+    });
+  } catch (err: any) {
+    console.error("Error in GET /api/v1/nutrition/lookup-barcode:", err);
+    return res.status(500).json({ ok: false, error: err?.message || "Failed to look up barcode." });
+  }
+});
+
+/* ======================================================================
+   GET /api/v1/nutrition/history
+   (unchanged logic; good as-is)
+   ====================================================================== */
 nutritionRouter.get("/history", (req: Request, res: Response) => {
   try {
     const clampInt = (v: any, def: number, min: number, max: number) => {
@@ -365,13 +293,7 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       if (!y || mo < 1 || mo > 12 || da < 1 || da > 31) return null;
 
       const d = new Date(y, mo - 1, da);
-      if (
-        d.getFullYear() !== y ||
-        d.getMonth() !== mo - 1 ||
-        d.getDate() !== da
-      ) {
-        return null;
-      }
+      if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== da) return null;
       return d;
     };
 
@@ -382,9 +304,8 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
     };
 
     const userId =
-      (req.query.shopifyCustomerId
-        ? String(req.query.shopifyCustomerId)
-        : "")?.trim() || memoryStore.userId;
+      (req.query.shopifyCustomerId ? String(req.query.shopifyCustomerId) : "")?.trim() ||
+      memoryStore.userId;
 
     const days = clampInt(req.query.days, 7, 1, 365);
 
@@ -406,24 +327,8 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
 
     const outDays: Array<{
       date: string;
-      totals: {
-        calories: number;
-        protein: number;
-        carbs: number;
-        fat: number;
-        fiber: number;
-        sugar: number;
-        sodium: number;
-      };
-      targets: {
-        calories: number;
-        protein: number;
-        carbs: number;
-        fat: number;
-        fiber: number;
-        sugar: number;
-        sodium: number;
-      };
+      totals: any;
+      targets: any;
       meals: number;
     }> = [];
 
@@ -431,7 +336,6 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       const d = addDays(startDate, i);
       const dateStr = formatDateOnly(d);
 
-      // Meals: try (userId, date) then fallback to (date)
       let mealsForDay: Meal[] = [];
       try {
         mealsForDay = (getMealsForDate as any)(userId, dateStr) || [];
@@ -439,7 +343,6 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
         mealsForDay = (getMealsForDate as any)(dateStr) || [];
       }
 
-      // Totals: try (meals[]) then fallback to (date)
       let totalsAny: any = null;
       try {
         totalsAny = (computeDailyTotals as any)(mealsForDay);
@@ -448,7 +351,6 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       }
       totalsAny = totalsAny || {};
 
-      // Targets: try (userId) then fallback to ()
       let targetsAny: any = null;
       try {
         targetsAny = (getStaticDailyTargets as any)(userId);
@@ -495,97 +397,16 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
   }
 });
 
-/**
- * ✅ NEW: GET /api/v1/nutrition/day
- *
- * Query:
- *  - date?: YYYY-MM-DD (default today)
- *  - shopifyCustomerId?: string (optional; falls back to memoryStore.userId)
- *
- * Used by: History "click day → expand meals" UI
- */
-nutritionRouter.get("/day", (req: Request, res: Response) => {
-  try {
-    const dateRaw = typeof req.query.date === "string" ? req.query.date : "";
-    const date = (dateRaw || todayDateOnly()).trim();
-
-    const userId =
-      (req.query.shopifyCustomerId
-        ? String(req.query.shopifyCustomerId)
-        : "")?.trim() || memoryStore.userId;
-
-    // Meals: try (userId, date) then fallback to (date)
-    let mealsForDay: Meal[] = [];
-    try {
-      mealsForDay = (getMealsForDate as any)(userId, date) || [];
-    } catch {
-      mealsForDay = (getMealsForDate as any)(date) || [];
-    }
-
-    const sorted = mealsForDay
-      .slice()
-      .sort((a: Meal, b: Meal) => (a.datetime < b.datetime ? 1 : -1));
-
-    // Totals: try (meals[]) then fallback to (date)
-    let totalsAny: any = null;
-    try {
-      totalsAny = (computeDailyTotals as any)(mealsForDay);
-    } catch {
-      totalsAny = (computeDailyTotals as any)(date);
-    }
-    totalsAny = totalsAny || {};
-
-    // Targets: try (userId) then fallback to ()
-    let targetsAny: any = null;
-    try {
-      targetsAny = (getStaticDailyTargets as any)(userId);
-    } catch {
-      targetsAny = (getStaticDailyTargets as any)();
-    }
-    targetsAny = targetsAny || {};
-
-    return res.json({
-      ok: true,
-      date,
-      meals: sorted,
-      totals: {
-        calories: Number(totalsAny.calories ?? 0) || 0,
-        protein: Number(totalsAny.protein ?? 0) || 0,
-        carbs: Number(totalsAny.carbs ?? 0) || 0,
-        fat: Number(totalsAny.fat ?? 0) || 0,
-        fiber: Number(totalsAny.fiber ?? 0) || 0,
-        sugar: Number(totalsAny.sugar ?? 0) || 0,
-        sodium: Number(totalsAny.sodium ?? 0) || 0,
-      },
-      targets: {
-        calories: Number(targetsAny.calories ?? 0) || 0,
-        protein: Number(targetsAny.protein ?? 0) || 0,
-        carbs: Number(targetsAny.carbs ?? 0) || 0,
-        fat: Number(targetsAny.fat ?? 0) || 0,
-        fiber: Number(targetsAny.fiber ?? 0) || 0,
-        sugar: Number(targetsAny.sugar ?? 0) || 0,
-        sodium: Number(targetsAny.sodium ?? 0) || 0,
-      },
-    });
-  } catch (err: any) {
-    console.error("Error in GET /api/v1/nutrition/day:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "Failed to load meals for day",
-    });
-  }
-});
-
-// GET /api/v1/nutrition/day-summary?date=YYYY-MM-DD&shopifyCustomerId=...
+/* ======================================================================
+   Day summary (frontend-friendly aliases added)
+   ====================================================================== */
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const date = (req.query.date as string) || todayDateOnly();
 
   const userId =
-    (req.query.shopifyCustomerId
-      ? String(req.query.shopifyCustomerId)
-      : "")?.trim() || memoryStore.userId;
+    (req.query.shopifyCustomerId ? String(req.query.shopifyCustomerId) : "")?.trim() ||
+    memoryStore.userId;
 
-  // Targets: try (userId) then fallback to ()
   const targets: any = (() => {
     try {
       return (getStaticDailyTargets as any)(userId);
@@ -594,7 +415,6 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
     }
   })();
 
-  // Meals: try (userId, date) then fallback to (date)
   const meals: Meal[] = (() => {
     try {
       return (getMealsForDate as any)(userId, date) || [];
@@ -603,7 +423,6 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
     }
   })();
 
-  // Totals: try (meals[]) then fallback to (date)
   const consumed: any = (() => {
     try {
       return (computeDailyTotals as any)(meals);
@@ -615,7 +434,6 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const remaining = computeRemaining(targets, consumed);
   const streak = computeStreak();
 
-  // Placeholder health score until AI is added
   const healthScore =
     consumed.calories === 0
       ? null
@@ -624,11 +442,19 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   res.json({
     ok: true,
     date,
+
+    // canonical keys
     targets,
     consumed,
+
+    // ✅ frontend-friendly aliases
+    totals: consumed,
+    dayStreak: streak,
+
     remaining,
     healthScore,
     streak,
+
     recentMeals: meals
       .slice()
       .sort((a: Meal, b: Meal) => (a.datetime < b.datetime ? 1 : -1))
@@ -636,45 +462,38 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   });
 });
 
-/**
- * DELETE /api/v1/nutrition/reset-day
- *
- * Clears all logged meals for the given date (or today by default)
- * for the current in-memory user. Used by the "Reset the day" button.
- *
- * Optional query:
- *   ?date=YYYY-MM-DD   – if not provided, today is used.
- */
+/* ======================================================================
+   Reset Day (frontend expects POST /day/reset)
+   Your existing endpoint was DELETE /reset-day
+   We support BOTH.
+   ====================================================================== */
+
+function resetDayInternal(date: string) {
+  const userId = memoryStore.userId;
+
+  if (!Array.isArray((memoryStore as any).meals)) {
+    return { removedMeals: 0 };
+  }
+
+  const allMeals = (memoryStore as any).meals as Meal[];
+  const beforeCount = allMeals.length;
+
+  const keptMeals = allMeals.filter((m: Meal) => {
+    if (m.userId !== userId) return true;
+    const mealDate = m.datetime.slice(0, 10);
+    return mealDate !== date;
+  });
+
+  (memoryStore as any).meals = keptMeals;
+
+  return { removedMeals: beforeCount - keptMeals.length };
+}
+
+// Legacy + compatible
 nutritionRouter.delete("/reset-day", (req: Request, res: Response) => {
   try {
     const date = (req.query.date as string) || todayDateOnly();
-    const userId = memoryStore.userId;
-
-    if (!Array.isArray((memoryStore as any).meals)) {
-      console.warn(
-        "[nutrition.reset-day] memoryStore.meals is not an array – nothing to clear."
-      );
-      return res.status(200).json({
-        ok: true,
-        date,
-        removedMeals: 0,
-        message: "Nothing to clear for this date.",
-      });
-    }
-
-    const allMeals = (memoryStore as any).meals as Meal[];
-    const beforeCount = allMeals.length;
-
-    const keptMeals = allMeals.filter((m: Meal) => {
-      if (m.userId !== userId) return true;
-      const mealDate = m.datetime.slice(0, 10); // "YYYY-MM-DD"
-      return mealDate !== date;
-    });
-
-    (memoryStore as any).meals = keptMeals;
-
-    const removedMeals = beforeCount - keptMeals.length;
-
+    const { removedMeals } = resetDayInternal(date);
     return res.status(200).json({
       ok: true,
       date,
@@ -683,6 +502,26 @@ nutritionRouter.delete("/reset-day", (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error("Error in DELETE /api/v1/nutrition/reset-day:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to reset day",
+    });
+  }
+});
+
+// ✅ Frontend-friendly alias
+nutritionRouter.post("/day/reset", (req: Request, res: Response) => {
+  try {
+    const date = (req.body?.date as string) || todayDateOnly();
+    const { removedMeals } = resetDayInternal(date);
+    return res.status(200).json({
+      ok: true,
+      date,
+      removedMeals,
+      message: `Cleared ${removedMeals} meal(s) for ${date}.`,
+    });
+  } catch (err: any) {
+    console.error("Error in POST /api/v1/nutrition/day/reset:", err);
     return res.status(500).json({
       ok: false,
       error: err?.message || "Failed to reset day",
