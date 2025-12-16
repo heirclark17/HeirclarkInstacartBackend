@@ -28,11 +28,6 @@ import fitbitRouter from "./routes/fitbit";
 import { appleHealthRouter } from "./routes/appleHealth";
 
 // ✅ NEW: Website ↔ iPhone Shortcut Health Bridge router
-// Provides:
-//  - POST /api/v1/health/pair/start
-//  - POST /api/v1/health/pair/complete
-//  - POST /api/v1/health/ingest
-//  - GET  /api/v1/health/metrics?shopifyCustomerId=...
 import { healthBridgeRouter } from "./routes/healthBridge";
 
 const app = express();
@@ -55,11 +50,11 @@ type MulterRequest = Request & { file?: any };
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
 // ======================================================================
 
-// ✅ CORS: add Accept + keep Authorization/Content-Type
-// Also enables credentials if you ever set cookies (safe even if you don't)
+// ✅ CORS: Accept + Content-Type
+// origin:true is fine for now; later lock to your Shopify domain
 app.use(
   cors({
-    origin: true, // later you can lock this to your Shopify domain
+    origin: true,
     methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization", "Accept"],
     credentials: true,
@@ -80,13 +75,10 @@ app.use(express.urlencoded({ extended: true }));
 //                       HEALTH CHECK + ROUTES
 // ======================================================================
 
-// ✅ Root landing
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({ ok: true, service: "heirclark-backend" });
 });
 
-// ✅ IMPORTANT: This is the endpoint you were calling in PowerShell.
-// Railway logs showed GET /health 404 — this fixes that.
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).send("ok");
 });
@@ -100,26 +92,22 @@ app.use("/api/v1/weight", weightRouter);
 // ✅ Fitbit integration routes (OAuth + token refresh + today activity)
 app.use("/api/v1/integrations/fitbit", fitbitRouter);
 
-// ✅ Existing: Apple Health bridge routes (link + sync + today)
+// ✅ Existing: Apple Health bridge routes
 app.use("/api/v1/wearables/apple", appleHealthRouter);
 
-// ✅ NEW: Shortcut-based Health Bridge (iPhone → backend → website)
+// ✅ NEW: Shortcut-based Health Bridge
 app.use("/api/v1/health", healthBridgeRouter);
 
 // ======================================================================
-//                       BODY SCAN ROUTE (FIXED)
+//                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
 // ======================================================================
-// IMPORTANT FIX:
-// This multer.fields middleware MUST NOT be mounted globally.
-// If it runs on every request, it will break other uploads (like "image")
-// with: "Unexpected field".
+
 const bodyScanUpload = upload.fields([
   { name: "front", maxCount: 1 },
   { name: "side", maxCount: 1 },
   { name: "back", maxCount: 1 },
 ]);
 
-// ✅ Only apply bodyScanUpload to body-scan endpoints
 app.use("/api/v1/body-scan", bodyScanUpload, bodyScanRouter);
 
 // ======================================================================
