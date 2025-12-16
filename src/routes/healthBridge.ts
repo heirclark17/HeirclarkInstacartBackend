@@ -1,4 +1,3 @@
-// src/routes/healthBridge.ts
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { Pool } from "pg";
@@ -41,6 +40,13 @@ function toIntOrNull(v: any): number | null {
   return Math.trunc(n);
 }
 
+// Optional: short code for UX (not stored, just derived)
+function shortCodeFromToken(token: string) {
+  const h = crypto.createHash("sha256").update(token).digest("hex");
+  const digits = h.replace(/[a-f]/g, "").slice(0, 6).padEnd(6, "0");
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}`;
+}
+
 /* ======================================================================
    PAIRING FLOW
    ====================================================================== */
@@ -67,7 +73,12 @@ healthBridgeRouter.post("/pair/start", async (req: Request, res: Response) => {
       [pairingToken, shopifyCustomerId, expiresAt.toISOString()]
     );
 
-    return res.json({ ok: true, pairingToken, expiresAt: expiresAt.toISOString() });
+    return res.json({
+      ok: true,
+      pairingToken,
+      shortCode: shortCodeFromToken(pairingToken),
+      expiresAt: expiresAt.toISOString(),
+    });
   } catch (err) {
     console.error("[healthBridge] pair/start failed:", err);
     return res.status(500).json({ ok: false, error: "pair/start failed" });
@@ -133,7 +144,7 @@ healthBridgeRouter.post("/pair/complete", async (req: Request, res: Response) =>
 });
 
 /* ======================================================================
-   ✅ DEVICE REGISTRATION (NEW)
+   DEVICE REGISTRATION
    ====================================================================== */
 
 /**
@@ -327,28 +338,50 @@ healthBridgeRouter.get("/devices", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * DELETE /api/v1/health/device
+ *
+ * Recommended behavior:
+ * - If shopifyCustomerId + deviceKey provided: delete that device only
+ * - If only shopifyCustomerId provided: delete ALL devices for that user
+ *
+ * This matches real-world UI needs and prevents frontend "deviceKey required" failures.
+ */
 healthBridgeRouter.delete("/device", async (req: Request, res: Response) => {
   const shopifyCustomerId = normStr(req.body?.shopifyCustomerId);
   const deviceKey = normStr(req.body?.deviceKey);
 
-  if (!shopifyCustomerId || !deviceKey) {
-    return res.status(400).json({ ok: false, error: "Missing params" });
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
   }
 
   try {
-    const del = await pool.query(
-      `
-      DELETE FROM hc_health_devices
-      WHERE device_key = $1 AND shopify_customer_id = $2
-      `,
-      [deviceKey, shopifyCustomerId]
-    );
+    if (deviceKey) {
+      const del = await pool.query(
+        `
+        DELETE FROM hc_health_devices
+        WHERE device_key = $1 AND shopify_customer_id = $2
+        `,
+        [deviceKey, shopifyCustomerId]
+      );
 
-    if (del.rowCount === 0) {
-      return res.status(404).json({ ok: false, error: "Device not found for user" });
+      if (del.rowCount === 0) {
+        return res.status(404).json({ ok: false, error: "Device not found for user" });
+      }
+
+      return res.json({ ok: true, removed: del.rowCount });
     }
 
-    return res.json({ ok: true });
+    // No deviceKey: remove all devices for user
+    const delAll = await pool.query(
+      `
+      DELETE FROM hc_health_devices
+      WHERE shopify_customer_id = $1
+      `,
+      [shopifyCustomerId]
+    );
+
+    return res.json({ ok: true, removed: delAll.rowCount });
   } catch (err) {
     console.error("[healthBridge] delete device failed:", err);
     return res.status(500).json({ ok: false, error: "delete device failed" });
