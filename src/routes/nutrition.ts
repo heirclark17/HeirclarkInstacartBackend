@@ -56,8 +56,25 @@ function errMessage(err: any): string {
   return String(err?.message || err?.response?.data?.error?.message || err || "");
 }
 
+// ✅ Robust JSON parsing (handles occasional extra text)
+function safeParseJson(text: string) {
+  // Fast path
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Try to extract the first {...} block
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+    throw new Error("Vision model returned non-JSON output");
+  }
+}
+
 /* ======================================================================
    STEP 1: Vision — Describe image (Vision model)
+   - Uses response_format json_object to force JSON output
+   - Uses safeParseJson fallback
    ====================================================================== */
 
 async function describeMealImage(
@@ -82,6 +99,8 @@ async function describeMealImage(
     const response = await openai.chat.completions.create({
       model: VISION_MODEL,
       temperature: 0.1,
+      // ✅ Force the model to return valid JSON
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "user",
@@ -91,17 +110,19 @@ async function describeMealImage(
               text: `
 Describe the food visible in this photo.
 
-Return STRICT JSON ONLY:
+Return JSON ONLY in this exact shape:
 {
-  "foods": string[],           // list each visible food item
-  "portionNotes": string,      // portion sizes (small/medium/large)
-  "clarity": number            // 0–100 image clarity & certainty
+  "foods": string[],
+  "portionNotes": string,
+  "clarity": number
 }
 
 Rules:
+- No markdown
+- No commentary
+- No extra text
 - Be honest if unclear
-- Do not guess ingredients you cannot see
-- No commentary, JSON only
+- Do not guess hidden ingredients
 `,
             },
             {
@@ -114,13 +135,7 @@ Rules:
     });
 
     const raw = response.choices[0]?.message?.content || "{}";
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new Error("Failed to parse vision response JSON");
-    }
+    const parsed = safeParseJson(raw);
 
     const result = {
       foods: Array.isArray(parsed.foods) ? parsed.foods : [],
@@ -148,7 +163,6 @@ Rules:
       msg,
     });
 
-    // ✅ Clean actionable error on model access
     if (status === 403 || msg.includes("does not have access")) {
       throw new Error(
         `Vision model access denied for "${VISION_MODEL}". ` +
@@ -163,6 +177,8 @@ Rules:
 
 /* ======================================================================
    STEP 2: Reasoning — Estimate macros (your existing model)
+   - Forces JSON via response_format json_object
+   - Uses safeParseJson fallback
    ====================================================================== */
 
 async function estimateMealFromImage(
@@ -196,6 +212,8 @@ ${vision.portionNotes}
     const response = await openai.chat.completions.create({
       model: MACRO_MODEL,
       temperature: 0.2,
+      // ✅ Force JSON from text model too
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "user",
@@ -204,7 +222,7 @@ You are a nutrition expert.
 
 Based on the foods and portions below, estimate nutrition.
 
-Return STRICT JSON ONLY:
+Return JSON ONLY in this exact shape:
 {
   "mealName": string,
   "calories": number,
@@ -213,7 +231,10 @@ Return STRICT JSON ONLY:
   "fat": number
 }
 
-Be conservative if uncertain. Avoid unrealistic macro totals.
+Guidelines:
+- Be conservative if uncertain
+- Use realistic macro totals (avoid extremes)
+- If multiple items, combine into one meal estimate
 
 ${descriptionText}
 `,
@@ -232,12 +253,7 @@ ${descriptionText}
     throw err;
   }
 
-  let parsed: any;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Failed to parse macro estimate JSON");
-  }
+  const parsed = safeParseJson(raw);
 
   // Confidence blends vision clarity + food certainty
   const confidence = Math.round(
@@ -351,6 +367,7 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
    POST /api/v1/nutrition/ai/meal-from-photo
    - Hybrid vision gate
    - Auto-log with confidence guard
+   - Graceful fallback on vision parse errors
    ====================================================================== */
 
 nutritionRouter.post(
@@ -403,16 +420,32 @@ nutritionRouter.post(
         ...estimate,
       });
     } catch (err: any) {
+      const msg = errMessage(err);
+
       console.error("[nutrition][ai][photo] error", {
         reqId,
         ms: nowMs() - t0,
         status: errStatus(err),
-        msg: errMessage(err),
+        msg,
       });
 
-      res.status(500).json({
+      // ✅ Graceful UX fallback for parse problems
+      if (
+        msg.includes("Failed to parse vision response") ||
+        msg.includes("Vision model returned non-JSON output") ||
+        msg.includes("Failed to parse macro estimate")
+      ) {
+        return res.status(200).json({
+          ok: false,
+          fallback: true,
+          error:
+            "We couldn’t confidently read this photo. Try a clearer photo (good lighting, closer crop) or use Ask AI (text).",
+        });
+      }
+
+      return res.status(500).json({
         ok: false,
-        error: err.message || "Failed to analyze photo",
+        error: msg || "Failed to analyze photo",
       });
     }
   }
