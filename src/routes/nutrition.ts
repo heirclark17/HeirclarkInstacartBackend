@@ -35,7 +35,8 @@ console.log("[nutrition] routes loaded:", {
 });
 
 /* ======================================================================
-   Helper: Estimate meal from image (GPT-4o Vision)
+   Helper: Estimate meal from image (USING EXISTING MODEL)
+   Model: gpt-4.1-mini
    ====================================================================== */
 
 async function estimateMealFromImage(
@@ -50,7 +51,7 @@ async function estimateMealFromImage(
   confidence: number;
   foods: string[];
 }> {
-  // 🔻 Compress image aggressively (cheap + fast)
+  // 🔻 Compress image for speed + cost control
   const compressed = await sharp(imageBuffer)
     .resize({ width: 768, withoutEnlargement: true })
     .jpeg({ quality: 72 })
@@ -60,9 +61,13 @@ async function estimateMealFromImage(
 
   const prompt = `
 You are a nutrition expert.
-Analyze the meal in this photo and estimate calories and macros.
 
-Return STRICT JSON ONLY:
+The user uploaded a meal photo.
+You are given a BASE64-ENCODED JPEG IMAGE of the meal.
+
+Analyze the meal and estimate calories and macros.
+
+Return STRICT JSON ONLY in this exact shape:
 {
   "mealName": string,
   "calories": number,
@@ -70,30 +75,26 @@ Return STRICT JSON ONLY:
   "carbs": number,
   "fat": number,
   "foods": string[],
-  "confidence": number   // 0–100 based on image clarity
+  "confidence": number
 }
 
-Guidelines:
-- Be conservative if portion unclear
-- Assume standard restaurant portions unless obvious otherwise
-- Confidence reflects image quality + ambiguity
+Rules:
+- Confidence is 0–100 based on image clarity and portion certainty
+- Be conservative if portions are unclear
+- Assume standard restaurant portions unless clearly homemade
+- No markdown, no commentary, JSON only
+
+BASE64_IMAGE:
+${base64Image}
 `;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     temperature: 0.2,
     messages: [
       {
         role: "user",
-        content: [
-          { type: "text", text: prompt },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:image/jpeg;base64,${base64Image}`,
-            },
-          },
-        ],
+        content: prompt,
       },
     ],
   });
@@ -120,7 +121,7 @@ Guidelines:
 
 /* ======================================================================
    POST /api/v1/nutrition/meal
-   (unchanged – logs confirmed meal)
+   Logs a confirmed meal (manual or AI-confirmed)
    ====================================================================== */
 
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
@@ -177,7 +178,11 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
     }
 
     const estimate = await estimateMealFromText(text, localTimeIso);
-    res.json({ ok: true, ...estimate });
+
+    res.json({
+      ok: true,
+      ...estimate,
+    });
   } catch (err: any) {
     console.error("AI text error", err);
     res.status(500).json({ ok: false, error: err.message });
@@ -185,8 +190,10 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 });
 
 /* ======================================================================
-   ✅ POST /api/v1/nutrition/ai/meal-from-photo
-   - Auto confirms & logs meal
+   POST /api/v1/nutrition/ai/meal-from-photo
+   - Compresses image
+   - Runs AI
+   - AUTO-LOGS meal
    ====================================================================== */
 
 nutritionRouter.post(
@@ -203,7 +210,7 @@ nutritionRouter.post(
         req.body?.localTimeIso
       );
 
-      // ✅ AUTO-LOG MEAL
+      // ✅ Auto-log immediately
       const meal: Omit<Meal, "userId"> = {
         id: uuidv4(),
         datetime: new Date().toISOString(),
@@ -238,9 +245,7 @@ nutritionRouter.post(
 
 /* ======================================================================
    History, Day Summary, Reset Day
-   (UNCHANGED from your existing file)
+   (UNCHANGED — keep your existing implementations below)
    ====================================================================== */
 
-// ⬇️ KEEP YOUR EXISTING history, day-summary, reset-day routes HERE ⬇️
-// (They are already correct and compatible)
-
+// ⬇️ KEEP YOUR EXISTING history, summary, streak, reset routes here ⬇️
