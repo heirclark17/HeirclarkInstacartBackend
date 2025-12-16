@@ -33,11 +33,17 @@ const PHOTO_CONFIDENCE_AUTOLOG_MIN = Number(
   process.env.PHOTO_CONFIDENCE_AUTOLOG_MIN || 60
 );
 
-console.log("[nutrition] routes loaded (hybrid vision gate enabled)", {
+// ✅ Image tunables (raise detail to improve confidence + foods)
+const PHOTO_MAX_WIDTH = Number(process.env.PHOTO_MAX_WIDTH || 1024);
+const PHOTO_JPEG_QUALITY = Number(process.env.PHOTO_JPEG_QUALITY || 82);
+
+console.log("[nutrition] routes loaded (photo ai + swaps + explanation)", {
   build: process.env.RAILWAY_GIT_COMMIT_SHA || "unknown",
   visionModel: VISION_MODEL,
   macroModel: MACRO_MODEL,
   autologMinConfidence: PHOTO_CONFIDENCE_AUTOLOG_MIN,
+  photoMaxWidth: PHOTO_MAX_WIDTH,
+  photoJpegQuality: PHOTO_JPEG_QUALITY,
 });
 
 /* ======================================================================
@@ -46,6 +52,12 @@ console.log("[nutrition] routes loaded (hybrid vision gate enabled)", {
 
 function nowMs() {
   return Date.now();
+}
+
+function clamp(n: number, min = 0, max = 100) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, x));
 }
 
 function errStatus(err: any): number | undefined {
@@ -64,17 +76,14 @@ function safeParseJson(text: string) {
   } catch {
     // Try to extract the first {...} block
     const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]);
-    }
-    throw new Error("Vision model returned non-JSON output");
+    if (match) return JSON.parse(match[0]);
+    throw new Error("Model returned non-JSON output");
   }
 }
 
 /* ======================================================================
    STEP 1: Vision — Describe image (Vision model)
-   - Uses response_format json_object to force JSON output
-   - Uses safeParseJson fallback
+   - Forces JSON output via response_format json_object
    ====================================================================== */
 
 async function describeMealImage(
@@ -83,14 +92,14 @@ async function describeMealImage(
 ): Promise<{
   foods: string[];
   portionNotes: string;
-  clarity: number;
+  clarity: number; // 0..100
 }> {
   const t0 = nowMs();
 
-  // 🔻 Compress image for speed + cost control
+  // ✅ Keep more detail to improve recognition + confidence stability
   const compressed = await sharp(imageBuffer)
-    .resize({ width: 768, withoutEnlargement: true })
-    .jpeg({ quality: 72 })
+    .resize({ width: PHOTO_MAX_WIDTH, withoutEnlargement: true })
+    .jpeg({ quality: PHOTO_JPEG_QUALITY })
     .toBuffer();
 
   const base64Image = compressed.toString("base64");
@@ -99,7 +108,6 @@ async function describeMealImage(
     const response = await openai.chat.completions.create({
       model: VISION_MODEL,
       temperature: 0.1,
-      // ✅ Force the model to return valid JSON
       response_format: { type: "json_object" },
       messages: [
         {
@@ -108,7 +116,7 @@ async function describeMealImage(
             {
               type: "text",
               text: `
-Describe the food visible in this photo.
+You are analyzing a food photo for meal logging.
 
 Return JSON ONLY in this exact shape:
 {
@@ -118,11 +126,10 @@ Return JSON ONLY in this exact shape:
 }
 
 Rules:
-- No markdown
-- No commentary
-- No extra text
-- Be honest if unclear
-- Do not guess hidden ingredients
+- foods: list only what is clearly visible (no hidden guesses)
+- portionNotes: short, concrete (e.g. "about 1 cup rice", "2 chicken thighs", "sauce unknown")
+- clarity: 0-100 how clearly the photo shows the food (lighting, focus, crop)
+- No markdown, no extra text
 `,
             },
             {
@@ -138,9 +145,11 @@ Rules:
     const parsed = safeParseJson(raw);
 
     const result = {
-      foods: Array.isArray(parsed.foods) ? parsed.foods : [],
-      portionNotes: parsed.portionNotes || "unknown portions",
-      clarity: Math.max(0, Math.min(100, Number(parsed.clarity) || 0)),
+      foods: Array.isArray(parsed.foods)
+        ? parsed.foods.map((x: any) => String(x)).filter(Boolean)
+        : [],
+      portionNotes: parsed.portionNotes ? String(parsed.portionNotes) : "unknown portions",
+      clarity: clamp(Number(parsed.clarity) || 0, 0, 100),
     };
 
     console.log("[nutrition][photo][vision]", {
@@ -176,23 +185,74 @@ Rules:
 }
 
 /* ======================================================================
-   STEP 2: Reasoning — Estimate macros (your existing model)
+   STEP 2: Reasoning — Estimate macros + swaps + explanation (production prompt)
    - Forces JSON via response_format json_object
-   - Uses safeParseJson fallback
+   - Adds reasoningConfidence (0..100)
    ====================================================================== */
 
-async function estimateMealFromImage(
-  imageBuffer: Buffer,
-  reqId: string
-): Promise<{
+type PhotoAIResult = {
   mealName: string;
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
+
+  // ✅ restored
+  explanation: string;
+  swaps: string[];
+
+  // diagnostics
   foods: string[];
-  confidence: number;
-}> {
+  visionClarity: number; // 0..100
+  reasoningConfidence: number; // 0..100
+
+  // final blended confidence used by UI/autolog
+  confidence: number; // 0..100
+};
+
+function normalizeSwaps(x: any): string[] {
+  if (!Array.isArray(x)) return [];
+  return x
+    .map((v) => (v == null ? "" : String(v)).trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function normalizeExplanation(x: any): string {
+  if (!x) return "";
+  const s = String(x).trim();
+  // keep it short-ish for UI
+  return s.length > 600 ? s.slice(0, 600) + "…" : s;
+}
+
+function computeBlendedConfidence(args: {
+  visionClarity: number;
+  reasoningConfidence: number;
+  foodsCount: number;
+}) {
+  const v = clamp(args.visionClarity, 0, 100);
+  const r = clamp(args.reasoningConfidence, 0, 100);
+
+  // ✅ Weighted blend: vision matters, but reasoning prevents "obvious meals" from tanking
+  let blended = Math.round(0.55 * v + 0.45 * r);
+
+  // ✅ Small boost if foods were actually identified
+  if (args.foodsCount > 0) blended += 6;
+
+  // ✅ Small penalty if nothing identified (still allow some confidence, but lower)
+  if (args.foodsCount === 0) blended -= 12;
+
+  // ✅ Stability guard rails (avoid silly lows on clear pics)
+  if (v >= 75 && r >= 70) blended = Math.max(blended, 72);
+  if (v >= 85 && r >= 80) blended = Math.max(blended, 80);
+
+  return clamp(blended, 0, 100);
+}
+
+async function estimateMealFromImage(
+  imageBuffer: Buffer,
+  reqId: string
+): Promise<PhotoAIResult> {
   const t0 = nowMs();
 
   // ---- Vision gate ----
@@ -200,27 +260,30 @@ async function estimateMealFromImage(
 
   const descriptionText = `
 Foods identified:
-${vision.foods.map((f) => `- ${f}`).join("\n")}
+${vision.foods.length ? vision.foods.map((f) => `- ${f}`).join("\n") : "- (none confidently identified)"}
 
 Portion notes:
 ${vision.portionNotes}
-`;
 
-  // ---- Existing model does reasoning ----
+Photo clarity (0-100):
+${vision.clarity}
+`.trim();
+
+  // ---- Production macro prompt (macros + explanation + swaps + reasoningConfidence) ----
   let raw = "{}";
   try {
     const response = await openai.chat.completions.create({
       model: MACRO_MODEL,
       temperature: 0.2,
-      // ✅ Force JSON from text model too
       response_format: { type: "json_object" },
       messages: [
         {
           role: "user",
           content: `
-You are a nutrition expert.
+You are a meticulous nutrition coach estimating macros from a photo description.
 
-Based on the foods and portions below, estimate nutrition.
+Use ONLY the foods listed. Do not invent hidden ingredients.
+If anything is uncertain, be conservative.
 
 Return JSON ONLY in this exact shape:
 {
@@ -228,13 +291,18 @@ Return JSON ONLY in this exact shape:
   "calories": number,
   "protein": number,
   "carbs": number,
-  "fat": number
+  "fat": number,
+  "explanation": string,
+  "swaps": string[],
+  "reasoningConfidence": number
 }
 
-Guidelines:
-- Be conservative if uncertain
-- Use realistic macro totals (avoid extremes)
-- If multiple items, combine into one meal estimate
+Rules:
+- mealName: short, user-friendly
+- calories/protein/carbs/fat: realistic totals for ONE meal
+- explanation: 1–3 sentences explaining what you assumed (portions / cooking method) and uncertainty
+- swaps: 2–5 healthier swaps OR improvements (simple, actionable). If already healthy, suggest optimizations (e.g., "add veggies", "swap sugary sauce for…")
+- reasoningConfidence: 0–100 (how confident you are in the macro estimate given the description)
 
 ${descriptionText}
 `,
@@ -255,18 +323,33 @@ ${descriptionText}
 
   const parsed = safeParseJson(raw);
 
-  // Confidence blends vision clarity + food certainty
-  const confidence = Math.round(
-    Math.min(100, vision.clarity * (vision.foods.length > 0 ? 1 : 0.6))
-  );
+  const mealName = parsed.mealName ? String(parsed.mealName) : "Meal";
+  const calories = Number(parsed.calories) || 0;
+  const protein = Number(parsed.protein) || 0;
+  const carbs = Number(parsed.carbs) || 0;
+  const fat = Number(parsed.fat) || 0;
 
-  const result = {
-    mealName: parsed.mealName || "Meal",
-    calories: Number(parsed.calories) || 0,
-    protein: Number(parsed.protein) || 0,
-    carbs: Number(parsed.carbs) || 0,
-    fat: Number(parsed.fat) || 0,
+  const explanation = normalizeExplanation(parsed.explanation);
+  const swaps = normalizeSwaps(parsed.swaps);
+  const reasoningConfidence = clamp(Number(parsed.reasoningConfidence) || 0, 0, 100);
+
+  const confidence = computeBlendedConfidence({
+    visionClarity: vision.clarity,
+    reasoningConfidence,
+    foodsCount: vision.foods.length,
+  });
+
+  const result: PhotoAIResult = {
+    mealName,
+    calories,
+    protein,
+    carbs,
+    fat,
+    explanation,
+    swaps,
     foods: vision.foods,
+    visionClarity: vision.clarity,
+    reasoningConfidence,
     confidence,
   };
 
@@ -275,10 +358,14 @@ ${descriptionText}
     model: MACRO_MODEL,
     ms: nowMs() - t0,
     confidence: result.confidence,
+    visionClarity: result.visionClarity,
+    reasoningConfidence: result.reasoningConfidence,
     calories: result.calories,
     p: result.protein,
     c: result.carbs,
     f: result.fat,
+    swapsCount: result.swaps.length,
+    hasExplanation: !!result.explanation,
   });
 
   return result;
@@ -339,6 +426,8 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
 /* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-text
+   - unchanged, but if your estimateMealFromText already returns swaps/explanation,
+     it will pass through as-is.
    ====================================================================== */
 
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
@@ -365,9 +454,9 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 
 /* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-photo
-   - Hybrid vision gate
+   - Restores swaps + explanation
+   - Rebalanced confidence (vision + reasoningConfidence)
    - Auto-log with confidence guard
-   - Graceful fallback on vision parse errors
    ====================================================================== */
 
 nutritionRouter.post(
@@ -410,6 +499,8 @@ nutritionRouter.post(
         ms: nowMs() - t0,
         autoLogged,
         confidence: estimate.confidence,
+        visionClarity: estimate.visionClarity,
+        reasoningConfidence: estimate.reasoningConfidence,
         visionModel: VISION_MODEL,
         macroModel: MACRO_MODEL,
       });
@@ -417,7 +508,21 @@ nutritionRouter.post(
       return res.json({
         ok: true,
         autoLogged,
-        ...estimate,
+
+        // ✅ UI expects these
+        mealName: estimate.mealName,
+        calories: estimate.calories,
+        protein: estimate.protein,
+        carbs: estimate.carbs,
+        fat: estimate.fat,
+        confidence: estimate.confidence,
+        foods: estimate.foods,
+        swaps: estimate.swaps,
+        explanation: estimate.explanation,
+
+        // ✅ optional extra diagnostics (safe for UI; remove if you want)
+        visionClarity: estimate.visionClarity,
+        reasoningConfidence: estimate.reasoningConfidence,
       });
     } catch (err: any) {
       const msg = errMessage(err);
@@ -431,9 +536,9 @@ nutritionRouter.post(
 
       // ✅ Graceful UX fallback for parse problems
       if (
-        msg.includes("Failed to parse vision response") ||
+        msg.includes("Model returned non-JSON output") ||
         msg.includes("Vision model returned non-JSON output") ||
-        msg.includes("Failed to parse macro estimate")
+        msg.toLowerCase().includes("non-json")
       ) {
         return res.status(200).json({
           ok: false,
