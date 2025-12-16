@@ -24,21 +24,53 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// ✅ Configurable models
+const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
+const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4.1-mini";
+
+// ✅ Tunables
+const PHOTO_CONFIDENCE_AUTOLOG_MIN = Number(
+  process.env.PHOTO_CONFIDENCE_AUTOLOG_MIN || 60
+);
+
 console.log("[nutrition] routes loaded (hybrid vision gate enabled)", {
   build: process.env.RAILWAY_GIT_COMMIT_SHA || "unknown",
+  visionModel: VISION_MODEL,
+  macroModel: MACRO_MODEL,
+  autologMinConfidence: PHOTO_CONFIDENCE_AUTOLOG_MIN,
 });
 
 /* ======================================================================
-   STEP 1: Vision — Describe image (GPT-4o Vision)
+   Small helpers
+   ====================================================================== */
+
+function nowMs() {
+  return Date.now();
+}
+
+function errStatus(err: any): number | undefined {
+  return err?.status || err?.response?.status;
+}
+
+function errMessage(err: any): string {
+  return String(err?.message || err?.response?.data?.error?.message || err || "");
+}
+
+/* ======================================================================
+   STEP 1: Vision — Describe image (Vision model)
    ====================================================================== */
 
 async function describeMealImage(
-  imageBuffer: Buffer
+  imageBuffer: Buffer,
+  reqId: string
 ): Promise<{
   foods: string[];
   portionNotes: string;
   clarity: number;
 }> {
+  const t0 = nowMs();
+
+  // 🔻 Compress image for speed + cost control
   const compressed = await sharp(imageBuffer)
     .resize({ width: 768, withoutEnlargement: true })
     .jpeg({ quality: 72 })
@@ -46,16 +78,17 @@ async function describeMealImage(
 
   const base64Image = compressed.toString("base64");
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    temperature: 0.1,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `
+  try {
+    const response = await openai.chat.completions.create({
+      model: VISION_MODEL,
+      temperature: 0.1,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `
 Describe the food visible in this photo.
 
 Return STRICT JSON ONLY:
@@ -70,40 +103,71 @@ Rules:
 - Do not guess ingredients you cannot see
 - No commentary, JSON only
 `,
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:image/jpeg;base64,${base64Image}`,
             },
-          },
-        ],
-      },
-    ],
-  });
+            {
+              type: "image_url",
+              image_url: { url: `data:image/jpeg;base64,${base64Image}` },
+            },
+          ],
+        },
+      ],
+    });
 
-  const raw = response.choices[0]?.message?.content || "{}";
+    const raw = response.choices[0]?.message?.content || "{}";
 
-  let parsed: any;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Failed to parse vision response");
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("Failed to parse vision response JSON");
+    }
+
+    const result = {
+      foods: Array.isArray(parsed.foods) ? parsed.foods : [],
+      portionNotes: parsed.portionNotes || "unknown portions",
+      clarity: Math.max(0, Math.min(100, Number(parsed.clarity) || 0)),
+    };
+
+    console.log("[nutrition][photo][vision]", {
+      reqId,
+      model: VISION_MODEL,
+      ms: nowMs() - t0,
+      foodsCount: result.foods.length,
+      clarity: result.clarity,
+    });
+
+    return result;
+  } catch (err: any) {
+    const status = errStatus(err);
+    const msg = errMessage(err);
+
+    console.error("[nutrition][photo][vision] error", {
+      reqId,
+      model: VISION_MODEL,
+      status,
+      msg,
+    });
+
+    // ✅ Clean actionable error on model access
+    if (status === 403 || msg.includes("does not have access")) {
+      throw new Error(
+        `Vision model access denied for "${VISION_MODEL}". ` +
+          `Set OPENAI_VISION_MODEL to a permitted vision model (recommended: "gpt-4o-mini"), ` +
+          `or enable access for this model in your OpenAI Project.`
+      );
+    }
+
+    throw err;
   }
-
-  return {
-    foods: Array.isArray(parsed.foods) ? parsed.foods : [],
-    portionNotes: parsed.portionNotes || "unknown portions",
-    clarity: Math.max(0, Math.min(100, Number(parsed.clarity) || 0)),
-  };
 }
 
 /* ======================================================================
-   STEP 2: Reasoning — Estimate macros (gpt-4.1-mini)
+   STEP 2: Reasoning — Estimate macros (your existing model)
    ====================================================================== */
 
 async function estimateMealFromImage(
-  imageBuffer: Buffer
+  imageBuffer: Buffer,
+  reqId: string
 ): Promise<{
   mealName: string;
   calories: number;
@@ -113,8 +177,10 @@ async function estimateMealFromImage(
   foods: string[];
   confidence: number;
 }> {
+  const t0 = nowMs();
+
   // ---- Vision gate ----
-  const vision = await describeMealImage(imageBuffer);
+  const vision = await describeMealImage(imageBuffer, reqId);
 
   const descriptionText = `
 Foods identified:
@@ -122,18 +188,18 @@ ${vision.foods.map((f) => `- ${f}`).join("\n")}
 
 Portion notes:
 ${vision.portionNotes}
-
-Estimate calories and macros.
 `;
 
   // ---- Existing model does reasoning ----
-  const response = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    temperature: 0.2,
-    messages: [
-      {
-        role: "user",
-        content: `
+  let raw = "{}";
+  try {
+    const response = await openai.chat.completions.create({
+      model: MACRO_MODEL,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "user",
+          content: `
 You are a nutrition expert.
 
 Based on the foods and portions below, estimate nutrition.
@@ -147,32 +213,38 @@ Return STRICT JSON ONLY:
   "fat": number
 }
 
-Be conservative if uncertain.
+Be conservative if uncertain. Avoid unrealistic macro totals.
 
 ${descriptionText}
 `,
-      },
-    ],
-  });
+        },
+      ],
+    });
 
-  const raw = response.choices[0]?.message?.content || "{}";
+    raw = response.choices[0]?.message?.content || "{}";
+  } catch (err: any) {
+    console.error("[nutrition][photo][macro] error", {
+      reqId,
+      model: MACRO_MODEL,
+      status: errStatus(err),
+      msg: errMessage(err),
+    });
+    throw err;
+  }
 
   let parsed: any;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("Failed to parse macro estimate");
+    throw new Error("Failed to parse macro estimate JSON");
   }
 
   // Confidence blends vision clarity + food certainty
   const confidence = Math.round(
-    Math.min(
-      100,
-      vision.clarity * (vision.foods.length > 0 ? 1 : 0.6)
-    )
+    Math.min(100, vision.clarity * (vision.foods.length > 0 ? 1 : 0.6))
   );
 
-  return {
+  const result = {
     mealName: parsed.mealName || "Meal",
     calories: Number(parsed.calories) || 0,
     protein: Number(parsed.protein) || 0,
@@ -181,6 +253,19 @@ ${descriptionText}
     foods: vision.foods,
     confidence,
   };
+
+  console.log("[nutrition][photo][macro]", {
+    reqId,
+    model: MACRO_MODEL,
+    ms: nowMs() - t0,
+    confidence: result.confidence,
+    calories: result.calories,
+    p: result.protein,
+    c: result.carbs,
+    f: result.fat,
+  });
+
+  return result;
 }
 
 /* ======================================================================
@@ -188,6 +273,7 @@ ${descriptionText}
    ====================================================================== */
 
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
+  const reqId = uuidv4();
   try {
     const body = req.body as any;
 
@@ -222,9 +308,15 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
     addMealForUser(memoryStore.userId, meal);
 
+    console.log("[nutrition][meal] logged", {
+      reqId,
+      label: meal.label,
+      calories: meal.items?.[0]?.calories,
+    });
+
     res.status(201).json({ ok: true, meal });
   } catch (err: any) {
-    console.error("POST /meal failed", err);
+    console.error("[nutrition][meal] error", { reqId, msg: errMessage(err) });
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -234,6 +326,7 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
    ====================================================================== */
 
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
+  const reqId = uuidv4();
   try {
     const { text } = req.body || {};
     if (!text) {
@@ -241,9 +334,15 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
     }
 
     const estimate = await estimateMealFromText(text);
+
+    console.log("[nutrition][ai][text] ok", { reqId });
+
     res.json({ ok: true, ...estimate });
   } catch (err: any) {
-    console.error("AI text error", err);
+    console.error("[nutrition][ai][text] error", {
+      reqId,
+      msg: errMessage(err),
+    });
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -258,14 +357,17 @@ nutritionRouter.post(
   "/ai/meal-from-photo",
   upload.single("photo"),
   async (req: Request, res: Response) => {
+    const reqId = uuidv4();
+    const t0 = nowMs();
+
     try {
       if (!req.file?.buffer) {
         return res.status(400).json({ ok: false, error: "Missing photo" });
       }
 
-      const estimate = await estimateMealFromImage(req.file.buffer);
+      const estimate = await estimateMealFromImage(req.file.buffer, reqId);
 
-      const autoLogged = estimate.confidence >= 60;
+      const autoLogged = estimate.confidence >= PHOTO_CONFIDENCE_AUTOLOG_MIN;
 
       if (autoLogged) {
         const meal: Omit<Meal, "userId"> = {
@@ -286,13 +388,28 @@ nutritionRouter.post(
         addMealForUser(memoryStore.userId, meal);
       }
 
+      console.log("[nutrition][ai][photo] ok", {
+        reqId,
+        ms: nowMs() - t0,
+        autoLogged,
+        confidence: estimate.confidence,
+        visionModel: VISION_MODEL,
+        macroModel: MACRO_MODEL,
+      });
+
       return res.json({
         ok: true,
         autoLogged,
         ...estimate,
       });
     } catch (err: any) {
-      console.error("AI photo error", err);
+      console.error("[nutrition][ai][photo] error", {
+        reqId,
+        ms: nowMs() - t0,
+        status: errStatus(err),
+        msg: errMessage(err),
+      });
+
       res.status(500).json({
         ok: false,
         error: err.message || "Failed to analyze photo",
