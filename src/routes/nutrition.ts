@@ -4,18 +4,12 @@ import sharp from "sharp";
 import OpenAI from "openai";
 import { v4 as uuidv4 } from "uuid";
 
-import { todayDateOnly } from "../utils/date";
 import {
-  computeDailyTotals,
-  computeRemaining,
-  getMealsForDate,
-  getStaticDailyTargets,
   memoryStore,
   addMealForUser,
   Meal,
   NutritionItem,
 } from "../utils/services/nutritionService";
-import { computeStreak } from "../services/streakService";
 import { estimateMealFromText } from "../services/aiNutritionService";
 
 /* ======================================================================
@@ -30,28 +24,21 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-console.log("[nutrition] routes loaded:", {
+console.log("[nutrition] routes loaded (hybrid vision gate enabled)", {
   build: process.env.RAILWAY_GIT_COMMIT_SHA || "unknown",
 });
 
 /* ======================================================================
-   Helper: Estimate meal from image (USING EXISTING MODEL)
-   Model: gpt-4.1-mini
+   STEP 1: Vision — Describe image (GPT-4o Vision)
    ====================================================================== */
 
-async function estimateMealFromImage(
-  imageBuffer: Buffer,
-  localTimeIso?: string
+async function describeMealImage(
+  imageBuffer: Buffer
 ): Promise<{
-  mealName: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  confidence: number;
   foods: string[];
+  portionNotes: string;
+  clarity: number;
 }> {
-  // 🔻 Compress image for speed + cost control
   const compressed = await sharp(imageBuffer)
     .resize({ width: 768, withoutEnlargement: true })
     .jpeg({ quality: 72 })
@@ -59,42 +46,38 @@ async function estimateMealFromImage(
 
   const base64Image = compressed.toString("base64");
 
-  const prompt = `
-You are a nutrition expert.
-
-The user uploaded a meal photo.
-You are given a BASE64-ENCODED JPEG IMAGE of the meal.
-
-Analyze the meal and estimate calories and macros.
-
-Return STRICT JSON ONLY in this exact shape:
-{
-  "mealName": string,
-  "calories": number,
-  "protein": number,
-  "carbs": number,
-  "fat": number,
-  "foods": string[],
-  "confidence": number
-}
-
-Rules:
-- Confidence is 0–100 based on image clarity and portion certainty
-- Be conservative if portions are unclear
-- Assume standard restaurant portions unless clearly homemade
-- No markdown, no commentary, JSON only
-
-BASE64_IMAGE:
-${base64Image}
-`;
-
   const response = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    temperature: 0.2,
+    model: "gpt-4o",
+    temperature: 0.1,
     messages: [
       {
         role: "user",
-        content: prompt,
+        content: [
+          {
+            type: "text",
+            text: `
+Describe the food visible in this photo.
+
+Return STRICT JSON ONLY:
+{
+  "foods": string[],           // list each visible food item
+  "portionNotes": string,      // portion sizes (small/medium/large)
+  "clarity": number            // 0–100 image clarity & certainty
+}
+
+Rules:
+- Be honest if unclear
+- Do not guess ingredients you cannot see
+- No commentary, JSON only
+`,
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          },
+        ],
       },
     ],
   });
@@ -105,8 +88,89 @@ ${base64Image}
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("Failed to parse AI image response");
+    throw new Error("Failed to parse vision response");
   }
+
+  return {
+    foods: Array.isArray(parsed.foods) ? parsed.foods : [],
+    portionNotes: parsed.portionNotes || "unknown portions",
+    clarity: Math.max(0, Math.min(100, Number(parsed.clarity) || 0)),
+  };
+}
+
+/* ======================================================================
+   STEP 2: Reasoning — Estimate macros (gpt-4.1-mini)
+   ====================================================================== */
+
+async function estimateMealFromImage(
+  imageBuffer: Buffer
+): Promise<{
+  mealName: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  foods: string[];
+  confidence: number;
+}> {
+  // ---- Vision gate ----
+  const vision = await describeMealImage(imageBuffer);
+
+  const descriptionText = `
+Foods identified:
+${vision.foods.map((f) => `- ${f}`).join("\n")}
+
+Portion notes:
+${vision.portionNotes}
+
+Estimate calories and macros.
+`;
+
+  // ---- Existing model does reasoning ----
+  const response = await openai.chat.completions.create({
+    model: "gpt-4.1-mini",
+    temperature: 0.2,
+    messages: [
+      {
+        role: "user",
+        content: `
+You are a nutrition expert.
+
+Based on the foods and portions below, estimate nutrition.
+
+Return STRICT JSON ONLY:
+{
+  "mealName": string,
+  "calories": number,
+  "protein": number,
+  "carbs": number,
+  "fat": number
+}
+
+Be conservative if uncertain.
+
+${descriptionText}
+`,
+      },
+    ],
+  });
+
+  const raw = response.choices[0]?.message?.content || "{}";
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Failed to parse macro estimate");
+  }
+
+  // Confidence blends vision clarity + food certainty
+  const confidence = Math.round(
+    Math.min(
+      100,
+      vision.clarity * (vision.foods.length > 0 ? 1 : 0.6)
+    )
+  );
 
   return {
     mealName: parsed.mealName || "Meal",
@@ -114,14 +178,13 @@ ${base64Image}
     protein: Number(parsed.protein) || 0,
     carbs: Number(parsed.carbs) || 0,
     fat: Number(parsed.fat) || 0,
-    foods: Array.isArray(parsed.foods) ? parsed.foods : [],
-    confidence: Math.max(0, Math.min(100, Number(parsed.confidence) || 0)),
+    foods: vision.foods,
+    confidence,
   };
 }
 
 /* ======================================================================
    POST /api/v1/nutrition/meal
-   Logs a confirmed meal (manual or AI-confirmed)
    ====================================================================== */
 
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
@@ -172,17 +235,13 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
   try {
-    const { text, localTimeIso } = req.body || {};
+    const { text } = req.body || {};
     if (!text) {
       return res.status(400).json({ ok: false, error: "Missing text" });
     }
 
-    const estimate = await estimateMealFromText(text, localTimeIso);
-
-    res.json({
-      ok: true,
-      ...estimate,
-    });
+    const estimate = await estimateMealFromText(text);
+    res.json({ ok: true, ...estimate });
   } catch (err: any) {
     console.error("AI text error", err);
     res.status(500).json({ ok: false, error: err.message });
@@ -191,9 +250,8 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 
 /* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-photo
-   - Compresses image
-   - Runs AI
-   - AUTO-LOGS meal
+   - Hybrid vision gate
+   - Auto-log with confidence guard
    ====================================================================== */
 
 nutritionRouter.post(
@@ -205,47 +263,40 @@ nutritionRouter.post(
         return res.status(400).json({ ok: false, error: "Missing photo" });
       }
 
-      const estimate = await estimateMealFromImage(
-        req.file.buffer,
-        req.body?.localTimeIso
-      );
+      const estimate = await estimateMealFromImage(req.file.buffer);
 
-      // ✅ Auto-log immediately
-      const meal: Omit<Meal, "userId"> = {
-        id: uuidv4(),
-        datetime: new Date().toISOString(),
-        label: req.body?.label || undefined,
-        items: [
-          {
-            name: estimate.mealName,
-            calories: estimate.calories,
-            protein: estimate.protein,
-            carbs: estimate.carbs,
-            fat: estimate.fat,
-          },
-        ],
-      };
+      const autoLogged = estimate.confidence >= 60;
 
-      addMealForUser(memoryStore.userId, meal);
+      if (autoLogged) {
+        const meal: Omit<Meal, "userId"> = {
+          id: uuidv4(),
+          datetime: new Date().toISOString(),
+          label: req.body?.label || undefined,
+          items: [
+            {
+              name: estimate.mealName,
+              calories: estimate.calories,
+              protein: estimate.protein,
+              carbs: estimate.carbs,
+              fat: estimate.fat,
+            },
+          ],
+        };
+
+        addMealForUser(memoryStore.userId, meal);
+      }
 
       return res.json({
         ok: true,
-        autoLogged: true,
+        autoLogged,
         ...estimate,
       });
     } catch (err: any) {
       console.error("AI photo error", err);
-      return res.status(500).json({
+      res.status(500).json({
         ok: false,
         error: err.message || "Failed to analyze photo",
       });
     }
   }
 );
-
-/* ======================================================================
-   History, Day Summary, Reset Day
-   (UNCHANGED — keep your existing implementations below)
-   ====================================================================== */
-
-// ⬇️ KEEP YOUR EXISTING history, summary, streak, reset routes here ⬇️
