@@ -1,204 +1,281 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
+import { v4 as uuidv4 } from "uuid";
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024 }, // 12MB
-});
+const nutritionRouter = Router();
+export { nutritionRouter };
+export default nutritionRouter;
 
-type NormalizedMealAI = {
-  mealName: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  foods: string[];
-  swaps: string[];
-  confidence: number; // 0..100
-  portionNotes: string;
-  explanation: string;
-};
+/* ======================================================================
+   Memory store (matches your pattern)
+   ====================================================================== */
+const memoryStore: any = (global as any).memoryStore || ((global as any).memoryStore = {});
+memoryStore.mealsByUser = memoryStore.mealsByUser || {};
 
-function clamp(n: number, min: number, max: number) {
-  if (!Number.isFinite(n)) return min;
-  return Math.min(max, Math.max(min, n));
+/* ======================================================================
+   Helpers
+   ====================================================================== */
+function errMessage(e: any) {
+  return e?.message || String(e);
 }
 
-function num(v: any): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : 0;
+function isoDateKey(d: Date) {
+  return new Date(d).toISOString().slice(0, 10);
 }
 
-function toStringArray(input: any): string[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((x) => {
-      if (typeof x === "string") return x.trim();
-      if (x && typeof x === "object") {
-        const s = x.name ?? x.food ?? x.item ?? x.title ?? x.label;
-        return s ? String(s).trim() : "";
-      }
-      return "";
-    })
-    .filter(Boolean);
-}
-
-/**
- * Normalize ANY AI output shape into the ONE shape the frontend expects.
- * Supports:
- *  - top-level fields
- *  - nested "normalized"
- *  - alternate keys like fats/fat, name/title/mealName, etc.
- */
-export function normalizeMealAI(raw: any): NormalizedMealAI {
-  const d = raw?.normalized ?? raw ?? {};
-
-  const mealName =
-    String(d.mealName ?? d.name ?? d.title ?? d.label ?? "Meal").trim() || "Meal";
-
-  const calories = num(d.calories ?? d.kcal ?? d.energy);
-  const protein = num(d.protein ?? d.proteins);
-  const carbs = num(d.carbs ?? d.carbohydrates);
-  const fat = num(d.fat ?? d.fats ?? d.lipids);
-
-  const foods = toStringArray(d.foods ?? d.items ?? d.ingredients);
-  const swaps = toStringArray(d.swaps ?? d.healthierSwaps ?? d.recommendations);
-
-  // confidence could be 0..1 or 0..100 or missing
-  let conf = Number(d.confidence ?? d.confidencePct ?? d.score ?? 0);
-  if (Number.isFinite(conf) && conf > 0 && conf <= 1) conf = conf * 100;
-  const confidence = clamp(conf, 0, 100);
-
-  const portionNotes = String(d.portionNotes ?? d.portion ?? d.notes ?? "").trim();
-  const explanation = String(d.explanation ?? d.reasoning ?? d.summary ?? "").trim();
-
-  return {
-    mealName,
-    calories,
-    protein,
-    carbs,
-    fat,
-    foods,
-    swaps,
-    confidence,
-    portionNotes,
-    explanation,
-  };
-}
-
-/**
- * Replace these with your real AI functions/services.
- * IMPORTANT: Return ANY raw shape — normalizeMealAI() will standardize it.
- */
-async function analyzeMealFromText(args: { shopifyCustomerId: string; text: string }) {
-  // TODO: wire to your OpenAI call or existing service
-  // Return your raw output here.
-  return {
-    mealName: "AI Meal",
-    calories: 500,
-    protein: 35,
-    carbs: 45,
-    fat: 18,
-    foods: ["Chicken bowl", "Rice", "Beans"],
-    swaps: ["Swap white rice → cauliflower rice", "Grill instead of fry"],
-    confidence: 78,
-    portionNotes: "Portion estimated from description.",
-    explanation: "Estimated based on common serving sizes.",
-  };
-}
-
-async function analyzeMealFromPhoto(args: {
-  shopifyCustomerId: string;
-  fileBuffer: Buffer;
-  fileMime: string;
-  fileName: string;
-}) {
-  // TODO: wire to your OpenAI vision call or existing service
-  // Return your raw output here.
-  return {
-    normalized: {
-      mealName: "AI Photo Meal",
-      calories: 620,
-      protein: 42,
-      carbs: 55,
-      fat: 22,
-      foods: [{ name: "Salmon" }, { name: "Quinoa" }, { name: "Broccoli" }],
-      swaps: ["Swap butter sauce → lemon + herbs", "Add extra veggies"],
-      confidence: 0.83, // supports 0..1 too
-      portionNotes: "Estimated by plate size and food type.",
-      explanation: "Photo suggests salmon + grain + veg plate.",
-    },
-  };
-}
-
+/** Pull customer id from query/body first, then header fallback */
 function getShopifyCustomerId(req: Request): string {
-  const q = (req.query.shopifyCustomerId as string) || "";
-  const b = (req.body && (req.body.shopifyCustomerId as string)) || "";
-  const cid = String(b || q || "").trim();
-  return cid;
+  const q = (req.query?.shopifyCustomerId as string) || "";
+  const b = (req.body as any)?.shopifyCustomerId || "";
+  const h = String(req.headers["x-shopify-customer-id"] || "");
+  return String(q || b || h || "").trim();
 }
 
-export const nutritionRouter = Router();
+function getMealsArrayForUser(cid: string) {
+  memoryStore.mealsByUser[cid] = memoryStore.mealsByUser[cid] || [];
+  return memoryStore.mealsByUser[cid] as any[];
+}
 
-/**
- * POST /api/v1/nutrition/ai/meal-from-text
- */
-nutritionRouter.post("/ai/meal-from-text", async (req: Request, res: Response) => {
+function setMealsArrayForUser(cid: string, meals: any[]) {
+  memoryStore.mealsByUser[cid] = Array.isArray(meals) ? meals : [];
+}
+
+function addMealForUser(cid: string, meal: any) {
+  const meals = getMealsArrayForUser(cid);
+  meals.push(meal);
+}
+
+/** Sum totals for a list of meals */
+function computeTotalsFromMeals(meals: any[]) {
+  return meals.reduce(
+    (acc: any, meal: any) => {
+      const items = Array.isArray(meal.items) ? meal.items : [];
+      for (const it of items) {
+        acc.calories += Number(it.calories || 0);
+        acc.protein += Number(it.protein || 0);
+        acc.carbs += Number(it.carbs || 0);
+        acc.fat += Number(it.fat || 0);
+      }
+      return acc;
+    },
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+}
+
+/** Dedupe meals for display/totals (prevents doubled recent meals + doubled macros) */
+function dedupeMeals(meals: any[]) {
+  const seen = new Set<string>();
+  const out: any[] = [];
+
+  for (const m of meals) {
+    const dt = String(m?.datetime || "");
+    const id = String(m?.id || "");
+
+    const first = m?.items?.[0] || {};
+    const key =
+      id ||
+      `${dt.slice(0, 19)}|${String(first?.name || "")}|${Number(first?.calories || 0)}|${String(m?.label || "")}`;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+
+  return out;
+}
+
+function getTargetsForUser(_cid: string) {
+  // keep whatever your app expects; safe defaults
+  return { calories: 0, protein: 0, carbs: 0, fat: 0 };
+}
+
+/* ======================================================================
+   ✅ GET /api/v1/nutrition/meals  (plural - what frontend is calling)
+   ✅ GET /api/v1/nutrition/meal   (singular legacy alias)
+   ====================================================================== */
+function handleGetMeals(req: Request, res: Response) {
+  const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    const text = String(req.body?.text ?? "").trim();
-
     if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
-    if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
 
-    const raw = await analyzeMealFromText({ shopifyCustomerId: cid, text });
-    const normalized = normalizeMealAI(raw);
+    const meals = getMealsArrayForUser(cid);
+    return res.json({ ok: true, meals: dedupeMeals(meals) });
+  } catch (err: any) {
+    console.error("[nutrition][meals GET] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
 
-    return res.json({ ok: true, normalized });
-  } catch (e: any) {
-    console.error("[nutrition/ai/meal-from-text]", e);
-    return res.status(500).json({ ok: false, error: "AI text analysis failed" });
+nutritionRouter.get("/meals", handleGetMeals);
+nutritionRouter.get("/meal", handleGetMeals);
+
+/* ======================================================================
+   ✅ POST /api/v1/nutrition/meals (plural)
+   ✅ POST /api/v1/nutrition/meal  (singular legacy)
+   ====================================================================== */
+function handlePostMeal(req: Request, res: Response) {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    const body: any = req.body || {};
+    const label = body.label ? String(body.label) : undefined;
+
+    // Accept either "items" array OR single macro fields
+    let items = Array.isArray(body.items) ? body.items : null;
+    if (!items || !items.length) {
+      items = [
+        {
+          name: String(body.name || body.mealName || "Meal"),
+          calories: Number(body.calories || 0),
+          protein: Number(body.protein || 0),
+          carbs: Number(body.carbs || 0),
+          fat: Number(body.fat || 0),
+        },
+      ];
+    }
+
+    if (!items.length) return res.status(400).json({ ok: false, error: "Missing items" });
+
+    const meal = {
+      id: uuidv4(),
+      datetime: new Date().toISOString(),
+      label,
+      items: items.map((it: any) => ({
+        name: String(it?.name || "Meal"),
+        calories: Number(it?.calories || 0),
+        protein: Number(it?.protein || 0),
+        carbs: Number(it?.carbs || 0),
+        fat: Number(it?.fat || 0),
+      })),
+    };
+
+    addMealForUser(cid, meal);
+    return res.status(201).json({ ok: true, meal });
+  } catch (err: any) {
+    console.error("[nutrition][meal POST] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+nutritionRouter.post("/meals", handlePostMeal);
+nutritionRouter.post("/meal", handlePostMeal);
+
+/* ======================================================================
+   ✅ DELETE /api/v1/nutrition/meals/:id (plural)
+   ✅ DELETE /api/v1/nutrition/meal/:id  (singular legacy)
+   ====================================================================== */
+function handleDeleteMeal(req: Request, res: Response) {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "Missing meal id" });
+
+    const meals = getMealsArrayForUser(cid);
+    const before = meals.length;
+
+    const next = meals.filter((m: any) => String(m?.id || "") !== id);
+    setMealsArrayForUser(cid, next);
+
+    const removed = before - next.length;
+    return res.json({ ok: true, id, removed });
+  } catch (err: any) {
+    console.error("[nutrition][meal DELETE] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+nutritionRouter.delete("/meals/:id", handleDeleteMeal);
+nutritionRouter.delete("/meal/:id", handleDeleteMeal);
+
+/* ======================================================================
+   ✅ GET /api/v1/nutrition/day-summary
+   ====================================================================== */
+nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    const meals = getMealsArrayForUser(cid);
+
+    // optional date param support (frontend sends date sometimes)
+    const dateStr = String(req.query.date || "").trim();
+    const dayKey = dateStr ? dateStr.slice(0, 10) : isoDateKey(new Date());
+
+    const todaysMealsRaw = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) === dayKey);
+    const todaysMeals = dedupeMeals(todaysMealsRaw);
+
+    const totals = computeTotalsFromMeals(todaysMeals);
+    const targets = getTargetsForUser(cid);
+
+    return res.json({
+      ok: true,
+      totals,
+      targets,
+      recentMeals: todaysMeals.slice(-8).reverse(),
+    });
+  } catch (err: any) {
+    console.error("[nutrition][day-summary] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-/**
- * POST /api/v1/nutrition/ai/meal-from-photo
- * Accepts multipart/form-data:
- *   - shopifyCustomerId
- *   - image OR photo (either works)
- */
-nutritionRouter.post(
-  "/ai/meal-from-photo",
-  upload.fields([
-    { name: "image", maxCount: 1 },
-    { name: "photo", maxCount: 1 },
-  ]),
-  async (req: Request, res: Response) => {
-    try {
-      const cid = getShopifyCustomerId(req);
-      if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+/* ======================================================================
+   ✅ GET /api/v1/nutrition/history
+   ====================================================================== */
+nutritionRouter.get("/history", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
 
-      const files = req.files as Record<string, Express.Multer.File[]> | undefined;
-      const file =
-        (files?.image && files.image[0]) ||
-        (files?.photo && files.photo[0]) ||
-        undefined;
+    const daysParam = Number(req.query.days || 7);
+    const days = Number.isFinite(daysParam) ? Math.max(1, Math.min(60, daysParam)) : 7;
 
-      if (!file) return res.status(400).json({ ok: false, error: "Missing photo file" });
+    const meals = getMealsArrayForUser(cid);
 
-      const raw = await analyzeMealFromPhoto({
-        shopifyCustomerId: cid,
-        fileBuffer: file.buffer,
-        fileMime: file.mimetype || "application/octet-stream",
-        fileName: file.originalname || "meal.jpg",
-      });
+    const out: Array<{ date: string; totals: any }> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = isoDateKey(d);
 
-      const normalized = normalizeMealAI(raw);
+      const dayMealsRaw = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) === key);
+      const dayMeals = dedupeMeals(dayMealsRaw);
 
-      return res.json({ ok: true, normalized });
-    } catch (e: any) {
-      console.error("[nutrition/ai/meal-from-photo]", e);
-      return res.status(500).json({ ok: false, error: "AI photo analysis failed" });
+      out.push({ date: key, totals: computeTotalsFromMeals(dayMeals) });
     }
+
+    return res.json({ ok: true, days: out });
+  } catch (err: any) {
+    console.error("[nutrition][history] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
   }
-);
+});
+
+/* ======================================================================
+   ✅ POST /api/v1/nutrition/day/reset
+   ====================================================================== */
+nutritionRouter.post("/day/reset", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    const meals = getMealsArrayForUser(cid);
+
+    const todayKey = isoDateKey(new Date());
+    const next = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) !== todayKey);
+    setMealsArrayForUser(cid, next);
+
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[nutrition][day-reset] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
