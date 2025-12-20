@@ -50,6 +50,13 @@ console.log("[nutrition] routes loaded (photo ai + swaps + explanation)", {
    Small helpers
    ====================================================================== */
 
+function getShopifyCustomerId(req: Request) {
+  const fromQuery = req.query.shopifyCustomerId;
+  const fromBody = (req.body as any)?.shopifyCustomerId;
+  const cid = String(fromQuery ?? fromBody ?? "").trim();
+  return cid || null;
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -70,20 +77,70 @@ function errMessage(err: any): string {
 
 // ✅ Robust JSON parsing (handles occasional extra text)
 function safeParseJson(text: string) {
-  // Fast path
   try {
     return JSON.parse(text);
   } catch {
-    // Try to extract the first {...} block
     const match = text.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
     throw new Error("Model returned non-JSON output");
   }
 }
 
+/** Returns YYYY-MM-DD for local UTC-based bucket */
+function isoDateKey(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Safely read meals array for a given user, regardless of your store shape */
+function getMealsArrayForUser(cid: string): any[] {
+  const ms: any = memoryStore as any;
+
+  // Preferred: mealsByUser[cid] = Meal[]
+  if (ms?.mealsByUser && Array.isArray(ms.mealsByUser[cid])) {
+    return ms.mealsByUser[cid];
+  }
+
+  // Fallback: mealsByUser is a Map
+  if (ms?.mealsByUser instanceof Map) {
+    const v = ms.mealsByUser.get(cid);
+    return Array.isArray(v) ? v : [];
+  }
+
+  // Fallback: single list (not ideal but prevents crash)
+  if (Array.isArray(ms?.meals)) return ms.meals;
+
+  return [];
+}
+
+/** Safely read targets for a given user, regardless of your store shape */
+function getTargetsForUser(cid: string) {
+  const ms: any = memoryStore as any;
+
+  if (ms?.targetsByUser && ms.targetsByUser[cid]) return ms.targetsByUser[cid];
+  if (ms?.targetsByUser instanceof Map) return ms.targetsByUser.get(cid);
+
+  return { calories: 0, protein: 0, carbs: 0, fat: 0 };
+}
+
+/** Sum totals for a list of meals */
+function computeTotalsFromMeals(meals: any[]) {
+  return meals.reduce(
+    (acc: any, meal: any) => {
+      const items = Array.isArray(meal.items) ? meal.items : [];
+      for (const it of items) {
+        acc.calories += Number(it.calories || 0);
+        acc.protein += Number(it.protein || 0);
+        acc.carbs += Number(it.carbs || 0);
+        acc.fat += Number(it.fat || 0);
+      }
+      return acc;
+    },
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+}
+
 /* ======================================================================
    STEP 1: Vision — Describe image (Vision model)
-   - Forces JSON output via response_format json_object
    ====================================================================== */
 
 async function describeMealImage(
@@ -96,7 +153,6 @@ async function describeMealImage(
 }> {
   const t0 = nowMs();
 
-  // ✅ Keep more detail to improve recognition + confidence stability
   const compressed = await sharp(imageBuffer)
     .resize({ width: PHOTO_MAX_WIDTH, withoutEnlargement: true })
     .jpeg({ quality: PHOTO_JPEG_QUALITY })
@@ -148,7 +204,9 @@ Rules:
       foods: Array.isArray(parsed.foods)
         ? parsed.foods.map((x: any) => String(x)).filter(Boolean)
         : [],
-      portionNotes: parsed.portionNotes ? String(parsed.portionNotes) : "unknown portions",
+      portionNotes: parsed.portionNotes
+        ? String(parsed.portionNotes)
+        : "unknown portions",
       clarity: clamp(Number(parsed.clarity) || 0, 0, 100),
     };
 
@@ -185,9 +243,7 @@ Rules:
 }
 
 /* ======================================================================
-   STEP 2: Reasoning — Estimate macros + swaps + explanation (production prompt)
-   - Forces JSON via response_format json_object
-   - Adds reasoningConfidence (0..100)
+   STEP 2: Reasoning — Estimate macros + swaps + explanation
    ====================================================================== */
 
 type PhotoAIResult = {
@@ -197,17 +253,14 @@ type PhotoAIResult = {
   carbs: number;
   fat: number;
 
-  // ✅ restored
   explanation: string;
   swaps: string[];
 
-  // diagnostics
   foods: string[];
-  visionClarity: number; // 0..100
-  reasoningConfidence: number; // 0..100
+  visionClarity: number;
+  reasoningConfidence: number;
 
-  // final blended confidence used by UI/autolog
-  confidence: number; // 0..100
+  confidence: number;
 };
 
 function normalizeSwaps(x: any): string[] {
@@ -221,7 +274,6 @@ function normalizeSwaps(x: any): string[] {
 function normalizeExplanation(x: any): string {
   if (!x) return "";
   const s = String(x).trim();
-  // keep it short-ish for UI
   return s.length > 600 ? s.slice(0, 600) + "…" : s;
 }
 
@@ -233,16 +285,10 @@ function computeBlendedConfidence(args: {
   const v = clamp(args.visionClarity, 0, 100);
   const r = clamp(args.reasoningConfidence, 0, 100);
 
-  // ✅ Weighted blend: vision matters, but reasoning prevents "obvious meals" from tanking
   let blended = Math.round(0.55 * v + 0.45 * r);
-
-  // ✅ Small boost if foods were actually identified
   if (args.foodsCount > 0) blended += 6;
-
-  // ✅ Small penalty if nothing identified (still allow some confidence, but lower)
   if (args.foodsCount === 0) blended -= 12;
 
-  // ✅ Stability guard rails (avoid silly lows on clear pics)
   if (v >= 75 && r >= 70) blended = Math.max(blended, 72);
   if (v >= 85 && r >= 80) blended = Math.max(blended, 80);
 
@@ -255,7 +301,6 @@ async function estimateMealFromImage(
 ): Promise<PhotoAIResult> {
   const t0 = nowMs();
 
-  // ---- Vision gate ----
   const vision = await describeMealImage(imageBuffer, reqId);
 
   const descriptionText = `
@@ -269,7 +314,6 @@ Photo clarity (0-100):
 ${vision.clarity}
 `.trim();
 
-  // ---- Production macro prompt (macros + explanation + swaps + reasoningConfidence) ----
   let raw = "{}";
   try {
     const response = await openai.chat.completions.create({
@@ -301,8 +345,8 @@ Rules:
 - mealName: short, user-friendly
 - calories/protein/carbs/fat: realistic totals for ONE meal
 - explanation: 1–3 sentences explaining what you assumed (portions / cooking method) and uncertainty
-- swaps: 2–5 healthier swaps OR improvements (simple, actionable). If already healthy, suggest optimizations (e.g., "add veggies", "swap sugary sauce for…")
-- reasoningConfidence: 0–100 (how confident you are in the macro estimate given the description)
+- swaps: 2–5 healthier swaps OR improvements (simple, actionable)
+- reasoningConfidence: 0–100
 
 ${descriptionText}
 `,
@@ -373,6 +417,7 @@ ${descriptionText}
 
 /* ======================================================================
    POST /api/v1/nutrition/meal
+   - NOW SAVES PER shopifyCustomerId
    ====================================================================== */
 
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
@@ -409,10 +454,17 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       })),
     };
 
-    addMealForUser(memoryStore.userId, meal);
+    const cid = getShopifyCustomerId(req);
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    addMealForUser(cid, meal);
 
     console.log("[nutrition][meal] logged", {
       reqId,
+      cid,
       label: meal.label,
       calories: meal.items?.[0]?.calories,
     });
@@ -425,9 +477,90 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 });
 
 /* ======================================================================
+   GET /api/v1/nutrition/day-summary
+   - USED BY TODAY SUMMARY RINGS/MACROS + RECENT MEALS UI
+   ====================================================================== */
+
+nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
+    }
+
+    const meals = getMealsArrayForUser(cid);
+    const todayKey = isoDateKey(new Date());
+
+    const todaysMeals = meals.filter(
+      (m: any) => String(m.datetime || "").slice(0, 10) === todayKey
+    );
+
+    const totals = computeTotalsFromMeals(todaysMeals);
+    const targets = getTargetsForUser(cid);
+
+    return res.json({
+      ok: true,
+      totals,
+      targets,
+      recentMeals: todaysMeals.slice(-8).reverse(),
+    });
+  } catch (err: any) {
+    console.error("[nutrition][day-summary] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ======================================================================
+   GET /api/v1/nutrition/history
+   - USED BY DAILY HISTORY + TRENDS UI
+   - RETURNS: { ok:true, days:[{date, totals}] }
+   ====================================================================== */
+
+nutritionRouter.get("/history", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
+    }
+
+    const daysParam = Number(req.query.days || 7);
+    const days = Number.isFinite(daysParam)
+      ? Math.max(1, Math.min(60, daysParam))
+      : 7;
+
+    const meals = getMealsArrayForUser(cid);
+
+    const out: Array<{ date: string; totals: any }> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = isoDateKey(d);
+
+      const dayMeals = meals.filter(
+        (m: any) => String(m.datetime || "").slice(0, 10) === key
+      );
+
+      out.push({
+        date: key,
+        totals: computeTotalsFromMeals(dayMeals),
+      });
+    }
+
+    return res.json({ ok: true, days: out });
+  } catch (err: any) {
+    console.error("[nutrition][history] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-text
-   - unchanged, but if your estimateMealFromText already returns swaps/explanation,
-     it will pass through as-is.
    ====================================================================== */
 
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
@@ -454,9 +587,7 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 
 /* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-photo
-   - Restores swaps + explanation
-   - Rebalanced confidence (vision + reasoningConfidence)
-   - Auto-log with confidence guard
+   - NOW AUTO-LOGS PER shopifyCustomerId (NOT memoryStore.userId)
    ====================================================================== */
 
 nutritionRouter.post(
@@ -469,6 +600,14 @@ nutritionRouter.post(
     try {
       if (!req.file?.buffer) {
         return res.status(400).json({ ok: false, error: "Missing photo" });
+      }
+
+      // ✅ Require customer id so autolog + UI stay consistent
+      const cid = getShopifyCustomerId(req);
+      if (!cid) {
+        return res
+          .status(400)
+          .json({ ok: false, error: "Missing shopifyCustomerId" });
       }
 
       const estimate = await estimateMealFromImage(req.file.buffer, reqId);
@@ -491,12 +630,14 @@ nutritionRouter.post(
           ],
         };
 
-        addMealForUser(memoryStore.userId, meal);
+        // ✅ FIX: store under the user’s Shopify customer id
+        addMealForUser(cid, meal);
       }
 
       console.log("[nutrition][ai][photo] ok", {
         reqId,
         ms: nowMs() - t0,
+        cid,
         autoLogged,
         confidence: estimate.confidence,
         visionClarity: estimate.visionClarity,
@@ -509,7 +650,6 @@ nutritionRouter.post(
         ok: true,
         autoLogged,
 
-        // ✅ UI expects these
         mealName: estimate.mealName,
         calories: estimate.calories,
         protein: estimate.protein,
@@ -520,7 +660,6 @@ nutritionRouter.post(
         swaps: estimate.swaps,
         explanation: estimate.explanation,
 
-        // ✅ optional extra diagnostics (safe for UI; remove if you want)
         visionClarity: estimate.visionClarity,
         reasoningConfidence: estimate.reasoningConfidence,
       });
@@ -534,7 +673,6 @@ nutritionRouter.post(
         msg,
       });
 
-      // ✅ Graceful UX fallback for parse problems
       if (
         msg.includes("Model returned non-JSON output") ||
         msg.includes("Vision model returned non-JSON output") ||
