@@ -86,7 +86,7 @@ function safeParseJson(text: string) {
   }
 }
 
-/** Returns YYYY-MM-DD for local UTC-based bucket */
+/** Returns YYYY-MM-DD for UTC-based bucket */
 function isoDateKey(d: Date) {
   return d.toISOString().slice(0, 10);
 }
@@ -110,6 +110,23 @@ function getMealsArrayForUser(cid: string): any[] {
   if (Array.isArray(ms?.meals)) return ms.meals;
 
   return [];
+}
+
+/** Safely overwrite meals array for a user (supports object or Map shapes) */
+function setMealsArrayForUser(cid: string, next: any[]) {
+  const ms: any = memoryStore as any;
+
+  if (ms?.mealsByUser && typeof ms.mealsByUser === "object" && !(ms.mealsByUser instanceof Map)) {
+    ms.mealsByUser[cid] = next;
+    return;
+  }
+  if (ms?.mealsByUser instanceof Map) {
+    ms.mealsByUser.set(cid, next);
+    return;
+  }
+
+  // last resort (single array store)
+  ms.meals = next;
 }
 
 /** Safely read targets for a given user, regardless of your store shape */
@@ -137,6 +154,28 @@ function computeTotalsFromMeals(meals: any[]) {
     },
     { calories: 0, protein: 0, carbs: 0, fat: 0 }
   );
+}
+
+/** Dedupe meals for display/totals (prevents doubled recent meals + doubled macros) */
+function dedupeMeals(meals: any[]) {
+  const seen = new Set<string>();
+  const out: any[] = [];
+
+  for (const m of meals) {
+    const dt = String(m?.datetime || "");
+    const id = String(m?.id || "");
+    const first = m?.items?.[0] || {};
+    const key =
+      id ||
+      `${dt.slice(0, 19)}|${String(first?.name || "")}|${Number(first?.calories || 0)}|${String(
+        m?.label || ""
+      )}`;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+  return out;
 }
 
 /* ======================================================================
@@ -204,9 +243,7 @@ Rules:
       foods: Array.isArray(parsed.foods)
         ? parsed.foods.map((x: any) => String(x)).filter(Boolean)
         : [],
-      portionNotes: parsed.portionNotes
-        ? String(parsed.portionNotes)
-        : "unknown portions",
+      portionNotes: parsed.portionNotes ? String(parsed.portionNotes) : "unknown portions",
       clarity: clamp(Number(parsed.clarity) || 0, 0, 100),
     };
 
@@ -305,7 +342,9 @@ async function estimateMealFromImage(
 
   const descriptionText = `
 Foods identified:
-${vision.foods.length ? vision.foods.map((f) => `- ${f}`).join("\n") : "- (none confidently identified)"}
+${
+  vision.foods.length ? vision.foods.map((f) => `- ${f}`).join("\n") : "- (none confidently identified)"
+}
 
 Portion notes:
 ${vision.portionNotes}
@@ -417,7 +456,7 @@ ${descriptionText}
 
 /* ======================================================================
    POST /api/v1/nutrition/meal
-   - NOW SAVES PER shopifyCustomerId
+   - Saves per shopifyCustomerId
    ====================================================================== */
 
 nutritionRouter.post("/meal", (req: Request, res: Response) => {
@@ -455,11 +494,9 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     };
 
     const cid = getShopifyCustomerId(req);
-    if (!cid)
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
 
+    // ✅ Add the meal for this customer
     addMealForUser(cid, meal);
 
     console.log("[nutrition][meal] logged", {
@@ -478,7 +515,8 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 
 /* ======================================================================
    GET /api/v1/nutrition/day-summary
-   - USED BY TODAY SUMMARY RINGS/MACROS + RECENT MEALS UI
+   - Used by Today Summary rings/macros + recent meals UI
+   - ✅ DEDUPES to prevent doubled meals/macros
    ====================================================================== */
 
 nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
@@ -486,17 +524,18 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   try {
     const cid = getShopifyCustomerId(req);
     if (!cid) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing shopifyCustomerId" });
+      return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
     }
 
     const meals = getMealsArrayForUser(cid);
     const todayKey = isoDateKey(new Date());
 
-    const todaysMeals = meals.filter(
+    const todaysMealsRaw = meals.filter(
       (m: any) => String(m.datetime || "").slice(0, 10) === todayKey
     );
+
+    // ✅ fix doubled meals/macros (dedupe)
+    const todaysMeals = dedupeMeals(todaysMealsRaw);
 
     const totals = computeTotalsFromMeals(todaysMeals);
     const targets = getTargetsForUser(cid);
@@ -515,7 +554,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
 
 /* ======================================================================
    GET /api/v1/nutrition/history
-   - USED BY DAILY HISTORY + TRENDS UI
+   - Used by Daily History + Trends UI
    - RETURNS: { ok:true, days:[{date, totals}] }
    ====================================================================== */
 
@@ -524,15 +563,11 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
   try {
     const cid = getShopifyCustomerId(req);
     if (!cid) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing shopifyCustomerId" });
+      return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
     }
 
     const daysParam = Number(req.query.days || 7);
-    const days = Number.isFinite(daysParam)
-      ? Math.max(1, Math.min(60, daysParam))
-      : 7;
+    const days = Number.isFinite(daysParam) ? Math.max(1, Math.min(60, daysParam)) : 7;
 
     const meals = getMealsArrayForUser(cid);
 
@@ -542,9 +577,8 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       d.setDate(d.getDate() - i);
       const key = isoDateKey(d);
 
-      const dayMeals = meals.filter(
-        (m: any) => String(m.datetime || "").slice(0, 10) === key
-      );
+      const dayMealsRaw = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) === key);
+      const dayMeals = dedupeMeals(dayMealsRaw);
 
       out.push({
         date: key,
@@ -555,6 +589,38 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
     return res.json({ ok: true, days: out });
   } catch (err: any) {
     console.error("[nutrition][history] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ======================================================================
+   POST /api/v1/nutrition/day/reset
+   - ✅ Makes “Reset Day” button work
+   - Clears meals for today (or for ?date=YYYY-MM-DD)
+   ====================================================================== */
+
+nutritionRouter.post("/day/reset", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid) {
+      return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    }
+
+    const dateParam = String(req.query.date || (req.body as any)?.date || "").trim();
+    const key = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : isoDateKey(new Date());
+
+    const meals = getMealsArrayForUser(cid);
+    const before = meals.length;
+
+    const next = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) !== key);
+    setMealsArrayForUser(cid, next);
+
+    console.log("[nutrition][day-reset] ok", { reqId, cid, date: key, before, after: next.length });
+
+    return res.json({ ok: true, date: key, removed: before - next.length });
+  } catch (err: any) {
+    console.error("[nutrition][day-reset] error", { reqId, msg: errMessage(err) });
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -575,19 +641,22 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 
     console.log("[nutrition][ai][text] ok", { reqId });
 
-    res.json({ ok: true, ...estimate });
+    // ✅ fixed: spread estimate
+    return res.json({ ok: true, ...estimate });
   } catch (err: any) {
     console.error("[nutrition][ai][text] error", {
       reqId,
       msg: errMessage(err),
     });
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
 /* ======================================================================
    POST /api/v1/nutrition/ai/meal-from-photo
-   - NOW AUTO-LOGS PER shopifyCustomerId (NOT memoryStore.userId)
+   - Requires shopifyCustomerId (keeps autolog consistent)
+   - Auto-logs if confidence >= threshold
+   - Returns { ok, autoLogged, ...macros, swaps, explanation }
    ====================================================================== */
 
 nutritionRouter.post(
@@ -602,12 +671,9 @@ nutritionRouter.post(
         return res.status(400).json({ ok: false, error: "Missing photo" });
       }
 
-      // ✅ Require customer id so autolog + UI stay consistent
       const cid = getShopifyCustomerId(req);
       if (!cid) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "Missing shopifyCustomerId" });
+        return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
       }
 
       const estimate = await estimateMealFromImage(req.file.buffer, reqId);
@@ -618,7 +684,7 @@ nutritionRouter.post(
         const meal: Omit<Meal, "userId"> = {
           id: uuidv4(),
           datetime: new Date().toISOString(),
-          label: req.body?.label || undefined,
+          label: (req.body as any)?.label || undefined,
           items: [
             {
               name: estimate.mealName,
@@ -630,7 +696,6 @@ nutritionRouter.post(
           ],
         };
 
-        // ✅ FIX: store under the user’s Shopify customer id
         addMealForUser(cid, meal);
       }
 
@@ -664,32 +729,12 @@ nutritionRouter.post(
         reasoningConfidence: estimate.reasoningConfidence,
       });
     } catch (err: any) {
-      const msg = errMessage(err);
-
       console.error("[nutrition][ai][photo] error", {
         reqId,
-        ms: nowMs() - t0,
         status: errStatus(err),
-        msg,
+        msg: errMessage(err),
       });
-
-      if (
-        msg.includes("Model returned non-JSON output") ||
-        msg.includes("Vision model returned non-JSON output") ||
-        msg.toLowerCase().includes("non-json")
-      ) {
-        return res.status(200).json({
-          ok: false,
-          fallback: true,
-          error:
-            "We couldn’t confidently read this photo. Try a clearer photo (good lighting, closer crop) or use Ask AI (text).",
-        });
-      }
-
-      return res.status(500).json({
-        ok: false,
-        error: msg || "Failed to analyze photo",
-      });
+      return res.status(500).json({ ok: false, error: err.message });
     }
   }
 );
