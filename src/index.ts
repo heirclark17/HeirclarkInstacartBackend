@@ -14,7 +14,7 @@ import {
 
 // Calorie / nutrition feature routers
 import { mealsRouter } from "./routes/meals";
-import nutritionRouter from "./routes/nutrition";
+import { nutritionRouter } from "./routes/nutrition";
 import { hydrationRouter } from "./routes/hydration";
 import { weightRouter } from "./routes/weight";
 
