@@ -1,22 +1,23 @@
+// src/routes/nutrition.ts
 import { Router, Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
 import sharp from "sharp";
 import OpenAI from "openai";
 
-/** NOTE:
- * This file keeps your existing behavior:
- * - POST /meal logs a meal
- * - GET /day-summary returns { totals, targets, recentMeals } and dedupes to prevent doubling
- * - GET /history returns day totals
- * - POST /day/reset clears today’s meals
+/**
+ * Keeps existing behavior:
+ * - POST   /meal            logs a meal
+ * - DELETE /meal/:id        deletes a meal
+ * - GET    /day-summary     returns { totals, targets, recentMeals }
+ * - GET    /history         returns day totals for N days
+ * - POST   /day/reset       clears today's meals
+ * - POST   /ai/meal-from-text
+ * - POST   /ai/meal-from-photo (NEVER auto-logs)
  *
- * NEW REQUIREMENTS ADDED:
- * ✅ AI photo endpoint NEVER auto-logs (user must Confirm & Log)
- * ✅ DELETE /meal/:id removes a meal and updates macro totals
- *
- * IMPORTANT FIX:
- * ✅ Exports BOTH a named router and a default export to satisfy imports.
+ * Fixes:
+ * - ✅ Adds GET /meals (your frontend has been calling this)
+ * - ✅ Exports BOTH named + default router (prevents TS import mismatch)
  */
 
 const nutritionRouter = Router();
@@ -28,8 +29,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 /* ======================================================================
    Memory store (existing pattern)
    ====================================================================== */
-const memoryStore: any = (global as any).memoryStore || ((global as any).memoryStore = {});
+const memoryStore: any =
+  (global as any).memoryStore || ((global as any).memoryStore = {});
 memoryStore.mealsByUser = memoryStore.mealsByUser || {};
+memoryStore.targetsByUser = memoryStore.targetsByUser || {}; // optional
 
 /* ======================================================================
    Helpers
@@ -85,7 +88,12 @@ function computeTotalsFromMeals(meals: any[]) {
   );
 }
 
-/** Dedupe meals for display/totals (prevents doubled recent meals + doubled macros) */
+/**
+ * Dedupe meals for display/totals (prevents doubled recent meals + doubled macros).
+ * Uses:
+ * - id if present (preferred)
+ * - otherwise a stable signature based on datetime + first item
+ */
 function dedupeMeals(meals: any[]) {
   const seen = new Set<string>();
   const out: any[] = [];
@@ -96,7 +104,9 @@ function dedupeMeals(meals: any[]) {
     const first = m?.items?.[0] || {};
     const key =
       id ||
-      `${dt.slice(0, 19)}|${String(first?.name || "")}|${Number(first?.calories || 0)}|${String(m?.label || "")}`;
+      `${dt.slice(0, 19)}|${String(first?.name || "")}|${Number(
+        first?.calories || 0
+      )}|${String(m?.label || "")}`;
 
     if (seen.has(key)) continue;
     seen.add(key);
@@ -105,14 +115,22 @@ function dedupeMeals(meals: any[]) {
   return out;
 }
 
-/** Targets (keep your existing pattern; adjust if you already store targets elsewhere) */
-function getTargetsForUser(_cid: string) {
-  // If you already have per-user targets, return those here.
+/** Targets (keep your existing pattern; swap in your real per-user targets if you have them) */
+function getTargetsForUser(cid: string) {
+  const t = memoryStore.targetsByUser?.[cid];
+  if (t && typeof t === "object") {
+    return {
+      calories: Number(t.calories) || 2200,
+      protein: Number(t.protein) || 190,
+      carbs: Number(t.carbs) || 190,
+      fat: Number(t.fat) || 60,
+    };
+  }
   return { calories: 2200, protein: 190, carbs: 190, fat: 60 };
 }
 
 /* ======================================================================
-   OpenAI setup (existing)
+   OpenAI setup
    ====================================================================== */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -130,21 +148,80 @@ function safeParseJson(text: string) {
 }
 
 /* ======================================================================
-   AI: meal-from-text (keeps your behavior)
+   GET /api/v1/nutrition/meals   ✅ (missing route that caused your 404s)
+   - Optional query:
+     - days=N (default 30, max 90)
+     - date=YYYY-MM-DD (returns only that day)
+     - today=1 (shortcut for today only)
+   ====================================================================== */
+nutritionRouter.get("/meals", (req: Request, res: Response) => {
+  const reqId = uuidv4();
+  try {
+    const cid = getShopifyCustomerId(req);
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
+
+    const mealsAll = getMealsArrayForUser(cid);
+
+    const date = String(req.query.date || "").trim();
+    const today = String(req.query.today || "").trim() === "1";
+    const daysParam = Number(req.query.days || 30);
+    const days = Number.isFinite(daysParam)
+      ? Math.max(1, Math.min(90, daysParam))
+      : 30;
+
+    let filtered = mealsAll;
+
+    if (date) {
+      filtered = mealsAll.filter(
+        (m: any) => String(m?.datetime || "").slice(0, 10) === date
+      );
+    } else if (today) {
+      const key = isoDateKey(new Date());
+      filtered = mealsAll.filter(
+        (m: any) => String(m?.datetime || "").slice(0, 10) === key
+      );
+    } else {
+      // last N days
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - (days - 1));
+      const cutoffKey = isoDateKey(cutoff);
+
+      filtered = mealsAll.filter((m: any) => {
+        const k = String(m?.datetime || "").slice(0, 10);
+        return k >= cutoffKey;
+      });
+    }
+
+    const meals = dedupeMeals(filtered);
+    return res.json({ ok: true, meals });
+  } catch (err: any) {
+    console.error("[nutrition][meals] error", { reqId, msg: errMessage(err) });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ======================================================================
+   AI: meal-from-text
    ====================================================================== */
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const { text } = req.body || {};
-    if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
+    if (!text)
+      return res.status(400).json({ ok: false, error: "Missing text" });
 
-    // NOTE: if you already use a separate service, keep it — this is a safe inline fallback
     const prompt = [
       "You are a nutrition estimator.",
-      "Return ONLY valid JSON with: label, name, calories, protein, carbs, fat.",
+      "Return ONLY valid JSON with keys: label, name, calories, protein, carbs, fat.",
       "User meal description:",
       String(text),
     ].join("\n");
@@ -181,15 +258,11 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
    ✅ Accepts multipart field "image" OR "photo" (supports both old/new JS)
    ====================================================================== */
 nutritionRouter.post("/ai/meal-from-photo", (req: Request, res: Response) => {
-  // We need to support either field name.
-  // We'll try "image" first, then "photo".
   const tryImage = upload.single("image");
   const tryPhoto = upload.single("photo");
 
   tryImage(req as any, res as any, (err1: any) => {
-    if (!err1 && (req as any).file?.buffer) {
-      return handlePhoto(req, res);
-    }
+    if (!err1 && (req as any).file?.buffer) return handlePhoto(req, res);
 
     tryPhoto(req as any, res as any, (err2: any) => {
       if (err2) return res.status(400).json({ ok: false, error: err2.message });
@@ -204,19 +277,21 @@ async function handlePhoto(req: Request, res: Response) {
 
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const file = (req as any).file;
-    if (!file?.buffer) return res.status(400).json({ ok: false, error: "Missing image/photo" });
+    if (!file?.buffer)
+      return res.status(400).json({ ok: false, error: "Missing image/photo" });
 
-    // preprocess image (helps vision)
     const processed = await sharp(file.buffer)
       .rotate()
       .resize({ width: 1024, withoutEnlargement: true })
       .jpeg({ quality: 82 })
       .toBuffer();
 
-    // vision: describe foods/portion
     const visionPrompt = [
       "Analyze this meal photo.",
       "Return ONLY valid JSON with keys:",
@@ -233,8 +308,15 @@ async function handlePhoto(req: Request, res: Response) {
         { role: "user", content: visionPrompt },
         {
           role: "user",
-          // @ts-ignore (OpenAI SDK image content typing varies by version)
-          content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${processed.toString("base64")}` } }],
+          // @ts-ignore
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${processed.toString("base64")}`,
+              },
+            },
+          ],
         },
       ],
     });
@@ -242,11 +324,12 @@ async function handlePhoto(req: Request, res: Response) {
     const visionRaw = vision.choices?.[0]?.message?.content || "{}";
     const visionParsed = safeParseJson(visionRaw);
 
-    const foods = Array.isArray(visionParsed.foods) ? visionParsed.foods.map(String) : [];
+    const foods = Array.isArray(visionParsed.foods)
+      ? visionParsed.foods.map(String)
+      : [];
     const portionNotes = String(visionParsed.portionNotes || "");
     const clarity = Math.max(0, Math.min(100, Number(visionParsed.clarity) || 0));
 
-    // macro estimation from foods
     const macroPrompt = [
       "Estimate macros from foods list.",
       "Return ONLY JSON with keys: { name, calories, protein, carbs, fat, confidence, swaps, explanation }",
@@ -274,7 +357,10 @@ async function handlePhoto(req: Request, res: Response) {
       portionNotes,
       swaps: Array.isArray(macroParsed.swaps) ? macroParsed.swaps.map(String) : [],
       explanation: String(macroParsed.explanation || ""),
-      confidence: Math.max(0, Math.min(100, Number(macroParsed.confidence) || 0)),
+      confidence: Math.max(
+        0,
+        Math.min(100, Number(macroParsed.confidence) || 0)
+      ),
       meta: { source: "ai_photo", clarity, autoLogged: false },
     };
 
@@ -302,7 +388,10 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const body: any = req.body || {};
     const label = body.label ? String(body.label) : undefined;
@@ -310,7 +399,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     // Accept either "items" array or single macro fields
     let items = Array.isArray(body.items) ? body.items : null;
     if (!items || !items.length) {
-      // fallback to single
       items = [
         {
           name: String(body.name || "Meal"),
@@ -322,7 +410,8 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       ];
     }
 
-    if (!items.length) return res.status(400).json({ ok: false, error: "Missing items" });
+    if (!items.length)
+      return res.status(400).json({ ok: false, error: "Missing items" });
 
     const meal = {
       id: uuidv4(),
@@ -338,7 +427,6 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
     };
 
     addMealForUser(cid, meal);
-
     return res.status(201).json({ ok: true, meal });
   } catch (err: any) {
     console.error("[nutrition][meal] error", { reqId, msg: errMessage(err) });
@@ -347,13 +435,16 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
 });
 
 /* ======================================================================
-   ✅ NEW: DELETE /api/v1/nutrition/meal/:id
+   DELETE /api/v1/nutrition/meal/:id
    ====================================================================== */
 nutritionRouter.delete("/meal/:id", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ ok: false, error: "Missing meal id" });
@@ -379,12 +470,17 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const meals = getMealsArrayForUser(cid);
     const todayKey = isoDateKey(new Date());
 
-    const todaysMealsRaw = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) === todayKey);
+    const todaysMealsRaw = meals.filter(
+      (m: any) => String(m.datetime || "").slice(0, 10) === todayKey
+    );
     const todaysMeals = dedupeMeals(todaysMealsRaw);
 
     const totals = computeTotalsFromMeals(todaysMeals);
@@ -404,12 +500,16 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
 
 /* ======================================================================
    GET /api/v1/nutrition/history
+   - returns: { ok: true, days: [{ date, totals }] }
    ====================================================================== */
 nutritionRouter.get("/history", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const daysParam = Number(req.query.days || 7);
     const days = Number.isFinite(daysParam) ? Math.max(1, Math.min(60, daysParam)) : 7;
@@ -422,7 +522,9 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       d.setDate(d.getDate() - i);
       const key = isoDateKey(d);
 
-      const dayMealsRaw = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) === key);
+      const dayMealsRaw = meals.filter(
+        (m: any) => String(m.datetime || "").slice(0, 10) === key
+      );
       const dayMeals = dedupeMeals(dayMealsRaw);
 
       out.push({ date: key, totals: computeTotalsFromMeals(dayMeals) });
@@ -442,12 +544,17 @@ nutritionRouter.post("/day/reset", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const meals = getMealsArrayForUser(cid);
     const todayKey = isoDateKey(new Date());
 
-    const next = meals.filter((m: any) => String(m.datetime || "").slice(0, 10) !== todayKey);
+    const next = meals.filter(
+      (m: any) => String(m.datetime || "").slice(0, 10) !== todayKey
+    );
     setMealsArrayForUser(cid, next);
 
     return res.json({ ok: true });
