@@ -44,16 +44,28 @@ const upload = multer({
 });
 
 // Helper type so TS knows about req.file
-type MulterRequest = Request & { file?: any };
+type MulterRequest = Request & { file?: Express.Multer.File };
 
 // ======================================================================
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
 // ======================================================================
 
-// ✅ CORS
+// ✅ CORS — allow Shopify storefront + local dev
+const allowlist = new Set<string>([
+  "https://heirclark.com",
+  "https://www.heirclark.com",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+]);
+
 app.use(
   cors({
-    origin: true, // (works, but you can lock down later)
+    origin: (origin, cb) => {
+      // Allow server-to-server/no-origin requests
+      if (!origin) return cb(null, true);
+      if (allowlist.has(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked: ${origin}`));
+    },
     methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
     allowedHeaders: [
       "Content-Type",
@@ -304,37 +316,24 @@ Respond ONLY as valid JSON with this exact shape:
 //          AI PHOTO ROUTES (aliases to match your frontend JS)
 // ======================================================================
 
+// ✅ Supports BOTH field names ("image" and "photo") in case your JS changes
+const uploadImage = upload.single("image");
+const uploadPhoto = upload.single("photo");
+
 // ✅ Your existing route (keep)
-app.post(
-  "/api/ai/guess-nutrition-from-photo",
-  upload.single("image"),
-  handleGuessNutritionFromPhoto
-);
+app.post("/api/ai/guess-nutrition-from-photo", uploadImage, handleGuessNutritionFromPhoto);
 
 // ✅ Add aliases that your JS is calling (prevents 404)
-app.post(
-  "/api/v1/nutrition/ai/meal-from-photo",
-  upload.single("image"),
-  handleGuessNutritionFromPhoto
-);
+app.post("/api/v1/nutrition/ai/meal-from-photo", uploadImage, handleGuessNutritionFromPhoto);
+app.post("/api/v1/nutrition/ai/photo", uploadImage, handleGuessNutritionFromPhoto);
+app.post("/api/v1/nutrition/ai/photo-estimate", uploadImage, handleGuessNutritionFromPhoto);
+app.post("/api/v1/ai/meal-photo", uploadImage, handleGuessNutritionFromPhoto);
 
-app.post(
-  "/api/v1/nutrition/ai/photo",
-  upload.single("image"),
-  handleGuessNutritionFromPhoto
-);
-
-app.post(
-  "/api/v1/nutrition/ai/photo-estimate",
-  upload.single("image"),
-  handleGuessNutritionFromPhoto
-);
-
-app.post(
-  "/api/v1/ai/meal-photo",
-  upload.single("image"),
-  handleGuessNutritionFromPhoto
-);
+// Optional extra safety: accept "photo" field too
+app.post("/api/v1/nutrition/ai/meal-from-photo", uploadPhoto, handleGuessNutritionFromPhoto);
+app.post("/api/v1/nutrition/ai/photo", uploadPhoto, handleGuessNutritionFromPhoto);
+app.post("/api/v1/nutrition/ai/photo-estimate", uploadPhoto, handleGuessNutritionFromPhoto);
+app.post("/api/v1/ai/meal-photo", uploadPhoto, handleGuessNutritionFromPhoto);
 
 // ======================================================================
 //          (REST OF YOUR EXISTING OPENAI MEAL PLAN LOGIC)
