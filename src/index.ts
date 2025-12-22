@@ -33,18 +33,11 @@ import { healthBridgeRouter } from "./routes/healthBridge";
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000); // 25s
-
-// Multer instance for in-memory file uploads
+// Multer instance for in-memory file uploads (used for body-scan only here)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB
 });
-
-// Helper type so TS knows about req.file
-type MulterRequest = Request & { file?: Express.Multer.File };
 
 // ======================================================================
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
@@ -127,222 +120,19 @@ const bodyScanUpload = upload.fields([
 app.use("/api/v1/body-scan", bodyScanUpload, bodyScanRouter);
 
 // ======================================================================
-//                         OPENAI HELPERS
-// ======================================================================
-
-function fetchWithTimeout(
-  url: string,
-  options: any,
-  timeoutMs: number
-): Promise<globalThis.Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-
-  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
-    clearTimeout(id)
-  );
-}
-
-// ======================================================================
-//      AI PHOTO → NUTRITION HANDLER (shared by multiple route aliases)
-// ======================================================================
-
-async function handleGuessNutritionFromPhoto(req: MulterRequest, res: Response) {
-  try {
-    if (!OPENAI_API_KEY) {
-      console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
-      return res.status(500).json({
-        ok: false,
-        error: "OPENAI_API_KEY is not configured",
-      });
-    }
-
-    if (!req.file || !req.file.buffer) {
-      return res.status(400).json({
-        ok: false,
-        error: "Image file is required (field name: 'image' or 'photo')",
-      });
-    }
-
-    const mimeType = req.file.mimetype || "image/jpeg";
-    const base64 = req.file.buffer.toString("base64");
-
-    const systemPrompt = `
-You are a nutrition assistant for a calorie tracking app.
-
-Given a single food photo, you must:
-1. Infer a short human-readable meal name.
-2. Estimate total calories, protein (g), carbs (g), and fat (g) for the plate in the photo.
-3. Provide a confidence score from 0–100 (where 100 means very confident).
-4. Break down the plate into a list of component foods with approximate macros.
-5. Suggest 1–3 realistic, healthier swaps.
-
-Respond ONLY as valid JSON with this exact shape:
-
-{
-  "mealName": string,
-  "calories": number,
-  "protein": number,
-  "carbs": number,
-  "fats": number,
-  "confidence": number,
-  "foods": [
-    { "name": string, "calories": number, "protein": number, "carbs": number, "fats": number }
-  ],
-  "swaps": string[],
-  "explanation": string
-}
-`.trim();
-
-    const body = {
-      model: OPENAI_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Estimate the nutrition for this meal photo." },
-            {
-              type: "image_url",
-              image_url: { url: `data:${mimeType};base64,${base64}` },
-            },
-          ],
-        },
-      ],
-    };
-
-    const openaiResp = await fetchWithTimeout(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          Accept: "application/json",
-        },
-        body: JSON.stringify(body),
-      },
-      OPENAI_TIMEOUT_MS
-    );
-
-    const json = await openaiResp.json();
-
-    if (!openaiResp.ok) {
-      console.error("OpenAI error:", openaiResp.status, json);
-      return res.status(500).json({
-        ok: false,
-        error:
-          json?.error?.message ||
-          `OpenAI API error (status ${openaiResp.status})`,
-      });
-    }
-
-    const rawContent = json?.choices?.[0]?.message?.content;
-    if (typeof rawContent !== "string") {
-      console.error("Unexpected OpenAI content:", rawContent);
-      return res.status(500).json({
-        ok: false,
-        error: "Unexpected OpenAI response format",
-      });
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawContent);
-    } catch {
-      console.error("Failed to parse OpenAI JSON content:", rawContent);
-      return res.status(500).json({
-        ok: false,
-        error: "Failed to parse AI nutrition JSON",
-        raw: rawContent,
-      });
-    }
-
-    const mealName =
-      typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
-
-    const calories = Number(parsed.calories) || 0;
-    const protein = Number(parsed.protein) || 0;
-    const carbs = Number(parsed.carbs) || 0;
-    const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
-
-    const confidence = Math.max(
-      0,
-      Math.min(100, Number(parsed.confidence) || 0)
-    );
-
-    const foods = Array.isArray(parsed.foods)
-      ? parsed.foods
-          .map((f: any) => ({
-            name: String(f.name || "").trim() || "Food item",
-            calories: Number(f.calories) || 0,
-            protein: Number(f.protein) || 0,
-            carbs: Number(f.carbs) || 0,
-            fats: Number(f.fats ?? f.fat ?? 0) || 0,
-          }))
-          .filter((f: any) => f.name)
-      : [];
-
-    const swaps = Array.isArray(parsed.swaps)
-      ? parsed.swaps.map((s: any) => String(s)).filter(Boolean)
-      : [];
-
-    const explanation =
-      typeof parsed.explanation === "string" ? parsed.explanation : "";
-
-    return res.status(200).json({
-      ok: true,
-      mealName,
-      calories,
-      protein,
-      carbs,
-      fats,
-      confidence,
-      foods,
-      swaps,
-      explanation,
-    });
-  } catch (err: any) {
-    console.error("AI nutrition estimation failed:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || "AI nutrition estimation failed",
-    });
-  }
-}
-
-// ======================================================================
-//          AI PHOTO ROUTES (aliases to match your frontend JS)
-// ======================================================================
-
-// ✅ Supports BOTH field names ("image" and "photo") in case your JS changes
-const uploadImage = upload.single("image");
-const uploadPhoto = upload.single("photo");
-
-// ✅ Your existing route (keep)
-app.post("/api/ai/guess-nutrition-from-photo", uploadImage, handleGuessNutritionFromPhoto);
-
-// ✅ Add aliases that your JS is calling (prevents 404)
-app.post("/api/v1/nutrition/ai/meal-from-photo", uploadImage, handleGuessNutritionFromPhoto);
-app.post("/api/v1/nutrition/ai/photo", uploadImage, handleGuessNutritionFromPhoto);
-app.post("/api/v1/nutrition/ai/photo-estimate", uploadImage, handleGuessNutritionFromPhoto);
-app.post("/api/v1/ai/meal-photo", uploadImage, handleGuessNutritionFromPhoto);
-
-// Optional extra safety: accept "photo" field too
-app.post("/api/v1/nutrition/ai/meal-from-photo", uploadPhoto, handleGuessNutritionFromPhoto);
-app.post("/api/v1/nutrition/ai/photo", uploadPhoto, handleGuessNutritionFromPhoto);
-app.post("/api/v1/nutrition/ai/photo-estimate", uploadPhoto, handleGuessNutritionFromPhoto);
-app.post("/api/v1/ai/meal-photo", uploadPhoto, handleGuessNutritionFromPhoto);
-
-// ======================================================================
 //          (REST OF YOUR EXISTING OPENAI MEAL PLAN LOGIC)
 // ======================================================================
+// NOTE: Leaving your existing meal-planner logic in place.
+// If you had additional endpoints below in your real file, keep them here.
+// (Your pasted file shows only the helper payload builder — not mounted routes.)
 
 async function callOpenAiMealPlan(
   constraints: UserConstraints,
   pantry?: string[]
 ) {
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
   if (!OPENAI_API_KEY) {
     console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
     throw new Error("OPENAI_API_KEY is not configured");
@@ -497,6 +287,16 @@ app.use((req: Request, res: Response) => {
 // ======================================================================
 
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  // ✅ Convert Multer “unexpected field” and other multer errors to 400
+  if (err?.name === "MulterError") {
+    return res.status(400).json({
+      ok: false,
+      error: err.message || "Upload error",
+      field: err.field,
+      code: err.code,
+    });
+  }
+
   console.error("Unhandled error:", err);
   res.status(500).json({
     ok: false,
