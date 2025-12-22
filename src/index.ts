@@ -50,18 +50,22 @@ type MulterRequest = Request & { file?: any };
 //                     CORE MIDDLEWARE (CORS, LOGGING, BODY)
 // ======================================================================
 
-// ✅ CORS: Accept + Content-Type
-// origin:true is fine for now; later lock to your Shopify domain
+// ✅ CORS
 app.use(
   cors({
-    origin: true,
+    origin: true, // (works, but you can lock down later)
     methods: ["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "X-Shopify-Customer-Id",
+    ],
     credentials: true,
   })
 );
 
-// ✅ Preflight
+// ✅ Preflight (important for multipart uploads)
 app.options("*", cors());
 
 // Logging
@@ -121,39 +125,37 @@ function fetchWithTimeout(
 ): Promise<globalThis.Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
+
   return fetch(url, { ...options, signal: controller.signal }).finally(() =>
     clearTimeout(id)
   );
 }
 
 // ======================================================================
-//          AI PHOTO → NUTRITION ENDPOINT (Guess from Food Photo)
+//      AI PHOTO → NUTRITION HANDLER (shared by multiple route aliases)
 // ======================================================================
 
-app.post(
-  "/api/ai/guess-nutrition-from-photo",
-  upload.single("image"),
-  async (req: MulterRequest, res: Response) => {
-    try {
-      if (!OPENAI_API_KEY) {
-        console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
-        return res.status(500).json({
-          ok: false,
-          error: "OPENAI_API_KEY is not configured",
-        });
-      }
+async function handleGuessNutritionFromPhoto(req: MulterRequest, res: Response) {
+  try {
+    if (!OPENAI_API_KEY) {
+      console.warn("OPENAI_API_KEY is not set – cannot call OpenAI.");
+      return res.status(500).json({
+        ok: false,
+        error: "OPENAI_API_KEY is not configured",
+      });
+    }
 
-      if (!req.file || !req.file.buffer) {
-        return res.status(400).json({
-          ok: false,
-          error: "Image file is required (field name: 'image')",
-        });
-      }
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        ok: false,
+        error: "Image file is required (field name: 'image' or 'photo')",
+      });
+    }
 
-      const mimeType = req.file.mimetype || "image/jpeg";
-      const base64 = req.file.buffer.toString("base64");
+    const mimeType = req.file.mimetype || "image/jpeg";
+    const base64 = req.file.buffer.toString("base64");
 
-      const systemPrompt = `
+    const systemPrompt = `
 You are a nutrition assistant for a calorie tracking app.
 
 Given a single food photo, you must:
@@ -180,122 +182,158 @@ Respond ONLY as valid JSON with this exact shape:
 }
 `.trim();
 
-      const body = {
-        model: OPENAI_MODEL,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Estimate the nutrition for this meal photo." },
-              {
-                type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}` },
-              },
-            ],
-          },
-        ],
-      };
-
-      const openaiResp = await fetchWithTimeout(
-        "https://api.openai.com/v1/chat/completions",
+    const body = {
+      model: OPENAI_MODEL,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
         {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            Accept: "application/json",
-          },
-          body: JSON.stringify(body),
+          role: "user",
+          content: [
+            { type: "text", text: "Estimate the nutrition for this meal photo." },
+            {
+              type: "image_url",
+              image_url: { url: `data:${mimeType};base64,${base64}` },
+            },
+          ],
         },
-        OPENAI_TIMEOUT_MS
-      );
+      ],
+    };
 
-      const json = await openaiResp.json();
-      if (!openaiResp.ok) {
-        console.error("OpenAI error:", openaiResp.status, json);
-        return res.status(500).json({
-          ok: false,
-          error:
-            json?.error?.message ||
-            `OpenAI API error (status ${openaiResp.status})`,
-        });
-      }
+    const openaiResp = await fetchWithTimeout(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+      OPENAI_TIMEOUT_MS
+    );
 
-      const rawContent = json?.choices?.[0]?.message?.content;
-      if (typeof rawContent !== "string") {
-        console.error("Unexpected OpenAI content:", rawContent);
-        return res.status(500).json({
-          ok: false,
-          error: "Unexpected OpenAI response format",
-        });
-      }
+    const json = await openaiResp.json();
 
-      let parsed: any;
-      try {
-        parsed = JSON.parse(rawContent);
-      } catch {
-        console.error("Failed to parse OpenAI JSON content:", rawContent);
-        return res.status(500).json({
-          ok: false,
-          error: "Failed to parse AI nutrition JSON",
-          raw: rawContent,
-        });
-      }
-
-      const mealName =
-        typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
-
-      const calories = Number(parsed.calories) || 0;
-      const protein = Number(parsed.protein) || 0;
-      const carbs = Number(parsed.carbs) || 0;
-      const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
-
-      const confidence = Math.max(
-        0,
-        Math.min(100, Number(parsed.confidence) || 0)
-      );
-
-      const foods = Array.isArray(parsed.foods)
-        ? parsed.foods
-            .map((f: any) => ({
-              name: String(f.name || "").trim() || "Food item",
-              calories: Number(f.calories) || 0,
-              protein: Number(f.protein) || 0,
-              carbs: Number(f.carbs) || 0,
-              fats: Number(f.fats ?? f.fat ?? 0) || 0,
-            }))
-            .filter((f: any) => f.name)
-        : [];
-
-      const swaps = Array.isArray(parsed.swaps)
-        ? parsed.swaps.map((s: any) => String(s)).filter(Boolean)
-        : [];
-
-      const explanation =
-        typeof parsed.explanation === "string" ? parsed.explanation : "";
-
-      return res.status(200).json({
-        ok: true,
-        mealName,
-        calories,
-        protein,
-        carbs,
-        fats,
-        confidence,
-        foods,
-        swaps,
-        explanation,
-      });
-    } catch (err: any) {
-      console.error("AI nutrition estimation failed:", err);
+    if (!openaiResp.ok) {
+      console.error("OpenAI error:", openaiResp.status, json);
       return res.status(500).json({
         ok: false,
-        error: err?.message || "AI nutrition estimation failed",
+        error:
+          json?.error?.message ||
+          `OpenAI API error (status ${openaiResp.status})`,
       });
     }
+
+    const rawContent = json?.choices?.[0]?.message?.content;
+    if (typeof rawContent !== "string") {
+      console.error("Unexpected OpenAI content:", rawContent);
+      return res.status(500).json({
+        ok: false,
+        error: "Unexpected OpenAI response format",
+      });
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch {
+      console.error("Failed to parse OpenAI JSON content:", rawContent);
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to parse AI nutrition JSON",
+        raw: rawContent,
+      });
+    }
+
+    const mealName =
+      typeof parsed.mealName === "string" ? parsed.mealName : "Meal";
+
+    const calories = Number(parsed.calories) || 0;
+    const protein = Number(parsed.protein) || 0;
+    const carbs = Number(parsed.carbs) || 0;
+    const fats = Number(parsed.fats ?? parsed.fat ?? 0) || 0;
+
+    const confidence = Math.max(
+      0,
+      Math.min(100, Number(parsed.confidence) || 0)
+    );
+
+    const foods = Array.isArray(parsed.foods)
+      ? parsed.foods
+          .map((f: any) => ({
+            name: String(f.name || "").trim() || "Food item",
+            calories: Number(f.calories) || 0,
+            protein: Number(f.protein) || 0,
+            carbs: Number(f.carbs) || 0,
+            fats: Number(f.fats ?? f.fat ?? 0) || 0,
+          }))
+          .filter((f: any) => f.name)
+      : [];
+
+    const swaps = Array.isArray(parsed.swaps)
+      ? parsed.swaps.map((s: any) => String(s)).filter(Boolean)
+      : [];
+
+    const explanation =
+      typeof parsed.explanation === "string" ? parsed.explanation : "";
+
+    return res.status(200).json({
+      ok: true,
+      mealName,
+      calories,
+      protein,
+      carbs,
+      fats,
+      confidence,
+      foods,
+      swaps,
+      explanation,
+    });
+  } catch (err: any) {
+    console.error("AI nutrition estimation failed:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "AI nutrition estimation failed",
+    });
   }
+}
+
+// ======================================================================
+//          AI PHOTO ROUTES (aliases to match your frontend JS)
+// ======================================================================
+
+// ✅ Your existing route (keep)
+app.post(
+  "/api/ai/guess-nutrition-from-photo",
+  upload.single("image"),
+  handleGuessNutritionFromPhoto
+);
+
+// ✅ Add aliases that your JS is calling (prevents 404)
+app.post(
+  "/api/v1/nutrition/ai/meal-from-photo",
+  upload.single("image"),
+  handleGuessNutritionFromPhoto
+);
+
+app.post(
+  "/api/v1/nutrition/ai/photo",
+  upload.single("image"),
+  handleGuessNutritionFromPhoto
+);
+
+app.post(
+  "/api/v1/nutrition/ai/photo-estimate",
+  upload.single("image"),
+  handleGuessNutritionFromPhoto
+);
+
+app.post(
+  "/api/v1/ai/meal-photo",
+  upload.single("image"),
+  handleGuessNutritionFromPhoto
 );
 
 // ======================================================================
