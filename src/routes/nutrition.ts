@@ -6,15 +6,12 @@ import sharp from "sharp";
 import OpenAI from "openai";
 
 /**
- * Keeps existing behavior and fixes your Multer "Unexpected field" issue by:
- * ✅ Accepting multipart field "image" OR "photo" using upload.fields(...)
- * ✅ Adding aliases that your frontend calls:
- *    - POST /ai/photo
- *    - POST /ai/photo-estimate
- *    - POST /ai/meal-from-photo
- *
- * IMPORTANT:
- * - This does NOT auto-log meals. It only returns estimates.
+ * Upgrades AI payload richness:
+ * ✅ Always returns mealName (and name for backward-compat)
+ * ✅ "What I see on the plate" returns foods[] as objects with per-item macros + notes
+ * ✅ "Healthier swaps" returns healthierSwaps[] as objects with per-swap macros + why
+ * ✅ Keeps existing routes/aliases + Multer "image" OR "photo"
+ * ✅ Never auto-logs meals
  */
 
 const nutritionRouter = Router();
@@ -133,53 +130,31 @@ function getTargetsForUser(cid: string) {
   return { calories: 2200, protein: 190, carbs: 190, fat: 60 };
 }
 
-/** AI response wrapper so JS can always read top-level fields */
-function aiResponse(normalized: any) {
-  const conf100 =
-    normalized?.confidence == null ? null : Number(normalized.confidence);
-  const conf01 =
-    conf100 == null || Number.isNaN(conf100)
-      ? null
-      : Math.max(0, Math.min(1, conf100 / 100));
-
-  return {
-    ok: true,
-
-    calories: Number(normalized?.calories || 0),
-    protein: Number(normalized?.protein || 0),
-    carbs: Number(normalized?.carbs || 0),
-    fat: Number(normalized?.fat || 0),
-
-    foods: Array.isArray(normalized?.foods) ? normalized.foods : [],
-    swaps: Array.isArray(normalized?.swaps) ? normalized.swaps : [],
-    confidence: conf01,
-    explanation: String(normalized?.explanation || ""),
-
-    normalized,
-
-    macros: {
-      calories: Number(normalized?.calories || 0),
-      protein: Number(normalized?.protein || 0),
-      carbs: Number(normalized?.carbs || 0),
-      fat: Number(normalized?.fat || 0),
-    },
-  };
+/** clamp helpers */
+function n0(v: any) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
+function int0(v: any) {
+  return Math.max(0, Math.round(n0(v)));
+}
+function clamp(v: any, min: number, max: number) {
+  const x = n0(v);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, x));
 }
 
-/* ======================================================================
-   OpenAI setup
-   ====================================================================== */
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
-const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4.1-mini";
-
+/** Robust JSON parse (accepts raw JSON or JSON embedded in text) */
 function safeParseJson(text: string) {
   try {
     return JSON.parse(text);
   } catch {
     const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {}
+    }
     return {};
   }
 }
@@ -196,6 +171,146 @@ function getUploadedPhotoFile(req: Request): Express.Multer.File | null {
   return img || pho || null;
 }
 
+/** Normalize "foods" items into a consistent object shape */
+function normalizeFoods(input: any): Array<{
+  name: string;
+  portion?: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  notes?: string;
+}> {
+  const arr = Array.isArray(input) ? input : [];
+  return arr
+    .map((x) => {
+      // allow strings ("chicken") or objects
+      if (typeof x === "string") {
+        return {
+          name: x,
+          calories: 0,
+          protein: 0,
+          carbs: 0,
+          fat: 0,
+        };
+      }
+      const name = String(x?.name || x?.food || x?.item || "").trim();
+      if (!name) return null;
+      return {
+        name,
+        portion: x?.portion ? String(x.portion) : undefined,
+        calories: int0(x?.macros?.calories ?? x?.calories),
+        protein: int0(x?.macros?.protein ?? x?.protein),
+        carbs: int0(x?.macros?.carbs ?? x?.carbs),
+        fat: int0(x?.macros?.fat ?? x?.fat),
+        notes: x?.notes ? String(x.notes) : undefined,
+      };
+    })
+    .filter(Boolean) as any;
+}
+
+/** Normalize swaps into a consistent object shape */
+function normalizeSwaps(input: any): Array<{
+  swap: string;
+  why: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}> {
+  const arr = Array.isArray(input) ? input : [];
+  return arr
+    .map((x) => {
+      // allow strings ("swap fries for salad") or objects
+      if (typeof x === "string") {
+        const s = x.trim();
+        if (!s) return null;
+        return {
+          swap: s,
+          why: "",
+          calories: 0,
+          protein: 0,
+          carbs: 0,
+          fat: 0,
+        };
+      }
+      const swap = String(x?.swap || x?.text || x?.recommendation || "").trim();
+      if (!swap) return null;
+      return {
+        swap,
+        why: String(x?.why || x?.reason || x?.explanation || "").trim(),
+        calories: int0(x?.macros?.calories ?? x?.calories),
+        protein: int0(x?.macros?.protein ?? x?.protein),
+        carbs: int0(x?.macros?.carbs ?? x?.carbs),
+        fat: int0(x?.macros?.fat ?? x?.fat),
+      };
+    })
+    .filter(Boolean) as any;
+}
+
+/**
+ * AI response wrapper so JS can always read top-level fields
+ * + provides foods + healthierSwaps + mealName consistently
+ */
+function aiResponse(normalized: any) {
+  const conf100 =
+    normalized?.confidence == null ? null : Number(normalized.confidence);
+  const conf01 =
+    conf100 == null || Number.isNaN(conf100)
+      ? null
+      : Math.max(0, Math.min(1, conf100 / 100));
+
+  const mealName = String(
+    normalized?.mealName || normalized?.name || normalized?.title || "Meal"
+  );
+
+  const foods = normalizeFoods(normalized?.foods);
+  const healthierSwaps = normalizeSwaps(
+    normalized?.healthierSwaps ?? normalized?.swaps
+  );
+
+  return {
+    ok: true,
+
+    // primary macros (what your rings & inputs use)
+    calories: int0(normalized?.calories),
+    protein: int0(normalized?.protein),
+    carbs: int0(normalized?.carbs),
+    fat: int0(normalized?.fat),
+
+    // naming
+    mealName, // ✅ frontend-friendly
+    name: mealName, // ✅ backward compat (some code uses "name")
+    label: String(normalized?.label || "Meal"),
+
+    // detailed breakdowns
+    foods, // ✅ "what I see on the plate"
+    healthierSwaps, // ✅ detailed swaps
+    swaps: healthierSwaps, // ✅ backward compat (your current JS reads swaps OR healthierSwaps)
+
+    confidence: conf01,
+    explanation: String(normalized?.explanation || ""),
+    portionNotes: String(normalized?.portionNotes || ""),
+
+    normalized,
+
+    macros: {
+      calories: int0(normalized?.calories),
+      protein: int0(normalized?.protein),
+      carbs: int0(normalized?.carbs),
+      fat: int0(normalized?.fat),
+    },
+  };
+}
+
+/* ======================================================================
+   OpenAI setup
+   ====================================================================== */
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
+const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4.1-mini";
+
 /* ======================================================================
    GET /api/v1/nutrition/meals
    ====================================================================== */
@@ -203,7 +318,10 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const mealsAll = getMealsArrayForUser(cid);
 
@@ -251,7 +369,10 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const body: any = req.body || {};
     const label = body.label ? String(body.label) : undefined;
@@ -307,7 +428,10 @@ nutritionRouter.delete("/meal/:id", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ ok: false, error: "Missing meal id" });
@@ -339,7 +463,10 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const meals = getMealsArrayForUser(cid);
     const todayKey = isoDateKey(new Date());
@@ -371,7 +498,10 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const daysParam = Number(req.query.days || 7);
     const days = Number.isFinite(daysParam)
@@ -408,7 +538,10 @@ nutritionRouter.post("/day/reset", (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const meals = getMealsArrayForUser(cid);
     const todayKey = isoDateKey(new Date());
@@ -432,13 +565,16 @@ nutritionRouter.post("/reset-day", (req, res) => {
 });
 
 /* ======================================================================
-   AI: meal-from-text
+   AI: meal-from-text (DETAILED)
    ====================================================================== */
 nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const { text } = req.body || {};
     if (!text || !String(text).trim()) {
@@ -446,12 +582,30 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
     }
 
     const prompt = [
-      "You are a nutrition estimator.",
-      "Return ONLY valid JSON with keys: label, name, calories, protein, carbs, fat, explanation.",
+      "You are a nutrition estimator for meal logging.",
+      "Return ONLY valid JSON (no markdown, no commentary).",
+      "Required JSON shape:",
+      "{",
+      '  "label": string,',
+      '  "mealName": string,',
+      '  "calories": number, "protein": number, "carbs": number, "fat": number,',
+      '  "foods": [',
+      '    { "name": string, "portion": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number }, "notes": string }',
+      "  ],",
+      '  "healthierSwaps": [',
+      '    { "swap": string, "why": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number } }',
+      "  ],",
+      '  "confidence": number,',
+      '  "explanation": string',
+      "}",
       "Rules:",
-      "- Use realistic estimates based on typical portion sizes if not specified.",
-      "- explanation should be 1–2 short sentences.",
-      "User meal description:",
+      "- If portion sizes are missing, assume common portions and say what you assumed in notes/explanation.",
+      "- foods[].macros should roughly sum to the totals.",
+      "- healthierSwaps should be 2–5 items, each with WHY (detailed, practical).",
+      "- confidence is 0-100.",
+      "- explanation should be 2–4 sentences (more detailed than before).",
+      "",
+      "User description:",
       String(text),
     ].join("\n");
 
@@ -464,13 +618,23 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
     const raw = r.choices?.[0]?.message?.content || "{}";
     const parsed = safeParseJson(raw);
 
+    const foods = normalizeFoods(parsed.foods);
+    const swaps = normalizeSwaps(parsed.healthierSwaps ?? parsed.swaps);
+
     const normalized = {
       label: String(parsed.label || "Meal"),
-      name: String(parsed.name || "Meal"),
-      calories: Math.max(0, Math.round(Number(parsed.calories) || 0)),
-      protein: Math.max(0, Math.round(Number(parsed.protein) || 0)),
-      carbs: Math.max(0, Math.round(Number(parsed.carbs) || 0)),
-      fat: Math.max(0, Math.round(Number(parsed.fat) || 0)),
+      mealName: String(parsed.mealName || parsed.name || "Meal"),
+      name: String(parsed.mealName || parsed.name || "Meal"), // compat
+
+      calories: int0(parsed.calories),
+      protein: int0(parsed.protein),
+      carbs: int0(parsed.carbs),
+      fat: int0(parsed.fat),
+
+      foods,
+      healthierSwaps: swaps,
+      confidence: clamp(parsed.confidence, 0, 100),
+
       explanation: String(parsed.explanation || ""),
       meta: { source: "ai_text", autoLogged: false },
     };
@@ -483,11 +647,10 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
 });
 
 /* ======================================================================
-   AI: meal-from-photo
+   AI: meal-from-photo (DETAILED)
    ✅ NEVER AUTO-LOGS
    ✅ Accepts multipart field "image" OR "photo" (no MulterError)
    ====================================================================== */
-
 nutritionRouter.post("/ai/meal-from-photo", uploadImageOrPhoto, handlePhoto);
 nutritionRouter.post("/ai/photo", uploadImageOrPhoto, handlePhoto);
 nutritionRouter.post("/ai/photo-estimate", uploadImageOrPhoto, handlePhoto);
@@ -517,13 +680,13 @@ async function handlePhoto(req: Request, res: Response) {
       .jpeg({ quality: 82 })
       .toBuffer();
 
-    // Vision pass: identify foods / portions
+    // Vision pass: identify foods / portions (still simple list, but better notes)
     const visionPrompt = [
       "Analyze this meal photo.",
       "Return ONLY valid JSON with keys:",
       '{ "foods": string[], "portionNotes": string, "clarity": number }',
-      "foods = list of visible foods",
-      "portionNotes = short portion estimate",
+      "foods = list of visible foods (be specific: e.g., 'grilled chicken breast', 'white rice', 'broccoli')",
+      "portionNotes = short but specific portion estimate (e.g., 'about 6 oz chicken, 1 cup rice, 1 cup broccoli')",
       "clarity = 0-100 confidence in what you see",
     ].join("\n");
 
@@ -534,7 +697,7 @@ async function handlePhoto(req: Request, res: Response) {
         { role: "user", content: visionPrompt },
         {
           role: "user",
-          // @ts-ignore - OpenAI SDK supports multimodal content for compatible models
+          // @ts-ignore
           content: [
             {
               type: "image_url",
@@ -550,22 +713,37 @@ async function handlePhoto(req: Request, res: Response) {
     const visionRaw = vision.choices?.[0]?.message?.content || "{}";
     const visionParsed = safeParseJson(visionRaw);
 
-    const foods = Array.isArray(visionParsed.foods)
+    const foodsList = Array.isArray(visionParsed.foods)
       ? visionParsed.foods.map(String)
       : [];
     const portionNotes = String(visionParsed.portionNotes || "");
     const clarity = Math.max(0, Math.min(100, Number(visionParsed.clarity) || 0));
 
-    // Macro pass
+    // Macro pass (DETAILED)
     const macroPrompt = [
-      "Estimate macros from foods list + portion notes.",
-      'Return ONLY JSON with keys: { "name", "calories", "protein", "carbs", "fat", "confidence", "swaps", "explanation" }',
-      `Foods: ${JSON.stringify(foods)}`,
-      `Portion notes: ${portionNotes}`,
+      "You are a nutrition estimator for a meal photo.",
+      "Use the foods list + portion notes to estimate totals and per-item macros.",
+      "Return ONLY JSON (no markdown). Required shape:",
+      "{",
+      '  "mealName": string,',
+      '  "calories": number, "protein": number, "carbs": number, "fat": number,',
+      '  "foods": [',
+      '    { "name": string, "portion": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number }, "notes": string }',
+      "  ],",
+      '  "healthierSwaps": [',
+      '    { "swap": string, "why": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number } }',
+      "  ],",
+      '  "confidence": number,',
+      '  "explanation": string',
+      "}",
       "Rules:",
-      "- confidence is 0-100",
-      "- swaps is an array of 2-5 healthier alternatives",
-      "- explanation is 1–2 short sentences",
+      "- foods[].macros should roughly sum to totals.",
+      "- healthierSwaps must be 2–5 items with detailed WHY.",
+      "- confidence is 0-100.",
+      "- explanation should be 2–4 sentences and mention assumptions.",
+      "",
+      `Foods seen: ${JSON.stringify(foodsList)}`,
+      `Portion notes: ${portionNotes}`,
     ].join("\n");
 
     const macro = await openai.chat.completions.create({
@@ -577,18 +755,25 @@ async function handlePhoto(req: Request, res: Response) {
     const macroRaw = macro.choices?.[0]?.message?.content || "{}";
     const macroParsed = safeParseJson(macroRaw);
 
+    const foods = normalizeFoods(macroParsed.foods);
+    const swaps = normalizeSwaps(macroParsed.healthierSwaps ?? macroParsed.swaps);
+
     const normalized = {
       label: String((req.body as any)?.label || "Meal"),
-      name: String(macroParsed.name || "Meal"),
-      calories: Math.max(0, Math.round(Number(macroParsed.calories) || 0)),
-      protein: Math.max(0, Math.round(Number(macroParsed.protein) || 0)),
-      carbs: Math.max(0, Math.round(Number(macroParsed.carbs) || 0)),
-      fat: Math.max(0, Math.round(Number(macroParsed.fat) || 0)),
-      foods,
+      mealName: String(macroParsed.mealName || macroParsed.name || "Meal"),
+      name: String(macroParsed.mealName || macroParsed.name || "Meal"), // compat
+
+      calories: int0(macroParsed.calories),
+      protein: int0(macroParsed.protein),
+      carbs: int0(macroParsed.carbs),
+      fat: int0(macroParsed.fat),
+
+      foods: foods.length ? foods : foodsList.map((f: string) => ({ name: f, calories: 0, protein: 0, carbs: 0, fat: 0 })),
       portionNotes,
-      swaps: Array.isArray(macroParsed.swaps) ? macroParsed.swaps.map(String) : [],
+      healthierSwaps: swaps,
+
       explanation: String(macroParsed.explanation || ""),
-      confidence: Math.max(0, Math.min(100, Number(macroParsed.confidence) || 0)),
+      confidence: clamp(macroParsed.confidence, 0, 100),
       meta: { source: "ai_photo", clarity, autoLogged: false },
     };
 
@@ -616,7 +801,10 @@ nutritionRouter.post("/barcode-lookup", async (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
-    if (!cid) return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+    if (!cid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const barcode = String((req.body as any)?.barcode || "").trim();
     if (!barcode) return res.status(400).json({ ok: false, error: "Missing barcode" });
