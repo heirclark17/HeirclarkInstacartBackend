@@ -196,6 +196,7 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
 
   const steps = toIntOrNull(req.body?.steps);
   const activeCalories = toIntOrNull(req.body?.activeCalories);
+  const restingEnergy = toIntOrNull(req.body?.restingEnergy) ?? toIntOrNull(req.body?.basalEnergy);
   const latestHeartRateBpm = toIntOrNull(req.body?.latestHeartRateBpm);
   const workoutsToday = toIntOrNull(req.body?.workoutsToday);
 
@@ -228,15 +229,16 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
     await client.query(
       `
       INSERT INTO hc_health_latest (
-        shopify_customer_id, ts, steps, active_calories,
+        shopify_customer_id, ts, steps, active_calories, resting_energy,
         latest_heart_rate_bpm, workouts_today, received_at, source
       )
-      VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'shortcut')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), 'shortcut')
       ON CONFLICT (shopify_customer_id)
       DO UPDATE SET
         ts = EXCLUDED.ts,
         steps = EXCLUDED.steps,
         active_calories = EXCLUDED.active_calories,
+        resting_energy = EXCLUDED.resting_energy,
         latest_heart_rate_bpm = EXCLUDED.latest_heart_rate_bpm,
         workouts_today = EXCLUDED.workouts_today,
         received_at = NOW(),
@@ -247,6 +249,7 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
         ts.toISOString(),
         steps,
         activeCalories,
+        restingEnergy,
         latestHeartRateBpm,
         workoutsToday,
       ]
@@ -295,6 +298,7 @@ healthBridgeRouter.get("/metrics", async (req: Request, res: Response) => {
         ts: r.ts,
         steps: r.steps,
         activeCalories: r.active_calories,
+        restingEnergy: r.resting_energy,
         latestHeartRateBpm: r.latest_heart_rate_bpm,
         workoutsToday: r.workouts_today,
         receivedAt: r.received_at,

@@ -1,39 +1,52 @@
 // src/routes/health.ts
 import { Router, Request, Response } from "express";
 import { randomUUID } from "crypto";
+import {
+  createPairingTokenMap,
+  createDeviceMap,
+  createHealthSnapshotMap,
+} from "../services/memoryCleanup";
 
 export const healthRouter = Router();
 
 /**
- * DEV/DEMO IN-MEMORY STORE
- * Replace with DB/Redis for production (Railway restarts wipe memory).
+ * IN-MEMORY STORE WITH TTL-BASED CLEANUP
+ * Uses cleanup-enabled Maps to prevent unbounded memory growth.
+ * For production persistence, use the healthBridge routes which use PostgreSQL.
  */
 
-// pairingToken -> { shopifyCustomerId, createdAt }
-const pairingTokens = new Map<
-  string,
-  { shopifyCustomerId: string; createdAt: number }
->();
+interface PairingTokenEntry {
+  shopifyCustomerId: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface DeviceEntry {
+  shopifyCustomerId: string;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+interface HealthSnapshotEntry {
+  ts: string;
+  steps?: number;
+  activeCalories?: number;
+  restingEnergy?: number;
+  latestHeartRateBpm?: number;
+  workoutsToday?: number;
+  source: "shortcut";
+  receivedAt: number;
+  createdAt: number;
+}
+
+// pairingToken -> { shopifyCustomerId, createdAt, expiresAt }
+const pairingTokens = createPairingTokenMap<PairingTokenEntry>();
 
 // deviceKey -> { shopifyCustomerId, createdAt, lastSeenAt }
-const devices = new Map<
-  string,
-  { shopifyCustomerId: string; createdAt: number; lastSeenAt: number }
->();
+const devices = createDeviceMap<DeviceEntry>();
 
 // shopifyCustomerId -> latest snapshot
-const latestByUser = new Map<
-  string,
-  {
-    ts: string;
-    steps?: number;
-    activeCalories?: number;
-    latestHeartRateBpm?: number;
-    workoutsToday?: number;
-    source: "shortcut";
-    receivedAt: number;
-  }
->();
+const latestByUser = createHealthSnapshotMap<HealthSnapshotEntry>();
 
 /**
  * OPTIONAL helper:
@@ -51,9 +64,9 @@ healthRouter.post("/pair/start", (req: Request, res: Response) => {
 
   const pairingToken = randomUUID();
   const createdAt = Date.now();
-  pairingTokens.set(pairingToken, { shopifyCustomerId, createdAt });
-
   const expiresAt = createdAt + 15 * 60 * 1000; // 15 minutes
+  pairingTokens.set(pairingToken, { shopifyCustomerId, createdAt, expiresAt });
+
   return res.json({ ok: true, pairingToken, expiresAt });
 });
 
@@ -124,6 +137,7 @@ healthRouter.post("/ingest", (req: Request, res: Response) => {
 
   const steps = toNumOrUndef(req.body?.steps);
   const activeCalories = toNumOrUndef(req.body?.activeCalories);
+  const restingEnergy = toNumOrUndef(req.body?.restingEnergy) ?? toNumOrUndef(req.body?.basalEnergy);
   const latestHeartRateBpm = toNumOrUndef(req.body?.latestHeartRateBpm);
   const workoutsToday = toNumOrUndef(req.body?.workoutsToday);
 
@@ -131,10 +145,12 @@ healthRouter.post("/ingest", (req: Request, res: Response) => {
     ts,
     steps,
     activeCalories,
+    restingEnergy,
     latestHeartRateBpm,
     workoutsToday,
     source: "shortcut",
     receivedAt: Date.now(),
+    createdAt: Date.now(),
   });
 
   devices.set(deviceKey, { ...device, lastSeenAt: Date.now() });
