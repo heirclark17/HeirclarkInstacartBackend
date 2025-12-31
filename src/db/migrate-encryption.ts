@@ -187,8 +187,9 @@ async function migrateEncryption() {
   console.log(`  ✅ hc_apple_tokens: migrated ${migratedCount} rows`);
 
   // Migrate hc_health_latest (bundle all metrics into encrypted JSON)
+  // Note: This table uses shopify_customer_id as unique key, not id
   const healthMetrics = await pool.query(`
-    SELECT id, steps, active_calories, resting_energy, latest_heart_rate_bpm, workouts_today
+    SELECT shopify_customer_id, steps, active_calories, resting_energy, latest_heart_rate_bpm, workouts_today
     FROM hc_health_latest
     WHERE metrics_enc IS NULL
   `);
@@ -209,11 +210,11 @@ async function migrateEncryption() {
         UPDATE hc_health_latest
         SET metrics_enc = $1,
             encryption_migrated_at = NOW()
-        WHERE id = $2
-      `, [metricsEnc, row.id]);
+        WHERE shopify_customer_id = $2
+      `, [metricsEnc, row.shopify_customer_id]);
       migratedCount++;
     } catch (err) {
-      console.error(`  ⚠️ Failed to encrypt hc_health_latest id=${row.id}:`, err);
+      console.error(`  ⚠️ Failed to encrypt hc_health_latest customer=${row.shopify_customer_id}:`, err);
     }
   }
   console.log(`  ✅ hc_health_latest: migrated ${migratedCount} rows`);
