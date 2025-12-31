@@ -4,6 +4,10 @@ import cors from "cors";
 import morgan from "morgan";
 import multer from "multer";
 
+// Middleware
+import { rateLimitMiddleware } from "./middleware/rateLimiter";
+import { sendError } from "./middleware/responseHelper";
+
 // Types / services
 import { UserConstraints } from "./types/mealPlan";
 import {
@@ -18,20 +22,57 @@ import { nutritionRouter } from "./routes/nutrition";
 import { hydrationRouter } from "./routes/hydration";
 import { weightRouter } from "./routes/weight";
 
-// ⭐ Body Scan router (Tier 3 SMPL-X microservice proxy)
+// User preferences router
+import { preferencesRouter } from "./routes/preferences";
+
+// Body Scan router (Tier 3 SMPL-X microservice proxy)
 import { bodyScanRouter } from "./routes/bodyScan";
 
-// ✅ Fitbit integration router
+// Fitbit integration router
 import fitbitRouter from "./routes/fitbit";
 
-// ✅ Existing: Apple Health bridge router (link + sync + today)
+// Apple Health bridge router (link + sync + today)
 import { appleHealthRouter } from "./routes/appleHealth";
 
-// ✅ NEW: Website ↔ iPhone Shortcut Health Bridge router
+// Website ↔ iPhone Shortcut Health Bridge router
 import { healthBridgeRouter } from "./routes/healthBridge";
 
 // ✅ User preferences / goals router
 import { userRouter } from "./routes/user";
+
+// Instacart router
+import instacartRouter from "./routes/instacart";
+
+// HeyGen video generation router
+import { heygenRouter } from "./routes/heygen";
+
+// Validate environment at startup
+function validateStartupEnvironment(): void {
+  const required = ["DATABASE_URL"];
+  const missing = required.filter((key) => !process.env[key]);
+
+  if (missing.length > 0) {
+    console.error(`Missing required environment variables: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+
+  // Warnings for optional but recommended variables
+  const recommended = [
+    { key: "JWT_SECRET", fallback: "Using insecure default" },
+    { key: "OPENAI_API_KEY", fallback: "AI features will not work" },
+    { key: "HC_APPLE_SYNC_SIGNING_SECRET", fallback: "Apple Health sync insecure" },
+    { key: "HEYGEN_API_KEY", fallback: "HeyGen video generation will not work" },
+    { key: "ANTHROPIC_API_KEY", fallback: "Script generation will not work" },
+  ];
+
+  for (const { key, fallback } of recommended) {
+    if (!process.env[key]) {
+      console.warn(`WARNING: ${key} not set. ${fallback}`);
+    }
+  }
+}
+
+validateStartupEnvironment();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -95,23 +136,35 @@ app.get("/health", (_req: Request, res: Response) => {
   res.status(200).send("ok");
 });
 
+// Apply global rate limiting
+app.use(rateLimitMiddleware());
+
 // Mount calorie / nutrition routes
 app.use("/api/v1/meals", mealsRouter);
 app.use("/api/v1/nutrition", nutritionRouter);
 app.use("/api/v1/hydration", hydrationRouter);
 app.use("/api/v1/weight", weightRouter);
 
-// ✅ Fitbit integration routes (OAuth + token refresh + today activity)
+// User preferences routes
+app.use("/api/v1/preferences", preferencesRouter);
+
+// Fitbit integration routes (OAuth + token refresh + today activity)
 app.use("/api/v1/integrations/fitbit", fitbitRouter);
 
-// ✅ Existing: Apple Health bridge routes
+// Apple Health bridge routes
 app.use("/api/v1/wearables/apple", appleHealthRouter);
 
-// ✅ NEW: Shortcut-based Health Bridge
+// Shortcut-based Health Bridge
 app.use("/api/v1/health", healthBridgeRouter);
 
 // ✅ User preferences / goals
 app.use("/api/v1/user", userRouter);
+
+// Instacart routes
+app.use("/api", instacartRouter);
+
+// HeyGen video generation routes
+app.use("/api/v1/video", heygenRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
@@ -292,22 +345,56 @@ app.use((req: Request, res: Response) => {
 //                      GLOBAL ERROR HANDLER
 // ======================================================================
 
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  // ✅ Convert Multer “unexpected field” and other multer errors to 400
+// Custom error types
+interface AppError extends Error {
+  statusCode?: number;
+  code?: string;
+  field?: string;
+}
+
+app.use((err: AppError, _req: Request, res: Response, _next: NextFunction) => {
+  // Log error (but not in tests)
+  if (process.env.NODE_ENV !== "test") {
+    console.error("Unhandled error:", {
+      message: err.message,
+      code: err.code,
+      stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+    });
+  }
+
+  // Multer errors (file upload issues)
   if (err?.name === "MulterError") {
-    return res.status(400).json({
-      ok: false,
-      error: err.message || "Upload error",
+    return sendError(res, err.message || "Upload error", 400, {
       field: err.field,
       code: err.code,
     });
   }
 
-  console.error("Unhandled error:", err);
-  res.status(500).json({
-    ok: false,
-    error: err?.message || "Internal server error",
-  });
+  // Zod validation errors
+  if (err?.name === "ZodError") {
+    return sendError(res, "Validation error", 400, {
+      errors: (err as any).errors,
+    });
+  }
+
+  // CORS errors
+  if (err?.message?.includes("CORS")) {
+    return sendError(res, err.message, 403);
+  }
+
+  // JSON parsing errors
+  if (err?.name === "SyntaxError" && (err as any).body) {
+    return sendError(res, "Invalid JSON in request body", 400);
+  }
+
+  // Default to 500 for unknown errors
+  const statusCode = err.statusCode || 500;
+  const message =
+    process.env.NODE_ENV === "production" && statusCode === 500
+      ? "Internal server error"
+      : err.message || "Internal server error";
+
+  return sendError(res, message, statusCode);
 });
 
 // ======================================================================

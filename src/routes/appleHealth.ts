@@ -35,12 +35,12 @@ appleHealthRouter.post("/link/complete", (req: Request, res: Response) => {
 // iOS app: push deltas
 // POST /api/v1/wearables/apple/sync
 // Header: Authorization: Bearer <appleSyncToken>
-appleHealthRouter.post("/sync", (req: Request, res: Response) => {
+appleHealthRouter.post("/sync", async (req: Request, res: Response) => {
   const auth = String(req.headers.authorization || "");
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token) return res.status(401).json({ error: "Missing bearer token" });
 
-  const tok = appleAuthToken(token);
+  const tok = await appleAuthToken(token);
   if (!tok) return res.status(401).json({ error: "Invalid/expired token" });
 
   const type = req.body?.type;
