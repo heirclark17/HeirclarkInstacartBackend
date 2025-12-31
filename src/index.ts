@@ -12,6 +12,7 @@ import { auditMiddleware } from "./middleware/auditMiddleware";
 // Security & Compliance
 import { validateEncryptionConfig } from "./services/encryption";
 import { auditLogger } from "./services/auditLogger";
+import { scheduleRetentionJob } from "./jobs/dataRetention";
 
 // Types / services
 import { UserConstraints } from "./types/mealPlan";
@@ -429,6 +430,12 @@ app.use((err: AppError, _req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(PORT, () => {
   console.log(`Heirclark backend listening on port ${PORT}`);
   console.log(`GDPR endpoints: /api/v1/gdpr/export, /api/v1/gdpr/delete, /api/v1/gdpr/retention`);
+
+  // Schedule data retention cleanup job (runs daily at 2 AM)
+  if (process.env.NODE_ENV === 'production') {
+    scheduleRetentionJob('02:00');
+    console.log('Data retention job scheduled for 2:00 AM daily');
+  }
 });
 
 // Graceful shutdown - flush audit logs
