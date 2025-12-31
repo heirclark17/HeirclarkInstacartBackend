@@ -1,13 +1,25 @@
 // src/middleware/auth.ts
+// Zero-trust authentication middleware
+// SOC2 Controls: CC6.1 Logical Access, CC6.2 Access Enforcement
+
 import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
+import { logAuthSuccess, logAuthFailure } from "./auditMiddleware";
 
 /**
  * JWT-like authentication middleware.
  * Uses HMAC-SHA256 for token signing (lightweight, no external dependencies).
  *
  * Token format: base64url(header).base64url(payload).base64url(signature)
+ *
+ * DEPRECATION NOTICE:
+ * Legacy auth methods (X-Shopify-Customer-Id header, shopifyCustomerId param)
+ * are deprecated and will be removed after 2025-01-30.
+ * Migrate to: Authorization: Bearer <token>
  */
+
+// Deprecation date for legacy auth methods (30 days from implementation)
+const LEGACY_AUTH_DEPRECATION_DATE = new Date('2025-01-30T00:00:00Z');
 
 export interface AuthPayload {
   customerId: string;
@@ -104,13 +116,33 @@ export function verifyToken(token: string, secret: string): AuthPayload | null {
 }
 
 /**
+ * Check if legacy auth methods should still be allowed
+ */
+function isLegacyAuthAllowed(): boolean {
+  return new Date() < LEGACY_AUTH_DEPRECATION_DATE;
+}
+
+/**
+ * Add deprecation warning headers for legacy auth
+ */
+function addDeprecationWarning(res: Response, method: string): void {
+  const deprecationDate = LEGACY_AUTH_DEPRECATION_DATE.toISOString().split('T')[0];
+  res.setHeader('X-Auth-Deprecation-Warning',
+    `${method} is deprecated and will be removed after ${deprecationDate}. ` +
+    'Migrate to: Authorization: Bearer <token>'
+  );
+  res.setHeader('Deprecation', deprecationDate);
+  res.setHeader('Sunset', LEGACY_AUTH_DEPRECATION_DATE.toUTCString());
+}
+
+/**
  * Authentication middleware.
- * Extracts and validates JWT from Authorization header or query parameter.
+ * Extracts and validates JWT from Authorization header.
  *
- * Supports multiple auth methods for backward compatibility:
- * 1. Authorization: Bearer <token>
- * 2. X-Shopify-Customer-Id header (legacy, for gradual migration)
- * 3. shopifyCustomerId query/body parameter (legacy)
+ * Auth methods (in priority order):
+ * 1. Authorization: Bearer <token> (RECOMMENDED)
+ * 2. X-Shopify-Customer-Id header (DEPRECATED - removed after 2025-01-30)
+ * 3. shopifyCustomerId query/body parameter (DEPRECATED - removed after 2025-01-30)
  */
 export function authMiddleware(options: { required?: boolean } = {}) {
   const { required = true } = options;
@@ -119,14 +151,15 @@ export function authMiddleware(options: { required?: boolean } = {}) {
     const secret = process.env.JWT_SECRET;
 
     if (!secret) {
-      console.error("JWT_SECRET not configured");
+      console.error("[auth] JWT_SECRET not configured");
+      logAuthFailure(req, "JWT_SECRET not configured");
       if (required) {
         return res.status(500).json({ ok: false, error: "Authentication not configured" });
       }
       return next();
     }
 
-    // Try Bearer token first
+    // Try Bearer token first (recommended method)
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
@@ -134,40 +167,69 @@ export function authMiddleware(options: { required?: boolean } = {}) {
 
       if (payload) {
         req.auth = payload;
+        logAuthSuccess(req, payload.customerId, 'jwt');
         return next();
       }
 
+      logAuthFailure(req, "Invalid or expired JWT token");
       if (required) {
         return res.status(401).json({ ok: false, error: "Invalid or expired token" });
       }
     }
 
-    // Legacy: X-Shopify-Customer-Id header
+    // Legacy: X-Shopify-Customer-Id header (DEPRECATED)
     const legacyHeader = req.headers["x-shopify-customer-id"] as string | undefined;
     if (legacyHeader) {
+      if (!isLegacyAuthAllowed()) {
+        logAuthFailure(req, "Legacy X-Shopify-Customer-Id header no longer accepted");
+        return res.status(401).json({
+          ok: false,
+          error: "X-Shopify-Customer-Id authentication is no longer supported. Use Bearer token.",
+        });
+      }
+
+      // Allow but warn
+      console.warn(`[auth] DEPRECATED: X-Shopify-Customer-Id header used by ${legacyHeader}`);
+      addDeprecationWarning(res, 'X-Shopify-Customer-Id header');
+
       req.auth = {
         customerId: legacyHeader.trim(),
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour validity for legacy
       };
+      logAuthSuccess(req, legacyHeader.trim(), 'legacy_header');
       return next();
     }
 
-    // Legacy: query/body parameter
+    // Legacy: query/body parameter (DEPRECATED)
     const legacyQuery = (req.query?.shopifyCustomerId as string) || "";
     const legacyBody = (req.body as any)?.shopifyCustomerId || "";
     const legacyId = String(legacyQuery || legacyBody || "").trim();
 
     if (legacyId) {
+      if (!isLegacyAuthAllowed()) {
+        logAuthFailure(req, "Legacy shopifyCustomerId parameter no longer accepted");
+        return res.status(401).json({
+          ok: false,
+          error: "shopifyCustomerId parameter is no longer supported. Use Bearer token.",
+        });
+      }
+
+      // Allow but warn
+      console.warn(`[auth] DEPRECATED: shopifyCustomerId param used by ${legacyId}`);
+      addDeprecationWarning(res, 'shopifyCustomerId parameter');
+
       req.auth = {
         customerId: legacyId,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
+      logAuthSuccess(req, legacyId, 'legacy_param');
       return next();
     }
 
     if (required) {
+      logAuthFailure(req, "No authentication provided");
       return res.status(401).json({ ok: false, error: "Authentication required" });
     }
 

@@ -7,6 +7,11 @@ import multer from "multer";
 // Middleware
 import { rateLimitMiddleware } from "./middleware/rateLimiter";
 import { sendError } from "./middleware/responseHelper";
+import { auditMiddleware } from "./middleware/auditMiddleware";
+
+// Security & Compliance
+import { validateEncryptionConfig } from "./services/encryption";
+import { auditLogger } from "./services/auditLogger";
 
 // Types / services
 import { UserConstraints } from "./types/mealPlan";
@@ -46,6 +51,9 @@ import instacartRouter from "./routes/instacart";
 // HeyGen video generation router
 import { heygenRouter } from "./routes/heygen";
 
+// GDPR compliance router
+import { gdprRouter } from "./routes/gdpr";
+
 // Validate environment at startup
 function validateStartupEnvironment(): void {
   const required = ["DATABASE_URL"];
@@ -63,7 +71,16 @@ function validateStartupEnvironment(): void {
     { key: "HC_APPLE_SYNC_SIGNING_SECRET", fallback: "Apple Health sync insecure" },
     { key: "HEYGEN_API_KEY", fallback: "HeyGen video generation will not work" },
     { key: "ANTHROPIC_API_KEY", fallback: "Script generation will not work" },
+    { key: "ENCRYPTION_KEY", fallback: "Data encryption disabled (generate with: openssl rand -base64 32)" },
   ];
+
+  // Validate encryption key if present
+  const encryptionCheck = validateEncryptionConfig();
+  if (!encryptionCheck.valid) {
+    console.warn(`WARNING: Encryption not configured: ${encryptionCheck.error}`);
+  } else {
+    console.log("✓ Encryption key validated");
+  }
 
   for (const { key, fallback } of recommended) {
     if (!process.env[key]) {
@@ -109,6 +126,8 @@ app.use(
       "Authorization",
       "Accept",
       "X-Shopify-Customer-Id",
+      "X-Correlation-Id",
+      "X-Confirm-Delete",  // GDPR deletion confirmation
     ],
     credentials: true,
   })
@@ -119,6 +138,9 @@ app.options("*", cors());
 
 // Logging
 app.use(morgan("dev"));
+
+// Audit logging (SOC2 compliance)
+app.use(auditMiddleware());
 
 // JSON/body parsing
 app.use(express.json({ limit: "2mb" }));
@@ -165,6 +187,9 @@ app.use("/api", instacartRouter);
 
 // HeyGen video generation routes
 app.use("/api/v1/video", heygenRouter);
+
+// GDPR compliance routes (data export, deletion, retention policy)
+app.use("/api/v1/gdpr", gdprRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
@@ -401,8 +426,28 @@ app.use((err: AppError, _req: Request, res: Response, _next: NextFunction) => {
 //                      START SERVER
 // ======================================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Heirclark backend listening on port ${PORT}`);
+  console.log(`GDPR endpoints: /api/v1/gdpr/export, /api/v1/gdpr/delete, /api/v1/gdpr/retention`);
+});
+
+// Graceful shutdown - flush audit logs
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, shutting down gracefully...");
+  await auditLogger.shutdown();
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
+});
+
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, shutting down gracefully...");
+  await auditLogger.shutdown();
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
 });
 
 export default app;
