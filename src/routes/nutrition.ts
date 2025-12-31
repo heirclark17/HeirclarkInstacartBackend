@@ -309,10 +309,11 @@ function aiResponse(normalized: any) {
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
-const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4.1-mini";
+const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4o-mini";
 
 /* ======================================================================
    GET /api/v1/nutrition/meals
+   Supports pagination with ?page=1&limit=20
    ====================================================================== */
 nutritionRouter.get("/meals", (req: Request, res: Response) => {
   const reqId = uuidv4();
@@ -331,6 +332,10 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
     const days = Number.isFinite(daysParam)
       ? Math.max(1, Math.min(90, daysParam))
       : 30;
+
+    // Pagination params
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50));
 
     let filtered = mealsAll;
 
@@ -354,8 +359,24 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
       });
     }
 
-    const meals = dedupeMeals(filtered);
-    return res.json({ ok: true, meals });
+    const deduped = dedupeMeals(filtered);
+    const total = deduped.length;
+    const totalPages = Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+    const meals = deduped.slice(offset, offset + limit);
+
+    return res.json({
+      ok: true,
+      meals,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
   } catch (err: any) {
     console.error("[nutrition][meals] error", { reqId, msg: errMessage(err) });
     return res.status(500).json({ ok: false, error: err.message });
@@ -493,6 +514,7 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
 
 /* ======================================================================
    GET /api/v1/nutrition/history
+   Supports pagination with ?page=1&limit=7
    ====================================================================== */
 nutritionRouter.get("/history", (req: Request, res: Response) => {
   const reqId = uuidv4();
@@ -505,12 +527,16 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
 
     const daysParam = Number(req.query.days || 7);
     const days = Number.isFinite(daysParam)
-      ? Math.max(1, Math.min(60, daysParam))
+      ? Math.max(1, Math.min(90, daysParam))
       : 7;
+
+    // Pagination params
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const limit = Math.min(90, Math.max(1, parseInt(String(req.query.limit || String(days)), 10) || days));
 
     const meals = getMealsArrayForUser(cid);
 
-    const out: Array<{ date: string; totals: any }> = [];
+    const allDays: Array<{ date: string; totals: any }> = [];
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
@@ -521,10 +547,27 @@ nutritionRouter.get("/history", (req: Request, res: Response) => {
       );
       const dayMeals = dedupeMeals(dayMealsRaw);
 
-      out.push({ date: key, totals: computeTotalsFromMeals(dayMeals) });
+      allDays.push({ date: key, totals: computeTotalsFromMeals(dayMeals) });
     }
 
-    return res.json({ ok: true, days: out });
+    // Apply pagination
+    const total = allDays.length;
+    const totalPages = Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+    const paginatedDays = allDays.slice(offset, offset + limit);
+
+    return res.json({
+      ok: true,
+      days: paginatedDays,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
   } catch (err: any) {
     console.error("[nutrition][history] error", { reqId, msg: errMessage(err) });
     return res.status(500).json({ ok: false, error: err.message });
