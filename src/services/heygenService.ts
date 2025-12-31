@@ -60,12 +60,41 @@ interface VoiceListResponse {
   };
 }
 
+/**
+ * Validate and return the HeyGen API key
+ * Checks format and prevents accidental exposure
+ */
 function getApiKey(): string {
   const apiKey = process.env.HEYGEN_API_KEY;
+
   if (!apiKey) {
     throw new Error('HEYGEN_API_KEY environment variable is not set');
   }
+
+  // Validate key format (HeyGen keys are typically 32+ chars)
+  if (apiKey.length < 20) {
+    throw new Error('HEYGEN_API_KEY appears invalid (too short)');
+  }
+
+  // Prevent hardcoded test/placeholder keys
+  const invalidPatterns = ['test', 'demo', 'placeholder', 'your_api_key', 'xxx'];
+  if (invalidPatterns.some(p => apiKey.toLowerCase().includes(p))) {
+    throw new Error('HEYGEN_API_KEY appears to be a placeholder value');
+  }
+
   return apiKey;
+}
+
+/**
+ * Sanitize script input to prevent injection
+ */
+function sanitizeScript(script: string): string {
+  // Remove potential script tags and dangerous characters
+  return script
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '') // Strip HTML tags
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '') // Remove control chars
+    .trim();
 }
 
 /**
@@ -79,6 +108,13 @@ export async function createAvatarVideo(script: string): Promise<string> {
 
   if (!avatarId || !voiceId) {
     throw new Error('HEYGEN_AVATAR_ID and HEYGEN_VOICE_ID must be set');
+  }
+
+  // Sanitize and validate script
+  script = sanitizeScript(script);
+
+  if (!script || script.length < 10) {
+    throw new Error('Script is too short or empty after sanitization');
   }
 
   // Script must be under 5000 characters

@@ -7,13 +7,47 @@ import {
   listVoices,
 } from '../services/heygenService';
 import { generateVideoScript, hashPlan } from '../services/scriptGenerator';
+import { videoRateLimitMiddleware } from '../middleware/rateLimiter';
 
 export const heygenRouter = Router();
+
+// Apply strict rate limiting to video generation endpoint
+const videoRateLimit = videoRateLimitMiddleware();
 
 /**
  * HeyGen Video Generation Routes
  * Handles personalized avatar video creation for nutrition plans
  */
+
+/**
+ * Validate and sanitize user ID
+ * Prevents injection and ensures safe database queries
+ */
+function sanitizeUserId(userId: string): string | null {
+  if (!userId || typeof userId !== 'string') return null;
+
+  // Remove dangerous characters, allow alphanumeric, underscore, dash
+  const sanitized = userId.trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  // Must be reasonable length
+  if (sanitized.length < 1 || sanitized.length > 255) return null;
+
+  return sanitized;
+}
+
+/**
+ * Validate video ID format (HeyGen video IDs are UUIDs or similar)
+ */
+function sanitizeVideoId(videoId: string): string | null {
+  if (!videoId || typeof videoId !== 'string') return null;
+
+  // Allow alphanumeric, underscore, dash (typical for UUIDs/IDs)
+  const sanitized = videoId.trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  if (sanitized.length < 1 || sanitized.length > 100) return null;
+
+  return sanitized;
+}
 
 // Initialize database table if it doesn't exist
 async function ensureTableExists(): Promise<void> {
@@ -49,12 +83,14 @@ ensureTableExists();
 /**
  * POST /api/v1/video/generate
  * Start video generation for a user's 7-day plan
+ * Rate limited: 5 videos per hour per user
  */
-heygenRouter.post('/generate', async (req: Request, res: Response) => {
-  const { userId, weekPlan, wellness, preferences, userName } = req.body;
+heygenRouter.post('/generate', videoRateLimit, async (req: Request, res: Response) => {
+  const { userId: rawUserId, weekPlan, wellness, preferences, userName } = req.body;
 
+  const userId = sanitizeUserId(rawUserId);
   if (!userId) {
-    return res.status(400).json({ ok: false, error: 'Missing userId' });
+    return res.status(400).json({ ok: false, error: 'Invalid or missing userId' });
   }
 
   if (!weekPlan || !wellness) {
@@ -146,10 +182,10 @@ heygenRouter.post('/generate', async (req: Request, res: Response) => {
  * Check the status of a video generation
  */
 heygenRouter.get('/status/:videoId', async (req: Request, res: Response) => {
-  const { videoId } = req.params;
+  const videoId = sanitizeVideoId(req.params.videoId);
 
   if (!videoId) {
-    return res.status(400).json({ ok: false, error: 'Missing videoId' });
+    return res.status(400).json({ ok: false, error: 'Invalid or missing videoId' });
   }
 
   try {
@@ -168,7 +204,7 @@ heygenRouter.get('/status/:videoId', async (req: Request, res: Response) => {
       await pool.query(
         `UPDATE hc_user_videos
          SET status = 'failed'
-         WHERE heygen_video_id = $2`,
+         WHERE heygen_video_id = $1`,
         [videoId]
       );
     }
@@ -196,10 +232,10 @@ heygenRouter.get('/status/:videoId', async (req: Request, res: Response) => {
  * Get the latest video for a user
  */
 heygenRouter.get('/user/:userId', async (req: Request, res: Response) => {
-  const { userId } = req.params;
+  const userId = sanitizeUserId(req.params.userId);
 
   if (!userId) {
-    return res.status(400).json({ ok: false, error: 'Missing userId' });
+    return res.status(400).json({ ok: false, error: 'Invalid or missing userId' });
   }
 
   try {

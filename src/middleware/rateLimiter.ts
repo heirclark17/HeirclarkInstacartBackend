@@ -132,4 +132,25 @@ export function aiRateLimitMiddleware() {
   });
 }
 
+/**
+ * Rate limiter for video generation (very expensive operations).
+ * HeyGen API costs money per video, so limit strictly.
+ */
+export function videoRateLimitMiddleware() {
+  return rateLimitMiddleware({
+    windowMs: 3600000,    // 1 hour
+    maxRequests: 5,       // 5 videos per hour per user
+    message: "Video generation limit exceeded. Maximum 5 videos per hour.",
+    keyGenerator: (req) => {
+      // Rate limit by userId if available, otherwise by IP
+      const userId = req.body?.userId || req.params?.userId;
+      if (userId) return `video:user:${userId}`;
+
+      const forwarded = req.headers["x-forwarded-for"];
+      const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0]?.trim();
+      return `video:ip:${ip || req.ip || "unknown"}`;
+    },
+  });
+}
+
 export default rateLimitMiddleware;
