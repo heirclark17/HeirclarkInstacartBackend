@@ -30,6 +30,9 @@ import { appleHealthRouter } from "./routes/appleHealth";
 // ✅ NEW: Website ↔ iPhone Shortcut Health Bridge router
 import { healthBridgeRouter } from "./routes/healthBridge";
 
+// ✅ User preferences / goals router
+import { userRouter } from "./routes/user";
+
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
@@ -106,6 +109,9 @@ app.use("/api/v1/wearables/apple", appleHealthRouter);
 
 // ✅ NEW: Shortcut-based Health Bridge
 app.use("/api/v1/health", healthBridgeRouter);
+
+// ✅ User preferences / goals
+app.use("/api/v1/user", userRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
