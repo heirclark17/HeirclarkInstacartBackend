@@ -49,6 +49,21 @@ export interface WeightLog {
   weightLbs: number;
 }
 
+// Card background types
+export interface SolidBackground {
+  name: string;
+  type: "solid";
+  hex: string;
+}
+
+export interface GradientBackground {
+  name: string;
+  type: "gradient";
+  colors: string[];
+}
+
+export type CardBackground = SolidBackground | GradientBackground;
+
 // User preferences
 export interface UserPreferences {
   goalWeightLbs?: number;
@@ -58,6 +73,7 @@ export interface UserPreferences {
   carbsTarget: number;
   fatTarget: number;
   timezone: string;
+  cardBackground?: CardBackground;
 }
 
 // Health data from devices

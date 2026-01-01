@@ -19,6 +19,23 @@ export const preferencesRouter = Router();
 preferencesRouter.use(authMiddleware({ required: true }));
 
 /**
+ * Card background schema
+ */
+const solidBackgroundSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: z.literal("solid"),
+  hex: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+});
+
+const gradientBackgroundSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: z.literal("gradient"),
+  colors: z.array(z.string().regex(/^#[0-9A-Fa-f]{6}$/)).min(2).max(3),
+});
+
+const cardBackgroundSchema = z.union([solidBackgroundSchema, gradientBackgroundSchema]);
+
+/**
  * Update preferences schema
  */
 const updatePreferencesSchema = z.object({
@@ -29,6 +46,7 @@ const updatePreferencesSchema = z.object({
   carbsTarget: z.number().positive().max(1000).optional(),
   fatTarget: z.number().positive().max(500).optional(),
   timezone: z.string().max(50).optional(),
+  cardBackground: cardBackgroundSchema.optional(),
 });
 
 /**

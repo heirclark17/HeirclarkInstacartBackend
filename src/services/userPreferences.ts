@@ -29,6 +29,19 @@ export async function getUserPreferences(customerId: string): Promise<UserPrefer
 
     if (result.rows.length > 0) {
       const row = result.rows[0];
+
+      // Parse cardBackground from JSON if present
+      let cardBackground = undefined;
+      if (row.card_background) {
+        try {
+          cardBackground = typeof row.card_background === 'string'
+            ? JSON.parse(row.card_background)
+            : row.card_background;
+        } catch {
+          cardBackground = undefined;
+        }
+      }
+
       const prefs: UserPreferences = {
         goalWeightLbs: row.goal_weight_lbs ? Number(row.goal_weight_lbs) : undefined,
         hydrationTargetMl: Number(row.hydration_target_ml) || 3000,
@@ -37,6 +50,7 @@ export async function getUserPreferences(customerId: string): Promise<UserPrefer
         carbsTarget: Number(row.carbs_target) || 190,
         fatTarget: Number(row.fat_target) || 60,
         timezone: row.timezone || "America/New_York",
+        cardBackground,
       };
 
       // Cache the result
@@ -111,6 +125,10 @@ export async function updateUserPreferences(
   if (updates.timezone !== undefined) {
     setClauses.push(`timezone = $${paramIndex++}`);
     values.push(updates.timezone);
+  }
+  if (updates.cardBackground !== undefined) {
+    setClauses.push(`card_background = $${paramIndex++}`);
+    values.push(JSON.stringify(updates.cardBackground));
   }
 
   if (setClauses.length === 0) {
