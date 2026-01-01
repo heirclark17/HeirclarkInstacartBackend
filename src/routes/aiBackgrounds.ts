@@ -21,9 +21,18 @@ interface GradientBackground {
   name: string;
   type: "gradient";
   colors: string[];
+  angle?: number;
 }
 
-type CardBackground = SolidBackground | GradientBackground;
+interface PatternBackground {
+  name: string;
+  type: "pattern";
+  pattern: string; // CSS pattern name: leopard, zebra, dots, stripes, geometric, marble, etc.
+  baseColor: string;
+  patternColor: string;
+}
+
+type CardBackground = SolidBackground | GradientBackground | PatternBackground;
 
 interface AIBackgroundsResponse {
   backgrounds: CardBackground[];
@@ -35,21 +44,41 @@ const generateBackgroundsSchema = z.object({
 });
 
 // System prompt for AI
-const SYSTEM_PROMPT = `You are generating UI card background presets for a premium nutrition/fitness app.
-Return VALID JSON ONLY, matching exactly this schema:
+const SYSTEM_PROMPT = `You are generating UI background presets for a premium nutrition/fitness app.
+The user will describe what they want - you MUST match their request as closely as possible.
+
+Return VALID JSON ONLY, matching this schema:
 {
   "backgrounds": [
-    { "name": "…", "type": "solid", "hex": "#rrggbb" },
-    { "name": "…", "type": "gradient", "colors": ["#rrggbb", "#rrggbb"] }
+    { "name": "...", "type": "solid", "hex": "#rrggbb" },
+    { "name": "...", "type": "gradient", "colors": ["#rrggbb", "#rrggbb"], "angle": 135 },
+    { "name": "...", "type": "pattern", "pattern": "leopard", "baseColor": "#rrggbb", "patternColor": "#rrggbb" }
   ]
 }
-Rules:
-- Return exactly 4 backgrounds.
-- Each background must be either solid (hex) or gradient (2–3 hex colors).
-- Palettes must be premium, modern, and nutrition-app appropriate.
-- Ensure strong readability: backgrounds should allow white or near-black text to be readable.
-- Include a mix of dark and light options when possible.
-- No explanations, no markdown, no extra keys, JSON only.`;
+
+Background types:
+1. solid: Single color { type: "solid", hex: "#rrggbb" }
+2. gradient: 2-3 colors { type: "gradient", colors: ["#...", "#..."], angle: 135 }
+3. pattern: CSS patterns { type: "pattern", pattern: "NAME", baseColor: "#...", patternColor: "#..." }
+
+Available pattern names:
+- leopard, zebra, tiger, cheetah (animal prints)
+- dots, polkadots, confetti (dot patterns)
+- stripes, diagonal-stripes, chevron (line patterns)
+- geometric, triangles, hexagons, diamonds (shapes)
+- marble, granite, terrazzo (stone textures)
+- waves, ripples (organic patterns)
+- grid, checkerboard (structured patterns)
+- stars, hearts, floral (decorative)
+
+CRITICAL RULES:
+- Return EXACTLY 4 backgrounds
+- MATCH THE USER'S REQUEST - if they ask for leopard print, give them leopard patterns
+- If user asks for a pattern/texture, use the pattern type
+- If user asks for colors only, use solid or gradient
+- Mix types when appropriate for variety
+- Names should be creative and descriptive
+- No explanations, no markdown, ONLY valid JSON`;
 
 // Fallback backgrounds if AI fails
 const FALLBACK_BACKGROUNDS: CardBackground[] = [
@@ -58,6 +87,18 @@ const FALLBACK_BACKGROUNDS: CardBackground[] = [
   { name: "Ocean Gradient", type: "gradient", colors: ["#1a1a2e", "#16213e", "#0f3460"] },
   { name: "Sunset Glow", type: "gradient", colors: ["#2d1f3d", "#4a3f5c", "#6b5b7b"] },
 ];
+
+// Valid pattern names
+const VALID_PATTERNS = new Set([
+  'leopard', 'zebra', 'tiger', 'cheetah',
+  'dots', 'polkadots', 'confetti',
+  'stripes', 'diagonal-stripes', 'chevron',
+  'geometric', 'triangles', 'hexagons', 'diamonds',
+  'marble', 'granite', 'terrazzo',
+  'waves', 'ripples',
+  'grid', 'checkerboard',
+  'stars', 'hearts', 'floral'
+]);
 
 /**
  * Validate that the AI response matches our expected schema
@@ -99,6 +140,24 @@ function validateAIResponse(data: unknown): AIBackgroundsResponse | null {
         name: item.name,
         type: "gradient",
         colors: item.colors as string[],
+        angle: typeof item.angle === 'number' ? item.angle : 135,
+      });
+    } else if (item.type === "pattern") {
+      if (typeof item.pattern !== "string" || !VALID_PATTERNS.has(item.pattern)) {
+        return null;
+      }
+      if (typeof item.baseColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.baseColor)) {
+        return null;
+      }
+      if (typeof item.patternColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.patternColor)) {
+        return null;
+      }
+      validBackgrounds.push({
+        name: item.name,
+        type: "pattern",
+        pattern: item.pattern,
+        baseColor: item.baseColor,
+        patternColor: item.patternColor,
       });
     } else {
       return null;
