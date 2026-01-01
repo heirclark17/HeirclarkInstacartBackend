@@ -129,6 +129,8 @@ app.use(
       "X-Shopify-Customer-Id",
       "X-Correlation-Id",
       "X-Confirm-Delete",  // GDPR deletion confirmation
+      "Cache-Control",
+      "Pragma",
     ],
     credentials: true,
   })
