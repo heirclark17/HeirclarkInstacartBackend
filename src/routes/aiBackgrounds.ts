@@ -100,27 +100,100 @@ const VALID_PATTERNS = new Set([
   'stars', 'hearts', 'floral'
 ]);
 
+// Normalize pattern names (AI might return variations)
+function normalizePatternName(name: string): string | null {
+  const normalized = name.toLowerCase().replace(/[-_\s]+/g, '');
+
+  // Direct matches
+  if (VALID_PATTERNS.has(normalized)) return normalized;
+
+  // Common variations
+  const mappings: Record<string, string> = {
+    'leopardprint': 'leopard',
+    'leopardspot': 'leopard',
+    'leopardspots': 'leopard',
+    'zebraprint': 'zebra',
+    'zebrastripe': 'zebra',
+    'zebrastripes': 'zebra',
+    'tigerprint': 'tiger',
+    'tigerstripe': 'tiger',
+    'tigerstripes': 'tiger',
+    'cheetahprint': 'cheetah',
+    'cheetahspot': 'cheetah',
+    'cheetahspots': 'cheetah',
+    'polkadot': 'polkadots',
+    'dotted': 'dots',
+    'spotted': 'dots',
+    'striped': 'stripes',
+    'stripe': 'stripes',
+    'diagonalstripe': 'diagonal-stripes',
+    'diagonalstriped': 'diagonal-stripes',
+    'marbled': 'marble',
+    'wavy': 'waves',
+    'wave': 'waves',
+    'ripple': 'ripples',
+    'check': 'checkerboard',
+    'checked': 'checkerboard',
+    'checkered': 'checkerboard',
+    'star': 'stars',
+    'heart': 'hearts',
+    'flower': 'floral',
+    'flowers': 'floral',
+    'triangle': 'triangles',
+    'hexagon': 'hexagons',
+    'diamond': 'diamonds',
+    'geo': 'geometric',
+  };
+
+  if (mappings[normalized]) return mappings[normalized];
+
+  // Partial match - check if any valid pattern is contained
+  for (const pattern of VALID_PATTERNS) {
+    if (normalized.includes(pattern) || pattern.includes(normalized)) {
+      return pattern;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Validate that the AI response matches our expected schema
+ * More lenient - tries to salvage valid backgrounds even if some are invalid
  */
 function validateAIResponse(data: unknown): AIBackgroundsResponse | null {
-  if (!data || typeof data !== "object") return null;
+  console.log("[ai-backgrounds] Raw AI response:", JSON.stringify(data, null, 2));
+
+  if (!data || typeof data !== "object") {
+    console.log("[ai-backgrounds] Invalid: not an object");
+    return null;
+  }
 
   const obj = data as Record<string, unknown>;
-  if (!Array.isArray(obj.backgrounds)) return null;
-  if (obj.backgrounds.length !== 4) return null;
+  if (!Array.isArray(obj.backgrounds)) {
+    console.log("[ai-backgrounds] Invalid: backgrounds is not an array");
+    return null;
+  }
 
   const validBackgrounds: CardBackground[] = [];
 
-  for (const bg of obj.backgrounds) {
-    if (!bg || typeof bg !== "object") return null;
+  for (let i = 0; i < obj.backgrounds.length; i++) {
+    const bg = obj.backgrounds[i];
+    if (!bg || typeof bg !== "object") {
+      console.log(`[ai-backgrounds] Skipping bg[${i}]: not an object`);
+      continue;
+    }
     const item = bg as Record<string, unknown>;
 
-    if (typeof item.name !== "string") return null;
+    if (typeof item.name !== "string") {
+      console.log(`[ai-backgrounds] Skipping bg[${i}]: missing name`);
+      continue;
+    }
 
     if (item.type === "solid") {
       if (typeof item.hex !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.hex)) {
-        return null;
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid hex "${item.hex}"`);
+        continue;
       }
       validBackgrounds.push({
         name: item.name,
@@ -129,12 +202,19 @@ function validateAIResponse(data: unknown): AIBackgroundsResponse | null {
       });
     } else if (item.type === "gradient") {
       if (!Array.isArray(item.colors) || item.colors.length < 2 || item.colors.length > 3) {
-        return null;
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid colors array`);
+        continue;
       }
+      let validColors = true;
       for (const color of item.colors) {
         if (typeof color !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(color)) {
-          return null;
+          validColors = false;
+          break;
         }
+      }
+      if (!validColors) {
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid color in gradient`);
+        continue;
       }
       validBackgrounds.push({
         name: item.name,
@@ -143,28 +223,46 @@ function validateAIResponse(data: unknown): AIBackgroundsResponse | null {
         angle: typeof item.angle === 'number' ? item.angle : 135,
       });
     } else if (item.type === "pattern") {
-      if (typeof item.pattern !== "string" || !VALID_PATTERNS.has(item.pattern)) {
-        return null;
+      const patternName = typeof item.pattern === "string" ? normalizePatternName(item.pattern) : null;
+      if (!patternName) {
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid pattern "${item.pattern}"`);
+        continue;
       }
       if (typeof item.baseColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.baseColor)) {
-        return null;
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid baseColor "${item.baseColor}"`);
+        continue;
       }
       if (typeof item.patternColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.patternColor)) {
-        return null;
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid patternColor "${item.patternColor}"`);
+        continue;
       }
       validBackgrounds.push({
         name: item.name,
         type: "pattern",
-        pattern: item.pattern,
+        pattern: patternName,
         baseColor: item.baseColor,
         patternColor: item.patternColor,
       });
     } else {
-      return null;
+      console.log(`[ai-backgrounds] Skipping bg[${i}]: unknown type "${item.type}"`);
+      continue;
     }
   }
 
-  return { backgrounds: validBackgrounds };
+  console.log(`[ai-backgrounds] Validated ${validBackgrounds.length} backgrounds`);
+
+  // Need at least 1 valid background
+  if (validBackgrounds.length === 0) {
+    return null;
+  }
+
+  // Pad to 4 if we have fewer (duplicate last one)
+  while (validBackgrounds.length < 4) {
+    const last = validBackgrounds[validBackgrounds.length - 1];
+    validBackgrounds.push({ ...last, name: `${last.name} Alt` });
+  }
+
+  return { backgrounds: validBackgrounds.slice(0, 4) };
 }
 
 /**
@@ -211,8 +309,15 @@ async function callClaudeAPI(prompt: string): Promise<AIBackgroundsResponse | nu
       return null;
     }
 
-    // Parse JSON from response
-    const parsed = JSON.parse(content);
+    console.log("[ai-backgrounds] Claude raw content:", content);
+
+    // Parse JSON from response - handle markdown code blocks
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith("```")) {
+      jsonContent = jsonContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    const parsed = JSON.parse(jsonContent);
     return validateAIResponse(parsed);
   } catch (err) {
     console.error("[ai-backgrounds] Claude API call failed:", err);
@@ -238,7 +343,7 @@ async function callOpenAIAPI(prompt: string): Promise<AIBackgroundsResponse | nu
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {
@@ -246,7 +351,7 @@ async function callOpenAIAPI(prompt: string): Promise<AIBackgroundsResponse | nu
             content: `Generate 4 card background presets based on this vibe/style: "${prompt}"`,
           },
         ],
-        temperature: 0.7,
+        temperature: 0.8,
         response_format: { type: "json_object" },
       }),
     });
@@ -263,6 +368,8 @@ async function callOpenAIAPI(prompt: string): Promise<AIBackgroundsResponse | nu
       console.error("[ai-backgrounds] No content in OpenAI response");
       return null;
     }
+
+    console.log("[ai-backgrounds] OpenAI raw content:", content);
 
     const parsed = JSON.parse(content);
     return validateAIResponse(parsed);
