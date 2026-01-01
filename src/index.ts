@@ -55,6 +55,9 @@ import { heygenRouter } from "./routes/heygen";
 // GDPR compliance router
 import { gdprRouter } from "./routes/gdpr";
 
+// RAG (Retrieval-Augmented Generation) router
+import ragRouter from "./routes/rag";
+
 // AI Backgrounds router
 import aiBackgroundsRouter from "./routes/aiBackgrounds";
 
@@ -196,6 +199,9 @@ app.use("/api/v1/video", heygenRouter);
 
 // GDPR compliance routes (data export, deletion, retention policy)
 app.use("/api/v1/gdpr", gdprRouter);
+
+// RAG routes (top foods discovery, document management, search)
+app.use("/api/v1/rag", ragRouter);
 
 // AI Backgrounds routes (card customization)
 app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
