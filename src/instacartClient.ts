@@ -1,6 +1,10 @@
 // src/instacartClient.ts
 
-const INSTACART_BASE = "https://connect.instacart.com";
+// Use development URL for dev API keys, production URL for production keys
+// Set INSTACART_ENV=production in Railway when you get a production API key
+const INSTACART_BASE = process.env.INSTACART_ENV === 'production'
+  ? "https://connect.instacart.com"
+  : "https://connect.dev.instacart.tools";
 
 // ---- Types matching Instacart "Create shopping list page" ----
 
@@ -52,9 +56,9 @@ export async function createInstacartProductsLink(
     throw new Error("Missing INSTACART_API_KEY environment variable");
   }
 
-  // Debug: log key format (first/last few chars only)
+  // Debug: log key format and URL being used
+  console.log('[instacartClient] Using URL:', INSTACART_BASE);
   console.log('[instacartClient] API key length:', apiKey.length);
-  console.log('[instacartClient] API key format:', apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 5));
 
   const resp = await fetch(`${INSTACART_BASE}/idp/v1/products/products_link`, {
     method: "POST",
