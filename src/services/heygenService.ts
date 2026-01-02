@@ -8,11 +8,15 @@ const HEYGEN_API_BASE = 'https://api.heygen.com';
  */
 
 interface VideoGenerateResponse {
-  code: number;
+  error: {
+    code: string;
+    message: string;
+  } | null;
   data: {
     video_id: string;
-  };
-  message: string | null;
+  } | null;
+  code?: number; // Legacy field, may not be present
+  message?: string | null;
 }
 
 interface VideoStatusResponse {
@@ -163,11 +167,18 @@ export async function createAvatarVideo(script: string): Promise<string> {
       }
     );
 
-    console.log(`[heygen] API response code: ${response.data.code}, message: ${response.data.message}`);
+    console.log(`[heygen] API response:`, JSON.stringify(response.data));
 
-    if (response.data.code !== 100) {
-      console.error('[heygen] API returned error code:', response.data);
-      throw new Error(response.data.message || `HeyGen API error (code: ${response.data.code})`);
+    // Check for error in response
+    if (response.data.error) {
+      console.error('[heygen] API returned error:', response.data.error);
+      throw new Error(response.data.error.message || 'HeyGen API error');
+    }
+
+    // Check if we got a video_id
+    if (!response.data.data?.video_id) {
+      console.error('[heygen] No video_id in response:', response.data);
+      throw new Error('HeyGen API did not return a video_id');
     }
 
     console.log(`[heygen] Video generation started: ${response.data.data.video_id}`);
