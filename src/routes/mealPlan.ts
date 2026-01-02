@@ -494,7 +494,24 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    // Get response as text first to handle non-JSON responses
+    const responseText = await response.text();
+    console.log('[mealPlan] Instacart response status:', response.status);
+    console.log('[mealPlan] Instacart response body:', responseText.substring(0, 500));
+
+    let data: any;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error('[mealPlan] Instacart returned non-JSON:', responseText.substring(0, 200));
+      const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
+      return sendSuccess(res, {
+        instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
+        itemsCount: lineItems.length,
+        fallback: true,
+        shoppingList: lineItems,
+      });
+    }
 
     if (!response.ok) {
       console.error('[mealPlan] Instacart API error:', response.status, data);
