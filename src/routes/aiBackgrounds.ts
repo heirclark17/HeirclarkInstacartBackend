@@ -24,15 +24,14 @@ interface GradientBackground {
   angle?: number;
 }
 
-interface PatternBackground {
+interface ImageBackground {
   name: string;
-  type: "pattern";
-  pattern: string; // CSS pattern name: leopard, zebra, dots, stripes, geometric, marble, etc.
-  baseColor: string;
-  patternColor: string;
+  type: "image";
+  image: string; // Image name: leopard, zebra, marble, etc.
+  overlay?: string; // Optional color overlay with alpha (e.g., "#00000080")
 }
 
-type CardBackground = SolidBackground | GradientBackground | PatternBackground;
+type CardBackground = SolidBackground | GradientBackground | ImageBackground;
 
 interface AIBackgroundsResponse {
   backgrounds: CardBackground[];
@@ -52,31 +51,33 @@ Return VALID JSON ONLY, matching this schema:
   "backgrounds": [
     { "name": "...", "type": "solid", "hex": "#rrggbb" },
     { "name": "...", "type": "gradient", "colors": ["#rrggbb", "#rrggbb"], "angle": 135 },
-    { "name": "...", "type": "pattern", "pattern": "leopard", "baseColor": "#rrggbb", "patternColor": "#rrggbb" }
+    { "name": "...", "type": "image", "image": "leopard", "overlay": "#00000080" }
   ]
 }
 
 Background types:
 1. solid: Single color { type: "solid", hex: "#rrggbb" }
 2. gradient: 2-3 colors { type: "gradient", colors: ["#...", "#..."], angle: 135 }
-3. pattern: CSS patterns { type: "pattern", pattern: "NAME", baseColor: "#...", patternColor: "#..." }
+3. image: Real pattern images { type: "image", image: "NAME", overlay: "#rrggbbaa" }
 
-Available pattern names:
+Available image names (REAL IMAGES):
 - leopard, zebra, tiger, cheetah (animal prints)
-- dots, polkadots, confetti (dot patterns)
-- stripes, diagonal-stripes, chevron (line patterns)
-- geometric, triangles, hexagons, diamonds (shapes)
-- marble, granite, terrazzo (stone textures)
-- waves, ripples (organic patterns)
-- grid, checkerboard (structured patterns)
-- stars, hearts, floral (decorative)
+- marble, granite, terrazzo, concrete (stone/material textures)
+- wood, leather, denim, silk (fabric/material textures)
+- galaxy, stars, clouds, aurora (sky/space)
+- waves, water, ocean (water textures)
+- gold, silver, rose-gold, copper (metallic)
+- floral, tropical, botanical (nature patterns)
+- geometric, hexagon, abstract (modern patterns)
+
+The overlay is optional - use it to tint the image (e.g., "#00000080" for dark overlay, "#ffffff40" for light).
 
 CRITICAL RULES:
 - Return EXACTLY 4 backgrounds
-- MATCH THE USER'S REQUEST - if they ask for leopard print, give them leopard patterns
-- If user asks for a pattern/texture, use the pattern type
+- MATCH THE USER'S REQUEST EXACTLY - if they ask for leopard print, give them leopard image type
+- If user asks for a pattern/texture/print, use the image type with real images
 - If user asks for colors only, use solid or gradient
-- Mix types when appropriate for variety
+- Be creative with overlays to match the user's color preferences
 - Names should be creative and descriptive
 - No explanations, no markdown, ONLY valid JSON`;
 
@@ -88,27 +89,40 @@ const FALLBACK_BACKGROUNDS: CardBackground[] = [
   { name: "Sunset Glow", type: "gradient", colors: ["#2d1f3d", "#4a3f5c", "#6b5b7b"] },
 ];
 
-// Valid pattern names
-const VALID_PATTERNS = new Set([
+// Valid image names (must have corresponding images in Shopify assets)
+const VALID_IMAGES = new Set([
+  // Animal prints
   'leopard', 'zebra', 'tiger', 'cheetah',
-  'dots', 'polkadots', 'confetti',
-  'stripes', 'diagonal-stripes', 'chevron',
-  'geometric', 'triangles', 'hexagons', 'diamonds',
-  'marble', 'granite', 'terrazzo',
-  'waves', 'ripples',
-  'grid', 'checkerboard',
-  'stars', 'hearts', 'floral'
+  // Stone/material textures
+  'marble', 'granite', 'terrazzo', 'concrete',
+  // Fabric/material textures
+  'wood', 'leather', 'denim', 'silk',
+  // Sky/space
+  'galaxy', 'stars', 'clouds', 'aurora',
+  // Water textures
+  'waves', 'water', 'ocean',
+  // Metallic
+  'gold', 'silver', 'rose-gold', 'copper',
+  // Nature patterns
+  'floral', 'tropical', 'botanical',
+  // Modern patterns
+  'geometric', 'hexagon', 'abstract'
 ]);
 
-// Normalize pattern names (AI might return variations)
-function normalizePatternName(name: string): string | null {
+// Normalize image names (AI might return variations)
+function normalizeImageName(name: string): string | null {
   const normalized = name.toLowerCase().replace(/[-_\s]+/g, '');
 
   // Direct matches
-  if (VALID_PATTERNS.has(normalized)) return normalized;
+  if (VALID_IMAGES.has(normalized)) return normalized;
+
+  // Handle hyphenated versions
+  const withHyphens = name.toLowerCase().replace(/[\s_]+/g, '-');
+  if (VALID_IMAGES.has(withHyphens)) return withHyphens;
 
   // Common variations
   const mappings: Record<string, string> = {
+    // Animal prints
     'leopardprint': 'leopard',
     'leopardspot': 'leopard',
     'leopardspots': 'leopard',
@@ -121,36 +135,52 @@ function normalizePatternName(name: string): string | null {
     'cheetahprint': 'cheetah',
     'cheetahspot': 'cheetah',
     'cheetahspots': 'cheetah',
-    'polkadot': 'polkadots',
-    'dotted': 'dots',
-    'spotted': 'dots',
-    'striped': 'stripes',
-    'stripe': 'stripes',
-    'diagonalstripe': 'diagonal-stripes',
-    'diagonalstriped': 'diagonal-stripes',
+    // Stone
     'marbled': 'marble',
+    'marblepattern': 'marble',
+    'stone': 'granite',
+    // Materials
+    'wooden': 'wood',
+    'woodgrain': 'wood',
+    'woodtexture': 'wood',
+    // Space
+    'space': 'galaxy',
+    'starry': 'stars',
+    'starfield': 'stars',
+    'nightsky': 'stars',
+    'northernlights': 'aurora',
+    // Water
     'wavy': 'waves',
     'wave': 'waves',
-    'ripple': 'ripples',
-    'check': 'checkerboard',
-    'checked': 'checkerboard',
-    'checkered': 'checkerboard',
-    'star': 'stars',
-    'heart': 'hearts',
+    'oceanic': 'ocean',
+    'sea': 'ocean',
+    // Metallic
+    'golden': 'gold',
+    'goldfoil': 'gold',
+    'rosegold': 'rose-gold',
+    'silvery': 'silver',
+    'bronze': 'copper',
+    // Nature
     'flower': 'floral',
     'flowers': 'floral',
-    'triangle': 'triangles',
-    'hexagon': 'hexagons',
-    'diamond': 'diamonds',
+    'flowery': 'floral',
+    'jungle': 'tropical',
+    'palm': 'tropical',
+    'leaves': 'botanical',
+    'leaf': 'botanical',
+    'plant': 'botanical',
+    // Modern
     'geo': 'geometric',
+    'hexagons': 'hexagon',
+    'hex': 'hexagon',
   };
 
   if (mappings[normalized]) return mappings[normalized];
 
-  // Partial match - check if any valid pattern is contained
-  for (const pattern of VALID_PATTERNS) {
-    if (normalized.includes(pattern) || pattern.includes(normalized)) {
-      return pattern;
+  // Partial match - check if any valid image name is contained
+  for (const img of VALID_IMAGES) {
+    if (normalized.includes(img) || img.includes(normalized)) {
+      return img;
     }
   }
 
@@ -222,26 +252,26 @@ function validateAIResponse(data: unknown): AIBackgroundsResponse | null {
         colors: item.colors as string[],
         angle: typeof item.angle === 'number' ? item.angle : 135,
       });
-    } else if (item.type === "pattern") {
-      const patternName = typeof item.pattern === "string" ? normalizePatternName(item.pattern) : null;
-      if (!patternName) {
-        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid pattern "${item.pattern}"`);
+    } else if (item.type === "image") {
+      const imageName = typeof item.image === "string" ? normalizeImageName(item.image) : null;
+      if (!imageName) {
+        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid image "${item.image}"`);
         continue;
       }
-      if (typeof item.baseColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.baseColor)) {
-        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid baseColor "${item.baseColor}"`);
-        continue;
-      }
-      if (typeof item.patternColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(item.patternColor)) {
-        console.log(`[ai-backgrounds] Skipping bg[${i}]: invalid patternColor "${item.patternColor}"`);
-        continue;
+      // Overlay is optional, validate if present
+      let overlay: string | undefined;
+      if (item.overlay) {
+        if (typeof item.overlay === "string" && /^#[0-9A-Fa-f]{6,8}$/.test(item.overlay)) {
+          overlay = item.overlay;
+        } else {
+          console.log(`[ai-backgrounds] Warning: invalid overlay "${item.overlay}", ignoring`);
+        }
       }
       validBackgrounds.push({
         name: item.name,
-        type: "pattern",
-        pattern: patternName,
-        baseColor: item.baseColor,
-        patternColor: item.patternColor,
+        type: "image",
+        image: imageName,
+        overlay,
       });
     } else {
       console.log(`[ai-backgrounds] Skipping bg[${i}]: unknown type "${item.type}"`);
