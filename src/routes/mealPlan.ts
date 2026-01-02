@@ -471,20 +471,20 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
   }
 
   try {
+    // Use the same endpoint as the working instacart.ts route
+    const INSTACART_BASE_URL = process.env.INSTACART_BASE_URL || 'https://connect.instacart.com';
+
     const payload = {
-      title: planTitle || '7-Day Meal Plan Ingredients',
-      link_type: 'shopping_list',
-      line_items: lineItems.map((item: any) => ({
-        ...item,
-        display_text: `${item.quantity} ${item.unit} ${item.name}`,
+      items: lineItems.map((item: any) => ({
+        name: item.name,
+        quantity: item.quantity || 1,
+        unit: item.unit || 'each',
       })),
-      landing_page_configuration: {
-        partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
-        enable_pantry_items: false,
-      },
+      landing_page_url: 'https://heirclark.com/pages/meal-plan',
+      partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
     };
 
-    const response = await fetch('https://connect.instacart.com/idp/v1/products/products_link', {
+    const response = await fetch(`${INSTACART_BASE_URL}/v2/fulfillment/orders/products_link`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${INSTACART_API_KEY}`,
@@ -509,7 +509,7 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
     }
 
     return sendSuccess(res, {
-      instacartUrl: data.products_link_url,
+      instacartUrl: data.products_link_url || data.link_url,
       itemsCount: lineItems.length,
     });
 
