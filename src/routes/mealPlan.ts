@@ -436,30 +436,47 @@ mealPlanRouter.get('/meal-plan', async (req: Request, res: Response) => {
  * Create an Instacart shopping link from meal plan ingredients
  */
 mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res: Response) => {
-  const { shoppingList, planTitle } = req.body;
+  // Accept either 'shoppingList' or 'ingredients' for backwards compatibility
+  const { shoppingList, ingredients, planTitle } = req.body;
+  const items = shoppingList || ingredients;
 
-  if (!shoppingList || !Array.isArray(shoppingList) || shoppingList.length === 0) {
-    return sendError(res, 'Missing or empty shoppingList', 400);
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return sendError(res, 'Missing or empty shoppingList/ingredients', 400);
   }
 
+  // Build line items
+  const lineItems = items.map((item: ShoppingListItem) => ({
+    name: item.name,
+    quantity: item.quantity || 1,
+    unit: item.unit || 'each',
+  }));
+
   const INSTACART_API_KEY = process.env.INSTACART_API_KEY;
+
+  // If no API key, generate a search URL fallback
   if (!INSTACART_API_KEY) {
-    return sendError(res, 'Instacart integration not configured', 503);
+    console.log('[mealPlan] No Instacart API key, using search fallback');
+
+    // Create a search query with top ingredients
+    const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
+    const searchUrl = `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`;
+
+    return sendSuccess(res, {
+      instacartUrl: searchUrl,
+      itemsCount: lineItems.length,
+      fallback: true,
+      shoppingList: lineItems, // Return the list so frontend can display it
+    });
   }
 
   try {
-    // Build line items for Instacart
-    const lineItems = shoppingList.map((item: ShoppingListItem) => ({
-      name: item.name,
-      quantity: item.quantity || 1,
-      unit: item.unit || 'each',
-      display_text: `${item.quantity} ${item.unit} ${item.name}`,
-    }));
-
     const payload = {
       title: planTitle || '7-Day Meal Plan Ingredients',
       link_type: 'shopping_list',
-      line_items: lineItems,
+      line_items: lineItems.map((item: any) => ({
+        ...item,
+        display_text: `${item.quantity} ${item.unit} ${item.name}`,
+      })),
       landing_page_configuration: {
         partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
         enable_pantry_items: false,
@@ -480,7 +497,14 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
     if (!response.ok) {
       console.error('[mealPlan] Instacart API error:', response.status, data);
-      return sendError(res, 'Failed to create Instacart link', 502);
+      // Fall back to search URL on API error
+      const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
+      return sendSuccess(res, {
+        instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
+        itemsCount: lineItems.length,
+        fallback: true,
+        shoppingList: lineItems,
+      });
     }
 
     return sendSuccess(res, {
@@ -490,7 +514,14 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
   } catch (err: any) {
     console.error('[mealPlan] Instacart order failed:', err);
-    return sendServerError(res, 'Failed to create Instacart order');
+    // Fall back to search URL on error
+    const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
+    return sendSuccess(res, {
+      instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
+      itemsCount: lineItems.length,
+      fallback: true,
+      shoppingList: lineItems,
+    });
   }
 });
 
