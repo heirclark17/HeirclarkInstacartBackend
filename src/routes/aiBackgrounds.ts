@@ -398,19 +398,14 @@ aiBackgroundsRouter.post(
 
     const { prompt } = parseResult.data;
 
-    // Try Claude first, then OpenAI, then fallback
-    let result = await callClaudeAPI(prompt);
+    // Use OpenAI only
+    let result = await callOpenAIAPI(prompt);
 
     if (!result) {
-      console.log("[ai-backgrounds] Claude failed, trying OpenAI...");
-      result = await callOpenAIAPI(prompt);
-    }
-
-    if (!result) {
-      // If AI fails, try once more with a stricter prompt
+      // If first attempt fails, retry with stricter prompt
       console.log("[ai-backgrounds] Retrying with stricter prompt...");
       const strictPrompt = `${prompt}. Remember: ONLY output valid JSON with exactly 4 backgrounds. No markdown, no explanations.`;
-      result = await callClaudeAPI(strictPrompt) || await callOpenAIAPI(strictPrompt);
+      result = await callOpenAIAPI(strictPrompt);
     }
 
     if (!result) {
