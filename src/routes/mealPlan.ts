@@ -494,6 +494,126 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
   }
 });
 
+/**
+ * POST /api/v1/ai/recipe-details
+ * Generate detailed recipe with AI for a specific meal
+ */
+mealPlanRouter.post('/recipe-details', planRateLimit, async (req: Request, res: Response) => {
+  const { dishName, mealType, calories, macros } = req.body;
+
+  if (!dishName) {
+    return sendError(res, 'Missing dishName', 400);
+  }
+
+  if (!OPENAI_API_KEY) {
+    // Return a generic recipe if no API key
+    return sendSuccess(res, {
+      recipe: generateGenericRecipe(dishName, calories, macros)
+    });
+  }
+
+  try {
+    const prompt = `Generate a detailed recipe for "${dishName}" (${mealType || 'meal'}).
+Target: ${calories || 500} calories, ${macros?.protein || 30}g protein, ${macros?.carbs || 40}g carbs, ${macros?.fat || 15}g fat.
+
+Return ONLY valid JSON (no markdown):
+{
+  "ingredients": [
+    {"name": "ingredient name", "quantity": 1, "unit": "cup"}
+  ],
+  "instructions": ["Step 1...", "Step 2..."],
+  "prepMinutes": 10,
+  "cookMinutes": 20,
+  "tips": "Optional cooking tip"
+}
+
+Use 5-8 common grocery ingredients. Keep instructions clear and numbered.`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: 'You are a chef creating simple, delicious recipes. Return only JSON.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.5,
+        max_tokens: 1000,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`OpenAI error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    let content = data.choices?.[0]?.message?.content || '';
+
+    // Clean markdown if present
+    if (content.startsWith('```')) {
+      content = content.replace(/```json?\n?/g, '').replace(/```$/g, '');
+    }
+
+    const recipe = JSON.parse(content.trim());
+    return sendSuccess(res, { recipe });
+
+  } catch (err: any) {
+    console.warn('[mealPlan] AI recipe generation failed:', err.message);
+    // Return generic recipe on failure
+    return sendSuccess(res, {
+      recipe: generateGenericRecipe(dishName, calories, macros)
+    });
+  }
+});
+
+// Generate a generic recipe when AI is unavailable
+function generateGenericRecipe(dishName: string, calories?: number, macros?: any) {
+  const isBreakfast = /breakfast|oat|egg|yogurt|pancake|smoothie/i.test(dishName);
+  const isLunch = /salad|wrap|sandwich|bowl|soup/i.test(dishName);
+
+  const baseIngredients = isBreakfast ? [
+    { name: 'eggs', quantity: 2, unit: 'large' },
+    { name: 'olive oil', quantity: 1, unit: 'tbsp' },
+    { name: 'salt and pepper', quantity: 1, unit: 'pinch' },
+    { name: 'fresh vegetables of choice', quantity: 1, unit: 'cup' },
+  ] : isLunch ? [
+    { name: 'mixed greens', quantity: 2, unit: 'cups' },
+    { name: 'grilled chicken breast', quantity: 4, unit: 'oz' },
+    { name: 'cherry tomatoes', quantity: 0.5, unit: 'cup' },
+    { name: 'olive oil', quantity: 1, unit: 'tbsp' },
+    { name: 'lemon juice', quantity: 1, unit: 'tbsp' },
+  ] : [
+    { name: 'protein of choice', quantity: 6, unit: 'oz' },
+    { name: 'vegetables', quantity: 1, unit: 'cup' },
+    { name: 'whole grain or starch', quantity: 0.5, unit: 'cup' },
+    { name: 'olive oil', quantity: 1, unit: 'tbsp' },
+    { name: 'herbs and spices', quantity: 1, unit: 'tsp' },
+  ];
+
+  return {
+    ingredients: baseIngredients,
+    instructions: [
+      'Prep all ingredients by washing and cutting as needed.',
+      'Heat oil in a pan over medium heat.',
+      'Cook protein until done, about 5-7 minutes per side.',
+      'Add vegetables and cook until tender.',
+      'Season to taste and serve immediately.'
+    ],
+    prepMinutes: 10,
+    cookMinutes: 20,
+    tips: 'Feel free to substitute ingredients based on what you have available.'
+  };
+}
+
 // Ensure table exists on module load
 async function ensureMealPlanTable(): Promise<void> {
   try {
