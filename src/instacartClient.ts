@@ -47,10 +47,14 @@ export interface InstacartProductsLinkResponse {
 export async function createInstacartProductsLink(
   payload: InstacartProductsLinkPayload
 ): Promise<InstacartProductsLinkResponse> {
-  const apiKey = process.env.INSTACART_API_KEY;
+  const apiKey = (process.env.INSTACART_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error("Missing INSTACART_API_KEY environment variable");
   }
+
+  // Debug: log key format (first/last few chars only)
+  console.log('[instacartClient] API key length:', apiKey.length);
+  console.log('[instacartClient] API key format:', apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 5));
 
   const resp = await fetch(`${INSTACART_BASE}/idp/v1/products/products_link`, {
     method: "POST",
