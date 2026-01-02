@@ -440,6 +440,168 @@ heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Respo
 /**
  * Generate a personalized goal coaching script
  */
+/**
+ * POST /api/v1/video/meal-plan-coach
+ * Generate a personalized video/script for a user's 7-day meal plan
+ */
+heygenRouter.post('/meal-plan-coach', videoRateLimit, async (req: Request, res: Response) => {
+  const { userId: rawUserId, plan, targets } = req.body;
+
+  const userId = sanitizeUserId(rawUserId || 'guest');
+
+  if (!plan || !targets) {
+    return res.status(400).json({ ok: false, error: 'Missing plan or targets data' });
+  }
+
+  try {
+    // Generate personalized meal plan coaching script
+    const script = generateMealPlanCoachScript(plan, targets);
+
+    // Try to create HeyGen video if API key is configured
+    const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
+
+    if (hasHeyGenKey && process.env.HEYGEN_AVATAR_ID && process.env.HEYGEN_VOICE_ID) {
+      try {
+        console.log(`[heygen] Creating meal plan coach video for user ${userId}`);
+        const heygenVideoId = await createAvatarVideo(script);
+
+        // Store in database
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7);
+
+        await pool.query(
+          `INSERT INTO hc_user_videos (user_id, heygen_video_id, script_text, status, plan_hash, expires_at)
+           VALUES ($1, $2, $3, 'processing', $4, $5)
+           ON CONFLICT (user_id, plan_hash)
+           DO UPDATE SET
+             heygen_video_id = $2,
+             script_text = $3,
+             status = 'processing',
+             expires_at = $5,
+             created_at = NOW()`,
+          [userId, heygenVideoId, script, `mealplan_${Date.now()}`, expiresAt.toISOString()]
+        );
+
+        // Poll for completion (max 90 seconds)
+        let attempts = 0;
+        const maxAttempts = 18;
+        const pollInterval = 5000;
+
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          attempts++;
+
+          const status = await getVideoStatus(heygenVideoId);
+
+          if (status.status === 'completed' && status.videoUrl) {
+            await pool.query(
+              `UPDATE hc_user_videos SET status = 'completed', video_url = $1 WHERE heygen_video_id = $2`,
+              [status.videoUrl, heygenVideoId]
+            );
+
+            return res.json({
+              ok: true,
+              videoId: heygenVideoId,
+              videoUrl: status.videoUrl,
+              script: script,
+            });
+          } else if (status.status === 'failed') {
+            console.warn(`[heygen] Meal plan video generation failed for ${heygenVideoId}`);
+            break;
+          }
+        }
+
+        // Timeout or failed - return script as fallback
+        return res.json({
+          ok: true,
+          videoId: heygenVideoId,
+          videoUrl: null,
+          script: script,
+          message: 'Video is still processing. Script provided as fallback.',
+        });
+
+      } catch (heygenErr: any) {
+        console.error('[heygen] Meal plan coach video creation failed:', heygenErr.message);
+      }
+    }
+
+    // No HeyGen or it failed - return script only
+    return res.json({
+      ok: true,
+      videoUrl: null,
+      script: script,
+      message: 'Video generation not available. Coaching script provided.',
+    });
+
+  } catch (err: any) {
+    console.error('[heygen] meal-plan-coach failed:', err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || 'Meal plan coach generation failed',
+    });
+  }
+});
+
+/**
+ * Generate a personalized meal plan coaching script
+ */
+function generateMealPlanCoachScript(plan: any, targets: any): string {
+  const calories = targets?.calories || 2000;
+  const protein = targets?.protein || 150;
+  const carbs = targets?.carbs || 200;
+  const fat = targets?.fat || 65;
+
+  // Extract highlights from the plan
+  const days = plan?.days || [];
+  const totalMeals = days.reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0);
+  const shoppingItems = plan?.shoppingList?.length || 0;
+
+  // Get some meal highlights
+  const mealHighlights: string[] = [];
+  if (days.length > 0) {
+    for (let i = 0; i < Math.min(3, days.length); i++) {
+      const day = days[i];
+      if (day.meals && day.meals.length > 0) {
+        const meal = day.meals[Math.floor(Math.random() * day.meals.length)];
+        if (meal?.dishName && !mealHighlights.includes(meal.dishName)) {
+          mealHighlights.push(meal.dishName);
+        }
+      }
+    }
+  }
+
+  let script = `Hey there! I'm so excited to walk you through your personalized 7-day meal plan. This is going to be a game-changer for your nutrition journey.\n\n`;
+
+  script += `Let me start with the big picture. Your plan is designed to hit ${calories.toLocaleString()} calories per day, `;
+  script += `with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
+  script += `These macros are specifically calculated to help you reach your goals.\n\n`;
+
+  script += `Over the next 7 days, you'll enjoy ${totalMeals} delicious meals. `;
+
+  if (mealHighlights.length > 0) {
+    script += `Some highlights include ${mealHighlights.join(', ')}. `;
+    script += `Each recipe is designed to be practical, tasty, and easy to prepare.\n\n`;
+  } else {
+    script += `Each day features breakfast, lunch, and dinner options that are both nutritious and satisfying.\n\n`;
+  }
+
+  if (shoppingItems > 0) {
+    script += `I've also prepared a shopping list with ${shoppingItems} items. `;
+    script += `You can order everything through Instacart with just one tap, making meal prep a breeze.\n\n`;
+  }
+
+  script += `Here are my top tips for success with this plan:\n\n`;
+  script += `First, do your meal prep on Sunday. Spending just an hour prepping proteins and chopping vegetables will save you hours during the week.\n\n`;
+  script += `Second, don't stress about being perfect. If you're within a hundred calories of your target, you're doing great. Consistency matters more than perfection.\n\n`;
+  script += `Third, stay hydrated. Drink plenty of water throughout the day. It helps with energy, digestion, and even appetite control.\n\n`;
+
+  script += `Remember, this plan is your roadmap, not a prison. If you need to swap a meal, that's fine. Just try to keep the calories and macros similar.\n\n`;
+
+  script += `You've got this! Each meal you eat according to plan is a step toward your goals. I'm here to support you every step of the way. Let's make this week amazing!`;
+
+  return script;
+}
+
 function generateGoalCoachScript(goalData: any, userInputs: any): string {
   const {
     calories = 2000,

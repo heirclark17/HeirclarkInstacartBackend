@@ -1,0 +1,555 @@
+// src/routes/mealPlan.ts
+import { Router, Request, Response } from 'express';
+import { pool } from '../db/pool';
+import { sendSuccess, sendError, sendServerError } from '../middleware/responseHelper';
+import { rateLimitMiddleware } from '../middleware/rateLimiter';
+
+export const mealPlanRouter = Router();
+
+// Apply rate limiting (10 requests per minute per IP)
+const planRateLimit = rateLimitMiddleware({
+  windowMs: 60000,
+  maxRequests: 10,
+  message: 'Too many meal plan requests, please try again later',
+});
+
+// ============================================================
+// TYPES
+// ============================================================
+
+interface MealPlanTargets {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+interface MealPlanPreferences {
+  dietType?: string; // e.g., 'balanced', 'high-protein', 'low-carb', 'vegetarian', 'pescatarian'
+  mealsPerDay?: number;
+  allergies?: string[];
+  cuisinePreferences?: string[];
+  cookingSkill?: 'beginner' | 'intermediate' | 'advanced';
+  budgetPerDay?: number;
+}
+
+interface Ingredient {
+  name: string;
+  quantity: number;
+  unit: string;
+  instacartQuery?: string;
+}
+
+interface Recipe {
+  ingredients: Ingredient[];
+  instructions: string[];
+  prepMinutes: number;
+  cookMinutes: number;
+}
+
+interface Meal {
+  mealType: string;
+  dishName: string;
+  description: string;
+  calories: number;
+  macros: {
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+  servings: number;
+  recipe: Recipe;
+}
+
+interface DayPlan {
+  day: number;
+  meals: Meal[];
+  totalCalories: number;
+  totalMacros: {
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+}
+
+interface ShoppingListItem {
+  name: string;
+  quantity: number;
+  unit: string;
+  category?: string;
+}
+
+interface MealPlanResponse {
+  days: DayPlan[];
+  shoppingList: ShoppingListItem[];
+  generatedAt: string;
+  targets: MealPlanTargets;
+}
+
+// ============================================================
+// OPENAI MEAL PLAN GENERATION
+// ============================================================
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+async function generateMealPlanWithAI(
+  targets: MealPlanTargets,
+  preferences: MealPlanPreferences
+): Promise<MealPlanResponse> {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+
+  const dietTypeText = preferences.dietType || 'balanced';
+  const mealsPerDay = preferences.mealsPerDay || 3;
+  const allergiesText = preferences.allergies?.length
+    ? `Avoid these allergens: ${preferences.allergies.join(', ')}.`
+    : '';
+  const skillText = preferences.cookingSkill || 'intermediate';
+
+  const systemPrompt = `You are a professional nutritionist creating detailed 7-day meal plans.
+Return ONLY valid JSON matching this exact structure (no markdown, no extra text):
+
+{
+  "days": [
+    {
+      "day": 1,
+      "meals": [
+        {
+          "mealType": "Breakfast",
+          "dishName": "Recipe Name",
+          "description": "Brief appetizing description",
+          "calories": 450,
+          "macros": { "protein": 30, "carbs": 40, "fat": 15 },
+          "servings": 1,
+          "recipe": {
+            "ingredients": [
+              { "name": "boneless skinless chicken breast", "quantity": 6, "unit": "oz" }
+            ],
+            "instructions": ["Step 1...", "Step 2..."],
+            "prepMinutes": 10,
+            "cookMinutes": 20
+          }
+        }
+      ],
+      "totalCalories": 2000,
+      "totalMacros": { "protein": 150, "carbs": 200, "fat": 65 }
+    }
+  ],
+  "shoppingList": [
+    { "name": "boneless skinless chicken breast", "quantity": 3, "unit": "lb", "category": "Protein" }
+  ]
+}
+
+CRITICAL RULES:
+1. Return EXACTLY 7 days
+2. Each day should have ${mealsPerDay} meals (${mealsPerDay === 3 ? 'Breakfast, Lunch, Dinner' : 'adjust meal types accordingly'})
+3. Daily totals must be close to targets: ${targets.calories} calories, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat
+4. Use grocery-friendly ingredient names specific enough for Instacart search (e.g., "boneless skinless chicken breast" not just "chicken")
+5. Include practical cooking instructions
+6. Aggregate shopping list by summing quantities across the week
+7. Diet type: ${dietTypeText}
+8. Cooking skill level: ${skillText}
+${allergiesText}`;
+
+  const userPrompt = `Create a 7-day meal plan with these daily targets:
+- Calories: ${targets.calories} kcal
+- Protein: ${targets.protein}g
+- Carbs: ${targets.carbs}g
+- Fat: ${targets.fat}g
+
+Diet preference: ${dietTypeText}
+Meals per day: ${mealsPerDay}
+${allergiesText}
+
+Make recipes realistic, delicious, and easy to shop for. Use common grocery store ingredients.`;
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[mealPlan] OpenAI API error:', response.status, errorText);
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error('No content in OpenAI response');
+  }
+
+  // Parse JSON, handle potential markdown code blocks
+  let parsedPlan: any;
+  try {
+    // Remove markdown code blocks if present
+    let cleanContent = content.trim();
+    if (cleanContent.startsWith('```json')) {
+      cleanContent = cleanContent.slice(7);
+    } else if (cleanContent.startsWith('```')) {
+      cleanContent = cleanContent.slice(3);
+    }
+    if (cleanContent.endsWith('```')) {
+      cleanContent = cleanContent.slice(0, -3);
+    }
+    parsedPlan = JSON.parse(cleanContent.trim());
+  } catch (parseErr) {
+    console.error('[mealPlan] Failed to parse OpenAI response:', content.substring(0, 500));
+    throw new Error('Failed to parse meal plan response');
+  }
+
+  // Validate structure
+  if (!parsedPlan.days || !Array.isArray(parsedPlan.days) || parsedPlan.days.length !== 7) {
+    console.error('[mealPlan] Invalid plan structure - missing or incomplete days');
+    throw new Error('Invalid meal plan structure');
+  }
+
+  return {
+    ...parsedPlan,
+    generatedAt: new Date().toISOString(),
+    targets,
+  };
+}
+
+// ============================================================
+// FALLBACK PLAN (when AI fails)
+// ============================================================
+
+function generateFallbackPlan(targets: MealPlanTargets): MealPlanResponse {
+  const mealCalories = {
+    breakfast: Math.round(targets.calories * 0.25),
+    lunch: Math.round(targets.calories * 0.35),
+    dinner: Math.round(targets.calories * 0.40),
+  };
+
+  const mealMacros = {
+    breakfast: {
+      protein: Math.round(targets.protein * 0.25),
+      carbs: Math.round(targets.carbs * 0.30),
+      fat: Math.round(targets.fat * 0.25),
+    },
+    lunch: {
+      protein: Math.round(targets.protein * 0.35),
+      carbs: Math.round(targets.carbs * 0.35),
+      fat: Math.round(targets.fat * 0.35),
+    },
+    dinner: {
+      protein: Math.round(targets.protein * 0.40),
+      carbs: Math.round(targets.carbs * 0.35),
+      fat: Math.round(targets.fat * 0.40),
+    },
+  };
+
+  const days: DayPlan[] = [];
+
+  const fallbackMeals = [
+    {
+      breakfast: { name: 'Greek Yogurt Parfait', desc: 'Creamy Greek yogurt layered with fresh berries and granola' },
+      lunch: { name: 'Grilled Chicken Salad', desc: 'Mixed greens with grilled chicken, cherry tomatoes, and balsamic vinaigrette' },
+      dinner: { name: 'Baked Salmon with Vegetables', desc: 'Herb-crusted salmon with roasted broccoli and sweet potato' },
+    },
+    {
+      breakfast: { name: 'Veggie Egg Scramble', desc: 'Fluffy scrambled eggs with spinach, peppers, and cheese' },
+      lunch: { name: 'Turkey Wrap', desc: 'Whole wheat wrap with sliced turkey, avocado, and mixed greens' },
+      dinner: { name: 'Lean Beef Stir-Fry', desc: 'Tender beef strips with mixed vegetables in ginger sauce' },
+    },
+    {
+      breakfast: { name: 'Overnight Oats', desc: 'Steel-cut oats with almond milk, chia seeds, and banana' },
+      lunch: { name: 'Quinoa Buddha Bowl', desc: 'Quinoa with chickpeas, roasted vegetables, and tahini dressing' },
+      dinner: { name: 'Herb Roasted Chicken', desc: 'Juicy roasted chicken breast with green beans and rice' },
+    },
+    {
+      breakfast: { name: 'Avocado Toast with Eggs', desc: 'Whole grain toast with mashed avocado and poached eggs' },
+      lunch: { name: 'Mediterranean Chicken Bowl', desc: 'Grilled chicken with feta, olives, cucumber, and hummus' },
+      dinner: { name: 'Shrimp and Vegetable Pasta', desc: 'Whole wheat pasta with garlic shrimp and sautéed vegetables' },
+    },
+    {
+      breakfast: { name: 'Protein Smoothie Bowl', desc: 'Blended protein smoothie topped with nuts and fresh fruit' },
+      lunch: { name: 'Asian Chicken Lettuce Wraps', desc: 'Seasoned ground chicken in crisp lettuce cups with peanut sauce' },
+      dinner: { name: 'Grilled Tilapia with Salsa', desc: 'Light tilapia fillet with mango salsa and cilantro lime rice' },
+    },
+    {
+      breakfast: { name: 'Breakfast Burrito', desc: 'Scrambled eggs with black beans, cheese, and salsa in a tortilla' },
+      lunch: { name: 'Tuna Salad on Greens', desc: 'Light tuna salad with mixed greens and whole grain crackers' },
+      dinner: { name: 'Turkey Meatballs with Marinara', desc: 'Lean turkey meatballs over zucchini noodles with marinara sauce' },
+    },
+    {
+      breakfast: { name: 'Cottage Cheese Bowl', desc: 'Cottage cheese with pineapple, honey, and walnuts' },
+      lunch: { name: 'Chicken Caesar Wrap', desc: 'Grilled chicken with romaine and light Caesar dressing in a wrap' },
+      dinner: { name: 'Baked Cod with Asparagus', desc: 'Lemon herb cod with roasted asparagus and wild rice' },
+    },
+  ];
+
+  for (let i = 0; i < 7; i++) {
+    const dayMeals = fallbackMeals[i];
+    days.push({
+      day: i + 1,
+      meals: [
+        {
+          mealType: 'Breakfast',
+          dishName: dayMeals.breakfast.name,
+          description: dayMeals.breakfast.desc,
+          calories: mealCalories.breakfast,
+          macros: mealMacros.breakfast,
+          servings: 1,
+          recipe: {
+            ingredients: [
+              { name: 'See recipe details', quantity: 1, unit: 'serving' },
+            ],
+            instructions: ['Prepare ingredients', 'Cook according to standard recipe', 'Serve and enjoy'],
+            prepMinutes: 10,
+            cookMinutes: 15,
+          },
+        },
+        {
+          mealType: 'Lunch',
+          dishName: dayMeals.lunch.name,
+          description: dayMeals.lunch.desc,
+          calories: mealCalories.lunch,
+          macros: mealMacros.lunch,
+          servings: 1,
+          recipe: {
+            ingredients: [
+              { name: 'See recipe details', quantity: 1, unit: 'serving' },
+            ],
+            instructions: ['Prepare ingredients', 'Cook according to standard recipe', 'Serve and enjoy'],
+            prepMinutes: 15,
+            cookMinutes: 20,
+          },
+        },
+        {
+          mealType: 'Dinner',
+          dishName: dayMeals.dinner.name,
+          description: dayMeals.dinner.desc,
+          calories: mealCalories.dinner,
+          macros: mealMacros.dinner,
+          servings: 1,
+          recipe: {
+            ingredients: [
+              { name: 'See recipe details', quantity: 1, unit: 'serving' },
+            ],
+            instructions: ['Prepare ingredients', 'Cook according to standard recipe', 'Serve and enjoy'],
+            prepMinutes: 15,
+            cookMinutes: 30,
+          },
+        },
+      ],
+      totalCalories: targets.calories,
+      totalMacros: {
+        protein: targets.protein,
+        carbs: targets.carbs,
+        fat: targets.fat,
+      },
+    });
+  }
+
+  return {
+    days,
+    shoppingList: [],
+    generatedAt: new Date().toISOString(),
+    targets,
+  };
+}
+
+// ============================================================
+// ENDPOINTS
+// ============================================================
+
+/**
+ * POST /api/v1/ai/meal-plan-7day
+ * Generate a 7-day AI meal plan based on user's goals
+ */
+mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: Response) => {
+  const { shopifyCustomerId, targets, preferences } = req.body;
+
+  // Validate targets
+  if (!targets || typeof targets.calories !== 'number') {
+    return sendError(res, 'Missing or invalid targets. Required: calories, protein, carbs, fat', 400);
+  }
+
+  const validatedTargets: MealPlanTargets = {
+    calories: Number(targets.calories) || 2000,
+    protein: Number(targets.protein) || 150,
+    carbs: Number(targets.carbs) || 200,
+    fat: Number(targets.fat) || 65,
+  };
+
+  const validatedPreferences: MealPlanPreferences = {
+    dietType: preferences?.dietType || 'balanced',
+    mealsPerDay: preferences?.mealsPerDay || 3,
+    allergies: preferences?.allergies || [],
+    cookingSkill: preferences?.cookingSkill || 'intermediate',
+  };
+
+  console.log(`[mealPlan] Generating 7-day plan for user ${shopifyCustomerId || 'anonymous'}:`, validatedTargets);
+
+  try {
+    // Try AI generation first
+    let plan: MealPlanResponse;
+
+    try {
+      plan = await generateMealPlanWithAI(validatedTargets, validatedPreferences);
+      console.log('[mealPlan] AI plan generated successfully');
+    } catch (aiErr: any) {
+      console.warn('[mealPlan] AI generation failed, using fallback:', aiErr.message);
+      plan = generateFallbackPlan(validatedTargets);
+    }
+
+    // Store plan in database for user if logged in
+    if (shopifyCustomerId) {
+      try {
+        await pool.query(
+          `INSERT INTO hc_meal_plans (shopify_customer_id, plan_data, created_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (shopify_customer_id)
+           DO UPDATE SET plan_data = $2, created_at = NOW()`,
+          [String(shopifyCustomerId), JSON.stringify(plan)]
+        );
+      } catch (dbErr) {
+        console.warn('[mealPlan] Failed to store plan in database:', dbErr);
+        // Continue anyway - plan still works
+      }
+    }
+
+    return sendSuccess(res, { plan });
+
+  } catch (err: any) {
+    console.error('[mealPlan] Generation failed:', err);
+    return sendServerError(res, err.message || 'Failed to generate meal plan');
+  }
+});
+
+/**
+ * GET /api/v1/ai/meal-plan
+ * Get the latest saved meal plan for a user
+ */
+mealPlanRouter.get('/meal-plan', async (req: Request, res: Response) => {
+  const shopifyCustomerId = req.query.shopifyCustomerId as string;
+
+  if (!shopifyCustomerId) {
+    return sendError(res, 'Missing shopifyCustomerId', 400);
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT plan_data, created_at FROM hc_meal_plans
+       WHERE shopify_customer_id = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [shopifyCustomerId]
+    );
+
+    if (result.rows.length === 0) {
+      return sendSuccess(res, { hasPlan: false });
+    }
+
+    return sendSuccess(res, {
+      hasPlan: true,
+      plan: result.rows[0].plan_data,
+      createdAt: result.rows[0].created_at,
+    });
+
+  } catch (err: any) {
+    console.error('[mealPlan] Fetch failed:', err);
+    return sendServerError(res, 'Failed to fetch meal plan');
+  }
+});
+
+/**
+ * POST /api/v1/ai/instacart-order
+ * Create an Instacart shopping link from meal plan ingredients
+ */
+mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res: Response) => {
+  const { shoppingList, planTitle } = req.body;
+
+  if (!shoppingList || !Array.isArray(shoppingList) || shoppingList.length === 0) {
+    return sendError(res, 'Missing or empty shoppingList', 400);
+  }
+
+  const INSTACART_API_KEY = process.env.INSTACART_API_KEY;
+  if (!INSTACART_API_KEY) {
+    return sendError(res, 'Instacart integration not configured', 503);
+  }
+
+  try {
+    // Build line items for Instacart
+    const lineItems = shoppingList.map((item: ShoppingListItem) => ({
+      name: item.name,
+      quantity: item.quantity || 1,
+      unit: item.unit || 'each',
+      display_text: `${item.quantity} ${item.unit} ${item.name}`,
+    }));
+
+    const payload = {
+      title: planTitle || '7-Day Meal Plan Ingredients',
+      link_type: 'shopping_list',
+      line_items: lineItems,
+      landing_page_configuration: {
+        partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
+        enable_pantry_items: false,
+      },
+    };
+
+    const response = await fetch('https://connect.instacart.com/idp/v1/products/products_link', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${INSTACART_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[mealPlan] Instacart API error:', response.status, data);
+      return sendError(res, 'Failed to create Instacart link', 502);
+    }
+
+    return sendSuccess(res, {
+      instacartUrl: data.products_link_url,
+      itemsCount: lineItems.length,
+    });
+
+  } catch (err: any) {
+    console.error('[mealPlan] Instacart order failed:', err);
+    return sendServerError(res, 'Failed to create Instacart order');
+  }
+});
+
+// Ensure table exists on module load
+async function ensureMealPlanTable(): Promise<void> {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS hc_meal_plans (
+        id SERIAL PRIMARY KEY,
+        shopify_customer_id VARCHAR(255) NOT NULL UNIQUE,
+        plan_data JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_meal_plans_customer ON hc_meal_plans(shopify_customer_id)
+    `);
+  } catch (err) {
+    console.warn('[mealPlan] Failed to ensure table exists:', err);
+  }
+}
+
+ensureMealPlanTable();

@@ -61,6 +61,9 @@ import ragRouter from "./routes/rag";
 // AI Backgrounds router
 import aiBackgroundsRouter from "./routes/aiBackgrounds";
 
+// AI Meal Plan router
+import { mealPlanRouter } from "./routes/mealPlan";
+
 // Validate environment at startup
 function validateStartupEnvironment(): void {
   const required = ["DATABASE_URL"];
@@ -205,6 +208,9 @@ app.use("/api/v1/rag", ragRouter);
 
 // AI Backgrounds routes (card customization)
 app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
+
+// AI Meal Plan routes (7-day plan generation)
+app.use("/api/v1/ai", mealPlanRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
