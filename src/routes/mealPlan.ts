@@ -452,10 +452,11 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
   }));
 
   const INSTACART_API_KEY = process.env.INSTACART_API_KEY;
+  console.log('[mealPlan] Instacart API key present:', !!INSTACART_API_KEY);
 
   // If no API key, generate a search URL fallback
   if (!INSTACART_API_KEY) {
-    console.log('[mealPlan] No Instacart API key, using search fallback');
+    console.log('[mealPlan] No Instacart API key found, using search fallback');
 
     // Create a search query with top ingredients
     const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
