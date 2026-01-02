@@ -31,7 +31,7 @@ function getSSLConfig(): PoolConfig["ssl"] {
 
   // Production or SSL required
   if (nodeEnv === "production" || dbUrl.includes("sslmode=require")) {
-    // Check for CA certificate (preferred for Railway)
+    // Check for CA certificate (preferred)
     const caCert = process.env.DATABASE_CA_CERT;
     if (caCert) {
       return {
@@ -40,18 +40,14 @@ function getSSLConfig(): PoolConfig["ssl"] {
       };
     }
 
-    // Fallback: Allow self-signed certs but log a warning
-    // This is less secure but maintains backwards compatibility
-    if (process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === "false") {
-      console.warn(
-        "WARNING: SSL certificate validation is disabled. " +
-        "Set DATABASE_CA_CERT for proper security in production."
-      );
-      return { rejectUnauthorized: false };
+    // Railway and many cloud providers use self-signed certs
+    // Default to allowing them unless explicitly set to require validation
+    if (process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === "true") {
+      return { rejectUnauthorized: true };
     }
 
-    // Default: Require valid SSL (most secure)
-    return { rejectUnauthorized: true };
+    // Default: Allow self-signed certs (works with Railway, Heroku, etc.)
+    return { rejectUnauthorized: false };
   }
 
   return undefined;
