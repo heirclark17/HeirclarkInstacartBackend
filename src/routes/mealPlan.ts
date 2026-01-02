@@ -471,20 +471,27 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
   }
 
   try {
-    // Use the same endpoint as the working instacart.ts route
+    // Instacart Developer Platform (IDP) API
+    // Keys starting with 'keys.' use the IDP API at /idp/v1/
     const INSTACART_BASE_URL = process.env.INSTACART_BASE_URL || 'https://connect.instacart.com';
 
     const payload = {
-      items: lineItems.map((item: any) => ({
+      title: planTitle || '7-Day Meal Plan Groceries',
+      line_items: lineItems.map((item: any) => ({
         name: item.name,
         quantity: item.quantity || 1,
         unit: item.unit || 'each',
+        display_text: `${item.quantity || 1} ${item.unit || ''} ${item.name}`.trim(),
       })),
-      landing_page_url: 'https://heirclark.com/pages/meal-plan',
-      partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
+      link_type: 'recipe',
+      landing_page_configuration: {
+        partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
+      },
     };
 
-    const response = await fetch(`${INSTACART_BASE_URL}/v2/fulfillment/orders/products_link`, {
+    console.log('[mealPlan] Instacart payload:', JSON.stringify(payload, null, 2));
+
+    const response = await fetch(`${INSTACART_BASE_URL}/idp/v1/products_link`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${INSTACART_API_KEY}`,
