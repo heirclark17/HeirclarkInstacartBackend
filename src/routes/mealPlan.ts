@@ -491,7 +491,8 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
     console.log('[mealPlan] Instacart payload:', JSON.stringify(payload, null, 2));
 
-    const response = await fetch(`${INSTACART_BASE_URL}/idp/v1/products_link`, {
+    // Try the standard Connect API endpoint
+    const response = await fetch(`${INSTACART_BASE_URL}/v1/products/products_link`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${INSTACART_API_KEY}`,
