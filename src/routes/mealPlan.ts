@@ -3,6 +3,7 @@ import { Router, Request, Response } from 'express';
 import { pool } from '../db/pool';
 import { sendSuccess, sendError, sendServerError } from '../middleware/responseHelper';
 import { rateLimitMiddleware } from '../middleware/rateLimiter';
+import { createInstacartProductsLink, InstacartLineItem } from '../instacartClient';
 
 export const mealPlanRouter = Router();
 
@@ -434,6 +435,7 @@ mealPlanRouter.get('/meal-plan', async (req: Request, res: Response) => {
 /**
  * POST /api/v1/ai/instacart-order
  * Create an Instacart shopping link from meal plan ingredients
+ * Uses the shared instacartClient for consistency
  */
 mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res: Response) => {
   // Accept either 'shoppingList' or 'ingredients' for backwards compatibility
@@ -444,107 +446,52 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
     return sendError(res, 'Missing or empty shoppingList/ingredients', 400);
   }
 
-  // Build line items
-  const lineItems = items.map((item: ShoppingListItem) => ({
+  // Build line items using the InstacartLineItem type
+  const lineItems: InstacartLineItem[] = items.map((item: ShoppingListItem) => ({
     name: item.name,
     quantity: item.quantity || 1,
     unit: item.unit || 'each',
+    display_text: `${item.quantity || 1} ${item.unit || ''} ${item.name}`.trim(),
   }));
 
-  const INSTACART_API_KEY = process.env.INSTACART_API_KEY || '';
-  console.log('[mealPlan] Instacart API key present:', !!INSTACART_API_KEY);
-  console.log('[mealPlan] API key format:', INSTACART_API_KEY.substring(0, 15) + '...' + INSTACART_API_KEY.substring(INSTACART_API_KEY.length - 5));
-
-  // If no API key, generate a search URL fallback
-  if (!INSTACART_API_KEY) {
-    console.log('[mealPlan] No Instacart API key found, using search fallback');
-
-    // Create a search query with top ingredients
-    const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
-    const searchUrl = `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`;
-
+  // Check if API key is configured
+  if (!process.env.INSTACART_API_KEY) {
+    console.log('[mealPlan] No Instacart API key, using search fallback');
+    const topItems = lineItems.slice(0, 10).map((item) => item.name).join(', ');
     return sendSuccess(res, {
-      instacartUrl: searchUrl,
+      instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
       itemsCount: lineItems.length,
       fallback: true,
-      shoppingList: lineItems, // Return the list so frontend can display it
+      shoppingList: lineItems,
     });
   }
 
   try {
-    // Instacart Developer Platform (IDP) API
-    // Keys starting with 'keys.' use the IDP API at /idp/v1/
-    const INSTACART_BASE_URL = process.env.INSTACART_BASE_URL || 'https://connect.instacart.com';
+    console.log('[mealPlan] Calling createInstacartProductsLink with', lineItems.length, 'items');
 
-    const payload = {
+    // Use the shared Instacart client
+    const result = await createInstacartProductsLink({
       title: planTitle || '7-Day Meal Plan Groceries',
-      line_items: lineItems.map((item: any) => ({
-        name: item.name,
-        quantity: item.quantity || 1,
-        unit: item.unit || 'each',
-        display_text: `${item.quantity || 1} ${item.unit || ''} ${item.name}`.trim(),
-      })),
+      line_items: lineItems,
       link_type: 'shopping_list',
       landing_page_configuration: {
         partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
       },
-    };
-
-    console.log('[mealPlan] Instacart payload:', JSON.stringify(payload, null, 2));
-
-    // Instacart Developer Platform (IDP) - Create Shopping List
-    // Docs: POST /idp/v1/products/products_link
-    const apiBaseUrl = 'https://connect.instacart.com';
-    console.log('[mealPlan] Using Instacart URL:', apiBaseUrl);
-
-    const response = await fetch(`${apiBaseUrl}/idp/v1/products/products_link`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${INSTACART_API_KEY}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(payload),
     });
 
-    // Get response as text first to handle non-JSON responses
-    const responseText = await response.text();
-    console.log('[mealPlan] Instacart response status:', response.status);
-    console.log('[mealPlan] Instacart response body:', responseText.substring(0, 500));
+    console.log('[mealPlan] Instacart response:', result);
 
-    let data: any;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseErr) {
-      console.error('[mealPlan] Instacart returned non-JSON:', responseText.substring(0, 200));
-      const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
+    if (result.products_link_url) {
       return sendSuccess(res, {
-        instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
+        instacartUrl: result.products_link_url,
         itemsCount: lineItems.length,
-        fallback: true,
-        shoppingList: lineItems,
       });
+    } else {
+      throw new Error('No products_link_url in response');
     }
-
-    if (!response.ok) {
-      console.error('[mealPlan] Instacart API error:', response.status, data);
-      // Fall back to search URL on API error
-      const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
-      return sendSuccess(res, {
-        instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
-        itemsCount: lineItems.length,
-        fallback: true,
-        shoppingList: lineItems,
-      });
-    }
-
-    return sendSuccess(res, {
-      instacartUrl: data.products_link_url || data.link_url,
-      itemsCount: lineItems.length,
-    });
 
   } catch (err: any) {
-    console.error('[mealPlan] Instacart order failed:', err);
+    console.error('[mealPlan] Instacart order failed:', err.message);
     // Fall back to search URL on error
     const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
     return sendSuccess(res, {
