@@ -483,7 +483,7 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
         unit: item.unit || 'each',
         display_text: `${item.quantity || 1} ${item.unit || ''} ${item.name}`.trim(),
       })),
-      link_type: 'recipe',
+      link_type: 'shopping_list',
       landing_page_configuration: {
         partner_linkback_url: 'https://heirclark.com/pages/meal-plan',
       },
@@ -491,8 +491,9 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
     console.log('[mealPlan] Instacart payload:', JSON.stringify(payload, null, 2));
 
-    // Try the standard Connect API endpoint
-    const response = await fetch(`${INSTACART_BASE_URL}/v1/products/products_link`, {
+    // Instacart Developer Platform (IDP) - Create Shopping List
+    // Docs: POST /idp/v1/products/products_link
+    const response = await fetch(`${INSTACART_BASE_URL}/idp/v1/products/products_link`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${INSTACART_API_KEY}`,
