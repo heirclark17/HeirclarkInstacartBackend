@@ -124,6 +124,8 @@ export async function createAvatarVideo(script: string): Promise<string> {
   }
 
   try {
+    console.log(`[heygen] Generating video with avatar=${avatarId}, voice=${voiceId}`);
+
     const response = await axios.post<VideoGenerateResponse>(
       `${HEYGEN_API_BASE}/v2/video/generate`,
       {
@@ -161,15 +163,19 @@ export async function createAvatarVideo(script: string): Promise<string> {
       }
     );
 
+    console.log(`[heygen] API response code: ${response.data.code}, message: ${response.data.message}`);
+
     if (response.data.code !== 100) {
-      throw new Error(response.data.message || 'HeyGen API error');
+      console.error('[heygen] API returned error code:', response.data);
+      throw new Error(response.data.message || `HeyGen API error (code: ${response.data.code})`);
     }
 
     console.log(`[heygen] Video generation started: ${response.data.data.video_id}`);
     return response.data.data.video_id;
   } catch (error: any) {
-    console.error('[heygen] createAvatarVideo failed:', error.response?.data || error.message);
-    throw new Error(`HeyGen video creation failed: ${error.message}`);
+    const errorData = error.response?.data;
+    console.error('[heygen] createAvatarVideo failed:', JSON.stringify(errorData, null, 2) || error.message);
+    throw new Error(`HeyGen video creation failed: ${errorData?.error?.message || errorData?.message || error.message}`);
   }
 }
 
