@@ -338,8 +338,12 @@ heygenRouter.get('/voices', async (_req: Request, res: Response) => {
  */
 heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Response) => {
   const { userId: rawUserId, goalData, userInputs } = req.body;
+  const requestId = req.headers['x-request-id'] || `goal-${Date.now()}`;
+  const startTime = Date.now();
 
   const userId = sanitizeUserId(rawUserId || 'guest');
+
+  console.log(`[heygen] [${requestId}] goal-coach request started for user ${userId}`);
 
   if (!goalData) {
     return res.status(400).json({ ok: false, error: 'Missing goalData' });
@@ -348,14 +352,17 @@ heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Respo
   try {
     // Generate personalized coaching script
     const script = generateGoalCoachScript(goalData, userInputs);
+    console.log(`[heygen] [${requestId}] Script generated in ${Date.now() - startTime}ms`);
 
     // Try to create HeyGen video if API key is configured
     const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
 
     if (hasHeyGenKey && process.env.HEYGEN_AVATAR_ID && process.env.HEYGEN_VOICE_ID) {
       try {
-        console.log(`[heygen] Creating goal coach video for user ${userId}`);
+        console.log(`[heygen] [${requestId}] Creating HeyGen video for user ${userId}`);
+        const heygenStartTime = Date.now();
         const heygenVideoId = await createAvatarVideo(script);
+        console.log(`[heygen] [${requestId}] HeyGen video created (${heygenVideoId}) in ${Date.now() - heygenStartTime}ms`);
 
         // Store in database
         const expiresAt = new Date();
@@ -374,62 +381,41 @@ heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Respo
           [userId, heygenVideoId, script, `goal_${Date.now()}`, expiresAt.toISOString()]
         );
 
-        // Poll for completion (max 60 seconds)
-        let attempts = 0;
-        const maxAttempts = 12;
-        const pollInterval = 5000;
+        // ASYNC FIX: Return immediately with video ID
+        // Frontend will poll /video/status/:videoId for completion
+        const totalTime = Date.now() - startTime;
+        console.log(`[heygen] [${requestId}] Returning async response in ${totalTime}ms`);
 
-        while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-          attempts++;
-
-          const status = await getVideoStatus(heygenVideoId);
-
-          if (status.status === 'completed' && status.videoUrl) {
-            // Update database
-            await pool.query(
-              `UPDATE hc_user_videos SET status = 'completed', video_url = $1 WHERE heygen_video_id = $2`,
-              [status.videoUrl, heygenVideoId]
-            );
-
-            return res.json({
-              ok: true,
-              videoId: heygenVideoId,
-              videoUrl: status.videoUrl,
-              script: script,
-            });
-          } else if (status.status === 'failed') {
-            console.warn(`[heygen] Video generation failed for ${heygenVideoId}`);
-            break;
-          }
-        }
-
-        // Timeout or failed - return script as fallback
-        console.log(`[heygen] Video not ready in time, returning script fallback`);
         return res.json({
           ok: true,
           videoId: heygenVideoId,
-          videoUrl: null,
-          script: script,
-          message: 'Video is still processing. Script provided as fallback.',
+          status: 'processing',
+          videoUrl: null, // Will be available via status endpoint
+          script: script, // Provide script as immediate fallback
+          message: 'Video generation started. Poll /video/status/:videoId for updates.',
+          _timing: { totalMs: totalTime, requestId },
         });
 
       } catch (heygenErr: any) {
-        console.error('[heygen] Goal coach video creation failed:', heygenErr.message);
+        console.error(`[heygen] [${requestId}] Video creation failed:`, heygenErr.message);
         // Fall through to return script only
       }
     }
 
     // No HeyGen or it failed - return script only
+    const totalTime = Date.now() - startTime;
+    console.log(`[heygen] [${requestId}] Returning script-only response in ${totalTime}ms`);
+
     return res.json({
       ok: true,
       videoUrl: null,
       script: script,
       message: 'Video generation not available. Coaching script provided.',
+      _timing: { totalMs: totalTime, requestId },
     });
 
   } catch (err: any) {
-    console.error('[heygen] goal-coach failed:', err);
+    console.error(`[heygen] [${requestId}] goal-coach failed:`, err);
     return res.status(500).json({
       ok: false,
       error: err.message || 'Goal coach generation failed',
