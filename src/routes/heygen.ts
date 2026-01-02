@@ -330,3 +330,177 @@ heygenRouter.get('/voices', async (_req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * POST /api/v1/video/goal-coach
+ * Generate a personalized goal coaching video/script
+ * Returns video URL if HeyGen succeeds, or fallback script text
+ */
+heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Response) => {
+  const { userId: rawUserId, goalData, userInputs } = req.body;
+
+  const userId = sanitizeUserId(rawUserId || 'guest');
+
+  if (!goalData) {
+    return res.status(400).json({ ok: false, error: 'Missing goalData' });
+  }
+
+  try {
+    // Generate personalized coaching script
+    const script = generateGoalCoachScript(goalData, userInputs);
+
+    // Try to create HeyGen video if API key is configured
+    const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
+
+    if (hasHeyGenKey && process.env.HEYGEN_AVATAR_ID && process.env.HEYGEN_VOICE_ID) {
+      try {
+        console.log(`[heygen] Creating goal coach video for user ${userId}`);
+        const heygenVideoId = await createAvatarVideo(script);
+
+        // Store in database
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7);
+
+        await pool.query(
+          `INSERT INTO hc_user_videos (user_id, heygen_video_id, script_text, status, plan_hash, expires_at)
+           VALUES ($1, $2, $3, 'processing', $4, $5)
+           ON CONFLICT (user_id, plan_hash)
+           DO UPDATE SET
+             heygen_video_id = $2,
+             script_text = $3,
+             status = 'processing',
+             expires_at = $5,
+             created_at = NOW()`,
+          [userId, heygenVideoId, script, `goal_${Date.now()}`, expiresAt.toISOString()]
+        );
+
+        // Poll for completion (max 60 seconds)
+        let attempts = 0;
+        const maxAttempts = 12;
+        const pollInterval = 5000;
+
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          attempts++;
+
+          const status = await getVideoStatus(heygenVideoId);
+
+          if (status.status === 'completed' && status.videoUrl) {
+            // Update database
+            await pool.query(
+              `UPDATE hc_user_videos SET status = 'completed', video_url = $1 WHERE heygen_video_id = $2`,
+              [status.videoUrl, heygenVideoId]
+            );
+
+            return res.json({
+              ok: true,
+              videoId: heygenVideoId,
+              videoUrl: status.videoUrl,
+              script: script,
+            });
+          } else if (status.status === 'failed') {
+            console.warn(`[heygen] Video generation failed for ${heygenVideoId}`);
+            break;
+          }
+        }
+
+        // Timeout or failed - return script as fallback
+        console.log(`[heygen] Video not ready in time, returning script fallback`);
+        return res.json({
+          ok: true,
+          videoId: heygenVideoId,
+          videoUrl: null,
+          script: script,
+          message: 'Video is still processing. Script provided as fallback.',
+        });
+
+      } catch (heygenErr: any) {
+        console.error('[heygen] Goal coach video creation failed:', heygenErr.message);
+        // Fall through to return script only
+      }
+    }
+
+    // No HeyGen or it failed - return script only
+    return res.json({
+      ok: true,
+      videoUrl: null,
+      script: script,
+      message: 'Video generation not available. Coaching script provided.',
+    });
+
+  } catch (err: any) {
+    console.error('[heygen] goal-coach failed:', err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || 'Goal coach generation failed',
+    });
+  }
+});
+
+/**
+ * Generate a personalized goal coaching script
+ */
+function generateGoalCoachScript(goalData: any, userInputs: any): string {
+  const {
+    calories = 2000,
+    protein = 150,
+    carbs = 200,
+    fat = 65,
+    bmr = 1800,
+    tdee = 2300,
+    bmi = 25,
+    bmiCategory = { name: 'Normal' },
+    weeklyChange = 0,
+    dailyDelta = 0,
+    goalType = 'maintain',
+    currentWeight = 180,
+    targetWeight = 180,
+    totalWeeks = 0,
+  } = goalData || {};
+
+  const name = userInputs?.name || 'there';
+  const goalWord = goalType === 'lose' ? 'lose weight' : goalType === 'gain' ? 'build muscle' : 'maintain your weight';
+  const absWeekly = Math.abs(weeklyChange).toFixed(2);
+  const absDelta = Math.abs(Math.round(dailyDelta));
+
+  let script = `Hey ${name}! Congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`;
+
+  // BMI section
+  script += `First, let's talk about where you're starting. Your BMI is ${bmi.toFixed(1)}, which puts you in the "${bmiCategory.name}" category. `;
+
+  if (goalType === 'lose') {
+    script += `Since your goal is to lose weight, remember that BMI is just one number. What matters more is how you feel, your energy levels, and your body composition. As you shed fat while keeping muscle, your health will improve even if the scale moves slowly.\n\n`;
+  } else if (goalType === 'gain') {
+    script += `As you work toward gaining weight, your BMI will naturally increase. That's expected and healthy when you're building muscle. Focus on your strength gains and measurements alongside the scale.\n\n`;
+  } else {
+    script += `For maintenance, track how you feel day to day rather than fixating on numbers.\n\n`;
+  }
+
+  // TDEE section
+  script += `Now let's talk about your metabolism. Your body burns about ${tdee.toLocaleString()} calories per day at your current activity level. This is called your TDEE, or maintenance calories. `;
+
+  // Goal-specific calorie explanation
+  if (goalType === 'lose') {
+    script += `To ${goalWord}, you'll be eating ${calories.toLocaleString()} calories daily, which creates a ${absDelta} calorie deficit. This means you'll lose about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks.\n\n`;
+  } else if (goalType === 'gain') {
+    script += `To ${goalWord}, you'll be eating ${calories.toLocaleString()} calories daily, giving you a ${absDelta} calorie surplus. Combined with strength training, you'll gain about ${absWeekly} pounds per week.\n\n`;
+  } else {
+    script += `You'll be eating right at maintenance with ${calories.toLocaleString()} calories daily.\n\n`;
+  }
+
+  // Macros
+  script += `Your macro targets are ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
+
+  if (goalType === 'lose' || goalType === 'gain') {
+    script += `Protein is especially important for your goal. Hitting ${protein} grams daily helps preserve muscle during a cut or build it during a bulk.\n\n`;
+  } else {
+    script += `These macros give you a balanced approach to nutrition.\n\n`;
+  }
+
+  // Encouragement
+  script += `Here's my advice: Consistency beats perfection. You don't need to hit these numbers exactly every day. Aim for the weekly average. Track your food for the first couple of weeks to build awareness, then you can be more flexible.\n\n`;
+
+  script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you. Let's crush this together!`;
+
+  return script;
+}
