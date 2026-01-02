@@ -494,7 +494,14 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
     // Instacart Developer Platform (IDP) - Create Shopping List
     // Docs: POST /idp/v1/products/products_link
-    const response = await fetch(`${INSTACART_BASE_URL}/idp/v1/products/products_link`, {
+    // Development keys use sandbox URL, Production keys use connect URL
+    const apiBaseUrl = process.env.INSTACART_ENV === 'production'
+      ? 'https://connect.instacart.com'
+      : 'https://connect.sandbox.instacart.com';
+
+    console.log('[mealPlan] Using Instacart URL:', apiBaseUrl);
+
+    const response = await fetch(`${apiBaseUrl}/idp/v1/products/products_link`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${INSTACART_API_KEY}`,
