@@ -108,97 +108,53 @@ async function generateMealPlanWithAI(
     : '';
   const skillText = preferences.cookingSkill || 'intermediate';
 
-  const systemPrompt = `You are a professional nutritionist creating detailed 7-day meal plans.
-Return ONLY valid JSON matching this exact structure (no markdown, no extra text):
+  const systemPrompt = `You are a nutritionist. Create a 7-day meal plan as JSON ONLY (no markdown).
 
-{
-  "days": [
-    {
-      "day": 1,
-      "meals": [
-        {
-          "mealType": "Breakfast",
-          "dishName": "Recipe Name",
-          "description": "Brief appetizing description",
-          "calories": 450,
-          "macros": { "protein": 30, "carbs": 40, "fat": 15 },
-          "servings": 1,
-          "recipe": {
-            "ingredients": [
-              { "name": "boneless skinless chicken breast", "quantity": 6, "unit": "oz" }
-            ],
-            "instructions": ["Step 1...", "Step 2..."],
-            "prepMinutes": 10,
-            "cookMinutes": 20
-          }
-        }
-      ],
-      "totalCalories": 2000,
-      "totalMacros": { "protein": 150, "carbs": 200, "fat": 65 }
-    }
-  ],
-  "shoppingList": [
-    { "name": "boneless skinless chicken breast", "quantity": 3, "unit": "lb", "category": "Protein" }
-  ]
-}
+Format: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1,"recipe":{"ingredients":[{"name":"ingredient","quantity":1,"unit":"cup"}],"instructions":["Step 1"],"prepMinutes":10,"cookMinutes":15}}],"totalCalories":2000,"totalMacros":{"protein":150,"carbs":200,"fat":65}}],"shoppingList":[{"name":"item","quantity":2,"unit":"lb","category":"Protein"}]}
 
-CRITICAL RULES:
-1. Return EXACTLY 7 days
-2. Each day should have ${mealsPerDay} meals (${mealsPerDay === 3 ? 'Breakfast, Lunch, Dinner' : 'adjust meal types accordingly'})
-3. Daily totals must be close to targets: ${targets.calories} calories, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat
-4. Use grocery-friendly ingredient names specific enough for Instacart search (e.g., "boneless skinless chicken breast" not just "chicken")
-5. Include practical cooking instructions
-6. Aggregate shopping list by summing quantities across the week
-7. Diet type: ${dietTypeText}
-8. Cooking skill level: ${skillText}
-${allergiesText}`;
+Rules: 7 days, ${mealsPerDay} meals/day (Breakfast/Lunch/Dinner), target ~${targets.calories}cal/${targets.protein}g protein/${targets.carbs}g carbs/${targets.fat}g fat per day. Diet: ${dietTypeText}. Skill: ${skillText}. ${allergiesText} Keep recipes simple with 3-5 ingredients each.`;
 
-  const userPrompt = `Create a 7-day meal plan with these daily targets:
-- Calories: ${targets.calories} kcal
-- Protein: ${targets.protein}g
-- Carbs: ${targets.carbs}g
-- Fat: ${targets.fat}g
+  const userPrompt = `Generate the 7-day ${dietTypeText} meal plan now. ${allergiesText}`;
 
-Diet preference: ${dietTypeText}
-Meals per day: ${mealsPerDay}
-${allergiesText}
+  // Set 15 second timeout for faster fallback
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-Make recipes realistic, delicious, and easy to shop for. Use common grocery store ingredients.`;
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 8000,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('[mealPlan] OpenAI API error:', response.status, errorText);
-    throw new Error(`OpenAI API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-
-  if (!content) {
-    throw new Error('No content in OpenAI response');
-  }
-
-  // Parse JSON, handle potential markdown code blocks
-  let parsedPlan: any;
   try {
-    // Remove markdown code blocks if present
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.5,
+        max_tokens: 4000,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[mealPlan] OpenAI API error:', response.status, errorText);
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error('No content in OpenAI response');
+    }
+
+    // Parse JSON, handle potential markdown code blocks
+    let parsedPlan: any;
     let cleanContent = content.trim();
     if (cleanContent.startsWith('```json')) {
       cleanContent = cleanContent.slice(7);
@@ -209,22 +165,27 @@ Make recipes realistic, delicious, and easy to shop for. Use common grocery stor
       cleanContent = cleanContent.slice(0, -3);
     }
     parsedPlan = JSON.parse(cleanContent.trim());
-  } catch (parseErr) {
-    console.error('[mealPlan] Failed to parse OpenAI response:', content.substring(0, 500));
-    throw new Error('Failed to parse meal plan response');
-  }
 
-  // Validate structure
-  if (!parsedPlan.days || !Array.isArray(parsedPlan.days) || parsedPlan.days.length !== 7) {
-    console.error('[mealPlan] Invalid plan structure - missing or incomplete days');
-    throw new Error('Invalid meal plan structure');
-  }
+    // Validate structure
+    if (!parsedPlan.days || !Array.isArray(parsedPlan.days) || parsedPlan.days.length !== 7) {
+      console.error('[mealPlan] Invalid plan structure - missing or incomplete days');
+      throw new Error('Invalid meal plan structure');
+    }
 
-  return {
-    ...parsedPlan,
-    generatedAt: new Date().toISOString(),
-    targets,
-  };
+    return {
+      ...parsedPlan,
+      generatedAt: new Date().toISOString(),
+      targets,
+    };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      console.warn('[mealPlan] OpenAI request timed out after 15s');
+      throw new Error('Request timed out');
+    }
+    console.error('[mealPlan] Failed to parse OpenAI response:', err.message);
+    throw err;
+  }
 }
 
 // ============================================================
