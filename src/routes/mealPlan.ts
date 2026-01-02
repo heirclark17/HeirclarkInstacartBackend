@@ -453,6 +453,7 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
   const INSTACART_API_KEY = process.env.INSTACART_API_KEY || '';
   console.log('[mealPlan] Instacart API key present:', !!INSTACART_API_KEY);
+  console.log('[mealPlan] API key format:', INSTACART_API_KEY.substring(0, 15) + '...' + INSTACART_API_KEY.substring(INSTACART_API_KEY.length - 5));
 
   // If no API key, generate a search URL fallback
   if (!INSTACART_API_KEY) {
