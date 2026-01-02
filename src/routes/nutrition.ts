@@ -4,6 +4,14 @@ import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
 import sharp from "sharp";
 import OpenAI from "openai";
+import crypto from "crypto";
+
+// RAG Integration (optional - enabled via USE_RAG=true)
+import {
+  estimateMealFromTextWithRag,
+  estimateMealFromPhotoWithRag,
+  checkRagHealth,
+} from "../services/rag";
 
 /**
  * Upgrades AI payload richness:
@@ -310,6 +318,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
 const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4o-mini";
+
+// RAG mode flag (set USE_RAG=true to enable RAG-enhanced meal estimation)
+const USE_RAG = process.env.USE_RAG === "true";
 
 /* ======================================================================
    GET /api/v1/nutrition/meals
@@ -619,11 +630,52 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Missing shopifyCustomerId" });
 
-    const { text } = req.body || {};
+    const { text, localTimeIso } = req.body || {};
     if (!text || !String(text).trim()) {
       return res.status(400).json({ ok: false, error: "Missing text" });
     }
 
+    // ===== RAG-ENHANCED PATH =====
+    if (USE_RAG) {
+      try {
+        const { estimate, legacy } = await estimateMealFromTextWithRag(
+          String(text),
+          { shopifyCustomerId: cid, localTimeIso }
+        );
+
+        // Merge legacy format with aiResponse wrapper for full backward compat
+        const ragNormalized = {
+          label: String(legacy.label || "Meal"),
+          mealName: String(legacy.mealName || legacy.name || "Meal"),
+          name: String(legacy.mealName || legacy.name || "Meal"),
+          calories: int0(legacy.calories),
+          protein: int0(legacy.protein),
+          carbs: int0(legacy.carbs),
+          fat: int0(legacy.fat),
+          foods: normalizeFoods(legacy.foods as any),
+          healthierSwaps: normalizeSwaps(legacy.healthierSwaps as any),
+          confidence: clamp(legacy.confidence, 0, 100),
+          explanation: String(estimate.explanation || ""),
+          portionNotes: String(estimate.portion_notes || ""),
+          meta: { source: "ai_text_rag", autoLogged: false },
+        };
+
+        // Build response with RAG-specific fields
+        const response = aiResponse(ragNormalized);
+        return res.json({
+          ...response,
+          // RAG-specific fields
+          explanation_sources: estimate.explanation_sources || [],
+          follow_up_question: estimate.follow_up_question || null,
+          rag_enabled: true,
+        });
+      } catch (ragErr: any) {
+        console.warn("[nutrition][ai-text] RAG failed, falling back to direct LLM:", ragErr.message);
+        // Fall through to legacy path
+      }
+    }
+
+    // ===== LEGACY (NON-RAG) PATH =====
     const prompt = [
       "You are a nutrition estimator for meal logging.",
       "Return ONLY valid JSON (no markdown, no commentary).",
@@ -682,7 +734,10 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
       meta: { source: "ai_text", autoLogged: false },
     };
 
-    return res.json(aiResponse(normalized));
+    return res.json({
+      ...aiResponse(normalized),
+      rag_enabled: false,
+    });
   } catch (err: any) {
     console.error("[nutrition][ai-text] error", { reqId, msg: errMessage(err) });
     return res.status(500).json({ ok: false, error: err.message });
@@ -762,7 +817,63 @@ async function handlePhoto(req: Request, res: Response) {
     const portionNotes = String(visionParsed.portionNotes || "");
     const clarity = Math.max(0, Math.min(100, Number(visionParsed.clarity) || 0));
 
-    // Macro pass (DETAILED)
+    // Generate image hash for RAG logging
+    const imageHash = crypto.createHash("sha256").update(processed).digest("hex").slice(0, 16);
+
+    // ===== RAG-ENHANCED PATH =====
+    if (USE_RAG) {
+      try {
+        const { estimate, legacy } = await estimateMealFromPhotoWithRag(
+          {
+            foods: foodsList,
+            portions: portionNotes,
+            clarity,
+            description: `${foodsList.join(", ")}. ${portionNotes}`,
+          },
+          { shopifyCustomerId: cid, imageHash }
+        );
+
+        // Merge legacy format with aiResponse wrapper for full backward compat
+        const ragNormalized = {
+          label: String((req.body as any)?.label || legacy.label || "Meal"),
+          mealName: String(legacy.mealName || legacy.name || "Meal"),
+          name: String(legacy.mealName || legacy.name || "Meal"),
+          calories: int0(legacy.calories),
+          protein: int0(legacy.protein),
+          carbs: int0(legacy.carbs),
+          fat: int0(legacy.fat),
+          foods: normalizeFoods(legacy.foods as any),
+          portionNotes: String(estimate.portion_notes || portionNotes),
+          healthierSwaps: normalizeSwaps(legacy.healthierSwaps as any),
+          confidence: clamp(legacy.confidence, 0, 100),
+          explanation: String(estimate.explanation || ""),
+          meta: { source: "ai_photo_rag", clarity, autoLogged: false },
+        };
+
+        console.log("[nutrition][ai-photo] RAG ok", {
+          reqId,
+          ms: nowMs() - t0,
+          cid,
+          rag: true,
+          fieldUsed: (req as any).files?.image?.length ? "image" : "photo",
+        });
+
+        // Build response with RAG-specific fields
+        const response = aiResponse(ragNormalized);
+        return res.json({
+          ...response,
+          // RAG-specific fields
+          explanation_sources: estimate.explanation_sources || [],
+          follow_up_question: estimate.follow_up_question || null,
+          rag_enabled: true,
+        });
+      } catch (ragErr: any) {
+        console.warn("[nutrition][ai-photo] RAG failed, falling back to direct LLM:", ragErr.message);
+        // Fall through to legacy path
+      }
+    }
+
+    // ===== LEGACY (NON-RAG) PATH =====
     const macroPrompt = [
       "You are a nutrition estimator for a meal photo.",
       "Use the foods list + portion notes to estimate totals and per-item macros.",
@@ -830,7 +941,10 @@ async function handlePhoto(req: Request, res: Response) {
     });
 
     // ✅ NEVER auto-log
-    return res.json(aiResponse(normalized));
+    return res.json({
+      ...aiResponse(normalized),
+      rag_enabled: false,
+    });
   } catch (err: any) {
     console.error("[nutrition][ai-photo] error", { reqId, msg: errMessage(err) });
     return res.status(500).json({ ok: false, error: err.message });

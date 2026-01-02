@@ -1,13 +1,35 @@
 // src/routes/instacart.ts
 import express, { Request, Response } from "express";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { sendSuccess, sendError, sendServerError } from "../middleware/responseHelper";
+import { rateLimitMiddleware } from "../middleware/rateLimiter";
 
 // Using Node 18+ global fetch
 const router = express.Router();
 
-// Base URL and API key for Instacart – configure these in Railway
+// Apply rate limiting to all Instacart routes (10 requests per minute per IP)
+router.use(rateLimitMiddleware({
+  windowMs: 60000,
+  maxRequests: 10,
+  message: "Too many Instacart API requests, please try again later",
+}));
+
+/**
+ * Instacart Connect API Configuration
+ * See: https://docs.instacart.com/connect/api/
+ *
+ * Base URL options:
+ * - Production: https://connect.instacart.com
+ * - Sandbox: https://connect.sandbox.instacart.com
+ */
 const INSTACART_BASE_URL =
-  process.env.INSTACART_BASE_URL || "https://api.instacart.com"; // TODO: set your real base
+  process.env.INSTACART_BASE_URL || "https://connect.instacart.com";
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
+
+// Validate API key at startup
+if (!INSTACART_API_KEY && process.env.NODE_ENV === "production") {
+  console.warn("[Instacart] WARNING: INSTACART_API_KEY not set. Instacart routes will not work.");
+}
 
 /**
  * Helper: map one raw Instacart product into the shape
@@ -109,78 +131,95 @@ function mapProduct(raw: any, fallbackQuery: string) {
 /**
  * POST /instacart/search
  *
+ * Search for products on Instacart.
+ *
  * Expected front-end call (from Shopify):
  *   POST { baseUrl }/api/instacart/search
- *   body: { query: "SALMON", retailerKey?: string | null, recipeLandingUrl?: string }
+ *   body: { query: "SALMON", retailerKey?: string | null, postalCode?: string }
  *
  * Response:
  *   {
- *     success: true,
- *     products: [ { name, price, price_display, size, web_url, retailer_name }, ... ],
- *     products_link_url: "https://www.instacart.com/store/..."
+ *     ok: true,
+ *     data: {
+ *       products: [ { name, price, price_display, size, web_url, retailer_name }, ... ],
+ *       products_link_url: "https://www.instacart.com/store/..."
+ *     }
  *   }
  */
-router.post("/instacart/search", async (req: Request, res: Response) => {
+router.post("/instacart/search", asyncHandler(async (req: Request, res: Response) => {
+  const query = (req.body.query || "").toString().trim();
+  if (!query) {
+    return sendError(res, "Missing query", 400);
+  }
+
+  if (!INSTACART_API_KEY) {
+    console.error("[Instacart] INSTACART_API_KEY is not set");
+    return sendError(res, "Instacart integration not configured", 503);
+  }
+
+  // Optional parameters
+  const retailerKey = req.body.retailerKey || null;
+  const postalCode = req.body.postalCode || null;
+
+  /**
+   * Instacart Connect API - Product Search
+   * See: https://docs.instacart.com/connect/api/catalog/
+   *
+   * The actual endpoint depends on your Instacart integration type:
+   * - Catalog API: GET /v2/fulfillment/catalog/products
+   * - Connect API: POST /v2/fulfillment/orders/products_link
+   */
+  const searchUrl = new URL(`${INSTACART_BASE_URL}/v2/fulfillment/catalog/products`);
+  searchUrl.searchParams.set("query", query);
+  searchUrl.searchParams.set("limit", "20");
+
+  if (retailerKey) {
+    searchUrl.searchParams.set("retailer_key", String(retailerKey));
+  }
+  if (postalCode) {
+    searchUrl.searchParams.set("postal_code", String(postalCode));
+  }
+
   try {
-    const query = (req.body.query || "").toString().trim();
-    if (!query) {
-      return res.status(400).json({ success: false, error: "Missing query" });
-    }
-
-    // Optional extras from front-end – not strictly required here,
-    // but you can plumb them into the Instacart call if needed.
-    const retailerKey = req.body.retailerKey || null;
-    const recipeLandingUrl = req.body.recipeLandingUrl || null;
-
-    if (!INSTACART_API_KEY) {
-      console.error("[Instacart] INSTACART_API_KEY is not set");
-      return res.status(500).json({
-        success: false,
-        error: "Instacart configuration missing",
-      });
-    }
-
-    // TODO: Replace this with your real Instacart Developer endpoint + query params
-    // This is pseudo – check Instacart docs for the correct path.
-    const searchUrl = new URL(
-      `${INSTACART_BASE_URL}/products/search`
-    );
-    searchUrl.searchParams.set("q", query);
-    if (retailerKey) {
-      searchUrl.searchParams.set("retailer_key", String(retailerKey));
-    }
-    if (recipeLandingUrl) {
-      searchUrl.searchParams.set("landing_url", String(recipeLandingUrl));
-    }
-
     const apiRes = await fetch(searchUrl.toString(), {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${INSTACART_API_KEY}`,
+        "Authorization": `Bearer ${INSTACART_API_KEY}`,
         "Content-Type": "application/json",
+        "Accept": "application/json",
       },
     });
 
     const text = await apiRes.text();
     let data: any = null;
+
     try {
       data = text ? JSON.parse(text) : null;
     } catch (e) {
       console.error("[Instacart] JSON parse error:", e);
+      return sendError(res, "Invalid response from Instacart", 502);
     }
 
     if (!apiRes.ok) {
       console.error("[Instacart] Search error:", apiRes.status, text);
-      return res
-        .status(502)
-        .json({ success: false, error: "Instacart search failed" });
+
+      // Handle specific error codes
+      if (apiRes.status === 401) {
+        return sendError(res, "Instacart authentication failed", 502);
+      }
+      if (apiRes.status === 429) {
+        return sendError(res, "Instacart rate limit exceeded", 429);
+      }
+
+      return sendError(res, "Instacart search failed", 502);
     }
 
-    // Try to find the list of products in common keys
+    // Try to find the list of products in common response formats
     const rawList: any[] =
       (Array.isArray(data?.products) && data.products) ||
       (Array.isArray(data?.items) && data.items) ||
       (Array.isArray(data?.results) && data.results) ||
+      (Array.isArray(data?.data?.products) && data.data.products) ||
       [];
 
     const products = rawList
@@ -190,29 +229,133 @@ router.post("/instacart/search", async (req: Request, res: Response) => {
     // Compose a products_link_url for deep-linking
     const products_link_url: string | null =
       data?.products_link_url ||
+      data?.link_url ||
       (products[0] && products[0].web_url) ||
       null;
 
-    // Helpful debug log – you can comment this out once stable
-    console.log("[Instacart] search result keys:", data ? Object.keys(data) : []);
-    console.log(
-      "[Instacart] mapped products count:",
-      products.length,
-      "products_link_url:",
-      products_link_url
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[Instacart] search result keys:", data ? Object.keys(data) : []);
+      console.log("[Instacart] mapped products count:", products.length);
+    }
 
-    return res.json({
-      success: true,
+    return sendSuccess(res, {
       products,
       products_link_url,
+      query,
+      count: products.length,
+    });
+  } catch (err: any) {
+    console.error("[Instacart] Unexpected error:", err);
+
+    if (err.code === "ECONNREFUSED" || err.code === "ENOTFOUND") {
+      return sendError(res, "Could not connect to Instacart", 502);
+    }
+
+    return sendServerError(res, "Failed to search Instacart");
+  }
+}));
+
+/**
+ * POST /instacart/products-link
+ *
+ * Create a products link for adding items to cart.
+ * See: https://docs.instacart.com/connect/api/fulfillment/
+ */
+router.post("/instacart/products-link", asyncHandler(async (req: Request, res: Response) => {
+  const { items, landingUrl, partnerId } = req.body;
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return sendError(res, "Missing or empty items array", 400);
+  }
+
+  if (!INSTACART_API_KEY) {
+    return sendError(res, "Instacart integration not configured", 503);
+  }
+
+  try {
+    const apiRes = await fetch(`${INSTACART_BASE_URL}/v2/fulfillment/orders/products_link`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${INSTACART_API_KEY}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        items: items.map((item: any) => ({
+          name: item.name || item.query,
+          quantity: item.quantity || 1,
+          unit: item.unit || "each",
+        })),
+        landing_page_url: landingUrl,
+        partner_linkback_url: landingUrl,
+        partner_id: partnerId,
+      }),
+    });
+
+    const data = await apiRes.json();
+
+    if (!apiRes.ok) {
+      console.error("[Instacart] Products link error:", apiRes.status, data);
+      return sendError(res, "Failed to create products link", 502);
+    }
+
+    return sendSuccess(res, {
+      link_url: data.products_link_url || data.link_url,
+      items_count: items.length,
     });
   } catch (err) {
-    console.error("[Instacart] Unexpected error:", err);
-    return res
-      .status(500)
-      .json({ success: false, error: "Server error" });
+    console.error("[Instacart] Products link error:", err);
+    return sendServerError(res, "Failed to create Instacart link");
   }
-});
+}));
+
+/**
+ * GET /instacart/retailers
+ *
+ * Get available retailers for a location.
+ */
+router.get("/instacart/retailers", asyncHandler(async (req: Request, res: Response) => {
+  const postalCode = req.query.postalCode as string;
+
+  if (!postalCode) {
+    return sendError(res, "Missing postalCode", 400);
+  }
+
+  if (!INSTACART_API_KEY) {
+    return sendError(res, "Instacart integration not configured", 503);
+  }
+
+  try {
+    const apiRes = await fetch(
+      `${INSTACART_BASE_URL}/v2/fulfillment/retailers?postal_code=${encodeURIComponent(postalCode)}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${INSTACART_API_KEY}`,
+          "Accept": "application/json",
+        },
+      }
+    );
+
+    const data = await apiRes.json();
+
+    if (!apiRes.ok) {
+      console.error("[Instacart] Retailers error:", apiRes.status, data);
+      return sendError(res, "Failed to fetch retailers", 502);
+    }
+
+    const retailers = (data.retailers || data.data || []).map((r: any) => ({
+      key: r.retailer_key || r.key || r.id,
+      name: r.name || r.retailer_name,
+      logo_url: r.logo_url,
+      delivery_eta: r.delivery_eta,
+    }));
+
+    return sendSuccess(res, { retailers, postalCode });
+  } catch (err) {
+    console.error("[Instacart] Retailers error:", err);
+    return sendServerError(res, "Failed to fetch retailers");
+  }
+}));
 
 export default router;
