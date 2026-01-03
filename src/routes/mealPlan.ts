@@ -7,11 +7,19 @@ import { createInstacartProductsLink, InstacartLineItem } from '../instacartClie
 
 export const mealPlanRouter = Router();
 
-// Apply rate limiting (10 requests per minute per IP)
+// Apply rate limiting (10 requests per minute per IP) for expensive operations
 const planRateLimit = rateLimitMiddleware({
   windowMs: 60000,
   maxRequests: 10,
   message: 'Too many meal plan requests, please try again later',
+});
+
+// More lenient rate limit for recipe details (30 requests per minute)
+// This allows loading a full 7-day meal plan with 3 meals each
+const recipeRateLimit = rateLimitMiddleware({
+  windowMs: 60000,
+  maxRequests: 30,
+  message: 'Too many recipe requests, please try again later',
 });
 
 // ============================================================
@@ -507,7 +515,7 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
  * POST /api/v1/ai/recipe-details
  * Generate detailed recipe with AI for a specific meal
  */
-mealPlanRouter.post('/recipe-details', planRateLimit, async (req: Request, res: Response) => {
+mealPlanRouter.post('/recipe-details', recipeRateLimit, async (req: Request, res: Response) => {
   const { dishName, mealType, calories, macros } = req.body;
 
   if (!dishName) {
