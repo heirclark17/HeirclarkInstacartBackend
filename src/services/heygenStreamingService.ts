@@ -280,6 +280,58 @@ interface LiveAvatarTokenResponse {
   session_token: string;
 }
 
+// Cached context ID to avoid creating new contexts on every request
+let cachedContextId: string | null = null;
+
+/**
+ * Get or create a context for the LiveAvatar
+ * Context defines how the avatar thinks and responds
+ */
+async function getOrCreateContext(): Promise<string> {
+  // Use cached context if available
+  if (cachedContextId) {
+    return cachedContextId;
+  }
+
+  // Use env variable if set
+  const envContextId = process.env.HEYGEN_CONTEXT_ID;
+  if (envContextId) {
+    cachedContextId = envContextId;
+    return envContextId;
+  }
+
+  // Create a new context via API
+  console.log('[liveavatar] Creating new context...');
+  const client = createLiveAvatarClient();
+
+  try {
+    const response = await client.post('/contexts', {
+      name: 'HeirClark Nutrition Coach',
+      prompt: `You are a friendly and knowledgeable nutrition coach for the HeirClark app.
+Your role is to help users understand their personalized nutrition plans, explain calorie and macro targets,
+and provide motivation for their health goals. Be supportive, encouraging, and use simple language.
+Keep responses concise and actionable.`,
+    });
+
+    const contextId = response.data.context_id || response.data.id;
+    if (!contextId) {
+      throw new Error('No context_id returned from create context API');
+    }
+
+    console.log('[liveavatar] Created context:', contextId);
+    cachedContextId = contextId;
+    return contextId;
+  } catch (error) {
+    if (error instanceof AxiosError) {
+      console.error('[liveavatar] Failed to create context:', {
+        status: error.response?.status,
+        data: JSON.stringify(error.response?.data),
+      });
+    }
+    throw new Error('Failed to create LiveAvatar context. Please set HEYGEN_CONTEXT_ID env variable.');
+  }
+}
+
 /**
  * Create a session token for frontend SDK
  * Uses LiveAvatar API (api.liveavatar.com)
@@ -290,7 +342,6 @@ export async function createSessionToken(): Promise<string> {
 
   const avatarId = process.env.HEYGEN_AVATAR_ID;
   const voiceId = process.env.HEYGEN_VOICE_ID;
-  const contextId = process.env.HEYGEN_CONTEXT_ID;
 
   // Validate required configuration
   if (!avatarId) {
@@ -303,6 +354,9 @@ export async function createSessionToken(): Promise<string> {
   try {
     const client = createLiveAvatarClient();
 
+    // Get or create a context (required for FULL mode)
+    const contextId = await getOrCreateContext();
+
     // LiveAvatar API: POST /sessions/token
     // FULL mode requires: avatar_id, avatar_persona (voice_id, context_id, language)
     const requestBody = {
@@ -310,7 +364,7 @@ export async function createSessionToken(): Promise<string> {
       avatar_id: avatarId,
       avatar_persona: {
         voice_id: voiceId,
-        context_id: contextId || undefined,  // Optional - for knowledge base
+        context_id: contextId,
         language: 'en',
       },
     };
