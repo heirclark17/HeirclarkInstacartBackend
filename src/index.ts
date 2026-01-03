@@ -52,6 +52,9 @@ import instacartRouter from "./routes/instacart";
 // HeyGen video generation router
 import { heygenRouter } from "./routes/heygen";
 
+// HeyGen Streaming Avatar router (Live Avatar)
+import { streamingAvatarRouter } from "./routes/streamingAvatar";
+
 // GDPR compliance router
 import { gdprRouter } from "./routes/gdpr";
 
@@ -197,8 +200,11 @@ app.use("/api/v1/user", userRouter);
 // Instacart routes
 app.use("/api", instacartRouter);
 
-// HeyGen video generation routes
+// HeyGen video generation routes (legacy pre-recorded videos)
 app.use("/api/v1/video", heygenRouter);
+
+// HeyGen Streaming Avatar routes (Live Avatar / real-time streaming)
+app.use("/api/v1/avatar", streamingAvatarRouter);
 
 // GDPR compliance routes (data export, deletion, retention policy)
 app.use("/api/v1/gdpr", gdprRouter);
