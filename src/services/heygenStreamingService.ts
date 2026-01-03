@@ -307,6 +307,7 @@ async function getOrCreateContext(): Promise<string> {
   try {
     const response = await client.post('/contexts', {
       name: 'HeirClark Nutrition Coach',
+      opening_text: 'Hey there! I\'m your personal nutrition coach. Let me explain your personalized plan.',
       prompt: `You are a friendly and knowledgeable nutrition coach for the HeirClark app.
 Your role is to help users understand their personalized nutrition plans, explain calorie and macro targets,
 and provide motivation for their health goals. Be supportive, encouraging, and use simple language.
