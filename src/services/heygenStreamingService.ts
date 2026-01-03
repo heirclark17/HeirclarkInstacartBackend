@@ -570,54 +570,69 @@ export function generateGoalCoachingScript(goalData: {
  * Generate a meal plan coaching script
  */
 export function generateMealPlanCoachingScript(plan: {
-  days?: Array<{ meals?: Array<{ dishName?: string }> }>;
+  days?: Array<{ meals?: Array<{ dishName?: string; name?: string; mealType?: string; type?: string; calories?: number }> }>;
   shoppingList?: Array<unknown>;
 }, targets?: {
   calories?: number;
   protein?: number;
   carbs?: number;
   fat?: number;
-}): string {
+}, userInputs?: { name?: string }): string {
   const calories = targets?.calories || 2000;
   const protein = targets?.protein || 150;
   const carbs = targets?.carbs || 200;
   const fat = targets?.fat || 65;
+  const userName = userInputs?.name;
 
   const days = plan?.days || [];
   const totalMeals = days.reduce((sum, day) => sum + (day.meals?.length || 0), 0);
-  const shoppingItems = plan?.shoppingList?.length || 0;
 
-  // Get meal highlights
+  // Get meal highlights from each day
   const mealHighlights: string[] = [];
   for (let i = 0; i < Math.min(3, days.length); i++) {
     const day = days[i];
     if (day.meals && day.meals.length > 0) {
       const randomMeal = day.meals[Math.floor(Math.random() * day.meals.length)];
-      if (randomMeal?.dishName && !mealHighlights.includes(randomMeal.dishName)) {
-        mealHighlights.push(randomMeal.dishName);
+      const mealName = randomMeal?.dishName || randomMeal?.name;
+      if (mealName && !mealHighlights.includes(mealName)) {
+        mealHighlights.push(mealName);
       }
     }
   }
 
-  let script = `Hey there! I'm excited to walk you through your personalized 7-day meal plan.\n\n`;
+  // Personalized greeting
+  let script = userName
+    ? `Hey! ${userName}, I'm excited to walk you through your personalized 7-day meal plan.\n\n`
+    : `Hey there! I'm excited to walk you through your personalized 7-day meal plan.\n\n`;
 
-  script += `Your plan targets ${calories.toLocaleString()} calories per day, with ${protein}g protein, ${carbs}g carbs, and ${fat}g fat.\n\n`;
+  // Target overview
+  script += `Your plan is designed for ${calories.toLocaleString()} calories per day, with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat.\n\n`;
 
-  script += `Over the next 7 days, you'll enjoy ${totalMeals} delicious meals. `;
-
+  // Meal count and highlights
+  script += `Over the next 7 days, you'll enjoy ${totalMeals} delicious AI-generated meals. `;
   if (mealHighlights.length > 0) {
-    script += `Highlights include ${mealHighlights.join(', ')}.\n\n`;
+    script += `Some highlights include ${mealHighlights.join(', ')}.\n\n`;
   } else {
-    script += `Each day has breakfast, lunch, and dinner.\n\n`;
+    script += `Each day includes breakfast, lunch, and dinner.\n\n`;
   }
 
-  if (shoppingItems > 0) {
-    script += `Your shopping list has ${shoppingItems} items. Order through Instacart with one tap!\n\n`;
+  // How to use the meal cards
+  script += `Let me show you how to use your meal plan. At the top, you'll see tabs for each day of the week. Tap any day to see that day's meals.\n\n`;
+
+  script += `Each meal card shows the dish name, calories, and macros. Tap on any meal card to see the full recipe, including ingredients and step-by-step cooking instructions.\n\n`;
+
+  // Instacart integration
+  script += `Here's the best part: when you're ready to shop, tap the green "Order Week's Groceries" button at the bottom. This will send all your ingredients straight to Instacart, so you can get everything delivered without making a list yourself.\n\n`;
+
+  // Best practices
+  script += `A few tips for success: First, do your meal prep on Sunday. Spend about an hour prepping proteins and chopping vegetables, and you'll save hours during the week. Second, don't stress about hitting your targets exactly. Aim to be within 100 calories, and you're doing great. Third, stay hydrated and listen to your body.\n\n`;
+
+  // Personalized closing
+  if (userName) {
+    script += `You've got this, ${userName}! Each meal is a step toward your goals.`;
+  } else {
+    script += `You've got this! Each meal is a step toward your goals.`;
   }
-
-  script += `Tips: Prep on Sunday, aim for within 100 calories of target, and stay hydrated.\n\n`;
-
-  script += `You've got this! Each meal is a step toward your goals.`;
 
   return script;
 }

@@ -467,7 +467,7 @@ streamingAvatarRouter.get('/liveavatar/avatars', async (_req: Request, res: Resp
  * Convenience endpoint for meal plan coach button
  */
 streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Request, res: Response) => {
-  const { userId: rawUserId, plan, targets } = req.body;
+  const { userId: rawUserId, plan, targets, userInputs } = req.body;
   const userId = sanitizeUserId(rawUserId);
 
   console.log(`[streaming-avatar] Meal plan coach request for user ${userId}`);
@@ -475,7 +475,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
   if (!isConfigured()) {
     // Fallback: Return script only without streaming
     try {
-      const script = generateMealPlanCoachingScript(plan || {}, targets);
+      const script = generateMealPlanCoachingScript(plan || {}, targets, userInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -494,7 +494,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
     // Generate token and script in parallel
     const [token, script] = await Promise.all([
       createSessionToken(),
-      Promise.resolve(generateMealPlanCoachingScript(plan || {}, targets)),
+      Promise.resolve(generateMealPlanCoachingScript(plan || {}, targets, userInputs)),
     ]);
 
     return res.json({
