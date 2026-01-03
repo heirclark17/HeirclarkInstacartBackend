@@ -148,7 +148,7 @@ function mapProduct(raw: any, fallbackQuery: string) {
  *     }
  *   }
  */
-router.post("/instacart/search", asyncHandler(async (req: Request, res: Response) => {
+router.post("/search", asyncHandler(async (req: Request, res: Response) => {
   const query = (req.body.query || "").toString().trim();
   if (!query) {
     return sendError(res, "Missing query", 400);
@@ -261,7 +261,7 @@ router.post("/instacart/search", asyncHandler(async (req: Request, res: Response
  * Create a products link for adding items to cart.
  * See: https://docs.instacart.com/connect/api/fulfillment/
  */
-router.post("/instacart/products-link", asyncHandler(async (req: Request, res: Response) => {
+router.post("/products-link", asyncHandler(async (req: Request, res: Response) => {
   const { items, landingUrl, partnerId } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -317,7 +317,7 @@ router.post("/instacart/products-link", asyncHandler(async (req: Request, res: R
  *
  * Get available retailers for a location.
  */
-router.get("/instacart/retailers", asyncHandler(async (req: Request, res: Response) => {
+router.get("/retailers", asyncHandler(async (req: Request, res: Response) => {
   const postalCode = req.query.postalCode as string;
 
   if (!postalCode) {

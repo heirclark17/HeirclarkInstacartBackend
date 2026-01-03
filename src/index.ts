@@ -197,8 +197,8 @@ app.use("/api/v1/health", healthBridgeRouter);
 // ✅ User preferences / goals
 app.use("/api/v1/user", userRouter);
 
-// Instacart routes
-app.use("/api", instacartRouter);
+// Instacart routes (mounted at /api/instacart to avoid overlapping with other /api/* routes)
+app.use("/api/instacart", instacartRouter);
 
 // HeyGen video generation routes (legacy pre-recorded videos)
 app.use("/api/v1/video", heygenRouter);
