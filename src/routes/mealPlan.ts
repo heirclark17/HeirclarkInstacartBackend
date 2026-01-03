@@ -501,12 +501,13 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
   } catch (err: any) {
     console.error('[mealPlan] Instacart order failed:', err.message);
-    // Fall back to search URL on error
+    // Fall back to search URL on error - include error for debugging
     const topItems = lineItems.slice(0, 10).map((item: any) => item.name).join(', ');
     return sendSuccess(res, {
       instacartUrl: `https://www.instacart.com/store/search/${encodeURIComponent(topItems)}`,
       itemsCount: lineItems.length,
       fallback: true,
+      fallbackReason: err.message, // Include error message for debugging
       shoppingList: lineItems,
     });
   }
