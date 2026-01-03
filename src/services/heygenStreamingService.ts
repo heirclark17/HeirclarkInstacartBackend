@@ -1,14 +1,14 @@
 /**
- * HeyGen Streaming Avatar Service
+ * LiveAvatar Streaming Service
  *
- * Centralized service for HeyGen Live Avatar / Streaming Avatar API.
+ * Centralized service for HeyGen LiveAvatar API.
  * All avatar features in the app should use this service.
  *
  * SECURITY: API key is NEVER exposed to frontend.
  * Frontend receives only session tokens.
  *
- * @see https://docs.heygen.com/docs/streaming-api
- * @see https://docs.heygen.com/docs/streaming-avatar-sdk-reference
+ * @see https://docs.liveavatar.com
+ * @see https://www.liveavatar.com
  */
 
 import axios, { AxiosError, AxiosInstance } from 'axios';
@@ -77,6 +77,10 @@ export interface HeyGenError {
 // CONFIGURATION
 // ============================================================
 
+// LiveAvatar API (new) - uses different base URL than old HeyGen Streaming API
+const LIVEAVATAR_API_BASE = 'https://api.liveavatar.com/v1';
+
+// Legacy HeyGen API (fallback)
 const HEYGEN_STREAMING_BASE = 'https://api.heygen.com';
 
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -115,6 +119,23 @@ function getApiKey(): string {
 // HTTP CLIENT WITH RETRY
 // ============================================================
 
+/**
+ * Create HTTP client for LiveAvatar API
+ */
+function createLiveAvatarClient(): AxiosInstance {
+  return axios.create({
+    baseURL: LIVEAVATAR_API_BASE,
+    timeout: DEFAULT_TIMEOUT,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-KEY': getApiKey(),
+    },
+  });
+}
+
+/**
+ * Create HTTP client for legacy HeyGen Streaming API (fallback)
+ */
 function createHttpClient(): AxiosInstance {
   return axios.create({
     baseURL: HEYGEN_STREAMING_BASE,
@@ -252,33 +273,71 @@ export async function listStreamingAvatars(): Promise<StreamingAvatar[]> {
 }
 
 /**
- * Create a one-time session token for frontend SDK
- * IMPORTANT: Each token can only be used once!
- * @returns Session token for frontend use
+ * LiveAvatar session token response
+ */
+interface LiveAvatarTokenResponse {
+  session_id: string;
+  session_token: string;
+}
+
+/**
+ * Create a session token for frontend SDK using LiveAvatar API
+ * @returns Session token and session ID for frontend use
  */
 export async function createSessionToken(): Promise<string> {
-  console.log('[heygen-streaming] Creating session token...');
+  console.log('[liveavatar] Creating session token...');
+
+  const avatarId = process.env.HEYGEN_AVATAR_ID;
+  const voiceId = process.env.HEYGEN_VOICE_ID;
 
   try {
-    const client = createHttpClient();
+    const client = createLiveAvatarClient();
+
+    // LiveAvatar API: POST /sessions/token
     const response = await withRetry(() =>
-      client.post<SessionTokenResponse>('/v1/streaming.create_token')
+      client.post<LiveAvatarTokenResponse>('/sessions/token', {
+        mode: 'CUSTOM', // CUSTOM mode: we control what avatar says
+        avatar_id: avatarId || undefined,
+        voice_id: voiceId || undefined,
+        language: 'en',
+      })
     );
 
-    if (response.data.error) {
-      throw new Error(response.data.error.message || 'Token creation failed');
+    const sessionToken = response.data.session_token;
+    if (!sessionToken) {
+      throw new Error('No session_token returned from API');
     }
 
-    const token = response.data.data?.token;
-    if (!token) {
-      throw new Error('No token returned from API');
-    }
+    console.log('[liveavatar] Session token created successfully', {
+      session_id: response.data.session_id,
+    });
 
-    console.log('[heygen-streaming] Session token created successfully');
-    return token;
+    return sessionToken;
   } catch (error) {
-    const mappedError = mapError(error);
-    throw new Error(mappedError.message);
+    console.error('[liveavatar] Token creation failed, trying legacy HeyGen API...');
+
+    // Fallback to legacy HeyGen Streaming API
+    try {
+      const legacyClient = createHttpClient();
+      const response = await withRetry(() =>
+        legacyClient.post<SessionTokenResponse>('/v1/streaming.create_token')
+      );
+
+      if (response.data.error) {
+        throw new Error(response.data.error.message || 'Token creation failed');
+      }
+
+      const token = response.data.data?.token;
+      if (!token) {
+        throw new Error('No token returned from API');
+      }
+
+      console.log('[heygen-streaming] Legacy session token created successfully');
+      return token;
+    } catch (legacyError) {
+      const mappedError = mapError(error);
+      throw new Error(mappedError.message);
+    }
   }
 }
 
