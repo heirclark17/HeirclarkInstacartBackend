@@ -351,6 +351,30 @@ heygenRouter.get('/config-check', async (_req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/v1/video/test-heygen
+ * Test HeyGen API connection with a short script
+ */
+heygenRouter.post('/test-heygen', async (_req: Request, res: Response) => {
+  try {
+    console.log('[heygen] Testing HeyGen API connection...');
+    const testScript = 'Hello, this is a test video.';
+    const videoId = await createAvatarVideo(testScript);
+    return res.json({
+      ok: true,
+      message: 'HeyGen API is working!',
+      videoId,
+    });
+  } catch (err: any) {
+    console.error('[heygen] Test failed:', err);
+    return res.json({
+      ok: false,
+      error: err.message,
+      details: err.response?.data || null,
+    });
+  }
+});
+
+/**
  * POST /api/v1/video/goal-coach
  * Generate a personalized goal coaching video/script
  * Returns video URL if HeyGen succeeds, or fallback script text
@@ -375,6 +399,8 @@ heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Respo
 
     // Try to create HeyGen video if API key is configured
     const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
+
+    console.log(`[heygen] [${requestId}] Config check: hasKey=${hasHeyGenKey}, avatarId=${!!process.env.HEYGEN_AVATAR_ID}, voiceId=${!!process.env.HEYGEN_VOICE_ID}`);
 
     if (hasHeyGenKey && process.env.HEYGEN_AVATAR_ID && process.env.HEYGEN_VOICE_ID) {
       try {
