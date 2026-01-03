@@ -67,6 +67,12 @@ import aiBackgroundsRouter from "./routes/aiBackgrounds";
 // AI Meal Plan router
 import { mealPlanRouter } from "./routes/mealPlan";
 
+// Web Scraping router (Firecrawl)
+import { scrapeRouter } from "./routes/scrape";
+
+// Nutrition scraper cron job
+import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
+
 // Validate environment at startup
 function validateStartupEnvironment(): void {
   const required = ["DATABASE_URL"];
@@ -85,6 +91,7 @@ function validateStartupEnvironment(): void {
     { key: "HEYGEN_API_KEY", fallback: "HeyGen video generation will not work" },
     { key: "ANTHROPIC_API_KEY", fallback: "Script generation will not work" },
     { key: "ENCRYPTION_KEY", fallback: "Data encryption disabled (generate with: openssl rand -base64 32)" },
+    { key: "FIRECRAWL_API_KEY", fallback: "Web scraping will not work" },
   ];
 
   // Validate encryption key if present
@@ -217,6 +224,9 @@ app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
 
 // AI Meal Plan routes (7-day plan generation)
 app.use("/api/v1/ai", mealPlanRouter);
+
+// Web scraping routes (Firecrawl integration)
+app.use("/api/v1/scrape", scrapeRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
@@ -461,6 +471,12 @@ const server = app.listen(PORT, () => {
   if (process.env.NODE_ENV === 'production') {
     scheduleRetentionJob('02:00');
     console.log('Data retention job scheduled for 2:00 AM daily');
+
+    // Schedule nutrition scraper cron job (runs daily at 3 AM)
+    if (process.env.FIRECRAWL_API_KEY) {
+      scheduleNutritionScraper('0 3 * * *');
+      console.log('Nutrition scraper job scheduled for 3:00 AM daily');
+    }
   }
 });
 

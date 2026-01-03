@@ -34,6 +34,15 @@ export enum AuditAction {
   GDPR_EXPORT = 'GDPR_EXPORT',
   GDPR_DELETE = 'GDPR_DELETE',
   CONSENT_UPDATED = 'CONSENT_UPDATED',
+
+  // Scraping events
+  SCRAPE_SUCCESS = 'SCRAPE_SUCCESS',
+  SCRAPE_FAILED = 'SCRAPE_FAILED',
+  SCRAPE_CACHE_HIT = 'SCRAPE_CACHE_HIT',
+  SCRAPE_BATCH = 'SCRAPE_BATCH',
+  CRON_SCRAPE_COMPLETE = 'CRON_SCRAPE_COMPLETE',
+  CRON_SCRAPE_CLEANUP = 'CRON_SCRAPE_CLEANUP',
+  CRON_SCRAPE_ERROR = 'CRON_SCRAPE_ERROR',
 }
 
 /**
@@ -51,6 +60,7 @@ export enum ResourceType {
   VIDEO = 'video',
   DEVICE = 'device',
   SYSTEM = 'system',
+  NUTRITION_SCRAPE = 'nutrition_scrape',
 }
 
 /**
