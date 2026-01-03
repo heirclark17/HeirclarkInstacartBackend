@@ -323,10 +323,15 @@ Keep responses concise and actionable.`,
     return contextId;
   } catch (error) {
     if (error instanceof AxiosError) {
+      const errorData = error.response?.data;
       console.error('[liveavatar] Failed to create context:', {
         status: error.response?.status,
-        data: JSON.stringify(error.response?.data),
+        data: JSON.stringify(errorData),
       });
+      const errorMsg = typeof errorData === 'object' && errorData?.message
+        ? errorData.message
+        : JSON.stringify(errorData);
+      throw new Error(`Failed to create context: ${error.response?.status} - ${errorMsg}`);
     }
     throw new Error('Failed to create LiveAvatar context. Please set HEYGEN_CONTEXT_ID env variable.');
   }
