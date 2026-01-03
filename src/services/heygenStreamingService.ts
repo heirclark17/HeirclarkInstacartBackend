@@ -322,8 +322,9 @@ Keep responses concise and actionable.`,
     console.log('[liveavatar] Created context:', contextId);
     cachedContextId = contextId;
     return contextId;
-  } catch (error) {
-    if (error instanceof AxiosError) {
+  } catch (error: unknown) {
+    // Handle Axios errors with response data
+    if (axios.isAxiosError(error)) {
       const errorData = error.response?.data;
       console.error('[liveavatar] Failed to create context:', {
         status: error.response?.status,
@@ -334,7 +335,10 @@ Keep responses concise and actionable.`,
         : JSON.stringify(errorData);
       throw new Error(`Failed to create context: ${error.response?.status} - ${errorMsg}`);
     }
-    throw new Error('Failed to create LiveAvatar context. Please set HEYGEN_CONTEXT_ID env variable.');
+    // Handle other error types
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('[liveavatar] Failed to create context (non-Axios):', errorMsg);
+    throw new Error(`Failed to create LiveAvatar context: ${errorMsg}`);
   }
 }
 
