@@ -332,6 +332,25 @@ heygenRouter.get('/voices', async (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/video/config-check
+ * Debug endpoint to verify HeyGen configuration without exposing secrets
+ */
+heygenRouter.get('/config-check', async (_req: Request, res: Response) => {
+  const apiKey = process.env.HEYGEN_API_KEY;
+  const avatarId = process.env.HEYGEN_AVATAR_ID;
+  const voiceId = process.env.HEYGEN_VOICE_ID;
+
+  const config = {
+    HEYGEN_API_KEY: apiKey ? `SET (${apiKey.length} chars, starts with ${apiKey.substring(0, 4)}...)` : 'NOT SET',
+    HEYGEN_AVATAR_ID: avatarId ? `SET (${avatarId})` : 'NOT SET',
+    HEYGEN_VOICE_ID: voiceId ? `SET (${voiceId})` : 'NOT SET',
+    hasValidConfig: !!(apiKey && apiKey.length > 20 && avatarId && voiceId),
+  };
+
+  return res.json({ ok: true, config });
+});
+
+/**
  * POST /api/v1/video/goal-coach
  * Generate a personalized goal coaching video/script
  * Returns video URL if HeyGen succeeds, or fallback script text
