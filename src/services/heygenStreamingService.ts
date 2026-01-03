@@ -282,45 +282,52 @@ interface LiveAvatarTokenResponse {
 
 /**
  * Create a session token for frontend SDK
- * Uses legacy HeyGen Streaming API which has better compatibility
+ * Uses HeyGen Streaming API for StreamingAvatar SDK
  * @returns Session token for frontend use
  */
 export async function createSessionToken(): Promise<string> {
   console.log('[heygen-streaming] Creating session token...');
+  console.log('[heygen-streaming] API Key prefix:', process.env.HEYGEN_API_KEY?.substring(0, 8));
 
   try {
-    // Use the legacy HeyGen Streaming API endpoint which works with StreamingAvatar SDK
+    // Use HeyGen Streaming API endpoint
     const client = createHttpClient();
+    console.log('[heygen-streaming] Calling POST /v1/streaming.create_token...');
+
     const response = await withRetry(() =>
       client.post<SessionTokenResponse>('/v1/streaming.create_token')
     );
 
-    console.log('[heygen-streaming] Token response:', JSON.stringify(response.data));
+    console.log('[heygen-streaming] Token response status:', response.status);
+    console.log('[heygen-streaming] Token response data:', JSON.stringify(response.data));
 
     if (response.data.error) {
+      console.error('[heygen-streaming] API returned error:', response.data.error);
       throw new Error(response.data.error.message || 'Token creation failed');
     }
 
     const token = response.data.data?.token;
     if (!token) {
+      console.error('[heygen-streaming] No token in response. Keys:', Object.keys(response.data));
       throw new Error('No token returned from API');
     }
 
-    console.log('[heygen-streaming] Session token created successfully');
+    console.log('[heygen-streaming] Session token created successfully, length:', token.length);
     return token;
   } catch (error) {
     if (error instanceof AxiosError) {
-      console.error('[heygen-streaming] API Error:', {
+      console.error('[heygen-streaming] API Error Details:', {
         status: error.response?.status,
         statusText: error.response?.statusText,
         data: JSON.stringify(error.response?.data),
         message: error.message,
+        url: error.config?.url,
+        headers: error.config?.headers ? Object.keys(error.config.headers) : [],
       });
     } else {
       console.error('[heygen-streaming] Error:', error);
     }
-    const mappedError = mapError(error);
-    throw new Error(mappedError.message);
+    throw error; // Re-throw original error for better debugging
   }
 }
 

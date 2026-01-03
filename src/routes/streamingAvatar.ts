@@ -345,8 +345,9 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
     });
   } catch (error: unknown) {
     console.error('[streaming-avatar] Goal coach error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-    // Fallback: Return script only
+    // Fallback: Return script only with debug info
     try {
       const script = generateGoalCoachingScript(goalData || {}, userInputs);
       return res.json({
@@ -354,11 +355,15 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
         streamingAvailable: false,
         script,
         message: 'Streaming temporarily unavailable. Text coaching provided.',
+        _debug: {
+          tokenError: errorMessage,
+          timestamp: new Date().toISOString(),
+        },
       });
     } catch {
       return res.status(500).json({
         ok: false,
-        error: error instanceof Error ? error.message : 'Failed to generate coaching',
+        error: errorMessage,
       });
     }
   }
