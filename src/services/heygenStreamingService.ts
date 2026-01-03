@@ -293,53 +293,18 @@ async function getOrCreateContext(): Promise<string> {
     return cachedContextId;
   }
 
-  // Use env variable if set
+  // HEYGEN_CONTEXT_ID is required - must be created via LiveAvatar web portal
   const envContextId = process.env.HEYGEN_CONTEXT_ID;
   if (envContextId) {
     cachedContextId = envContextId;
     return envContextId;
   }
 
-  // Create a new context via API
-  console.log('[liveavatar] Creating new context...');
-  const client = createLiveAvatarClient();
-
-  try {
-    const response = await client.post('/contexts', {
-      name: 'HeirClark Nutrition Coach',
-      opening_text: 'Hey there! I\'m your personal nutrition coach. Let me explain your personalized plan.',
-      prompt: `You are a friendly and knowledgeable nutrition coach for the HeirClark app.
-Your role is to help users understand their personalized nutrition plans, explain calorie and macro targets,
-and provide motivation for their health goals. Be supportive, encouraging, and use simple language.
-Keep responses concise and actionable.`,
-    });
-
-    const contextId = response.data.context_id || response.data.id;
-    if (!contextId) {
-      throw new Error('No context_id returned from create context API');
-    }
-
-    console.log('[liveavatar] Created context:', contextId);
-    cachedContextId = contextId;
-    return contextId;
-  } catch (error: unknown) {
-    // Handle Axios errors with response data
-    if (axios.isAxiosError(error)) {
-      const errorData = error.response?.data;
-      console.error('[liveavatar] Failed to create context:', {
-        status: error.response?.status,
-        data: JSON.stringify(errorData),
-      });
-      const errorMsg = typeof errorData === 'object' && errorData?.message
-        ? errorData.message
-        : JSON.stringify(errorData);
-      throw new Error(`Failed to create context: ${error.response?.status} - ${errorMsg}`);
-    }
-    // Handle other error types
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error('[liveavatar] Failed to create context (non-Axios):', errorMsg);
-    throw new Error(`Failed to create LiveAvatar context: ${errorMsg}`);
-  }
+  // Context ID is required but not set
+  throw new Error(
+    'HEYGEN_CONTEXT_ID is required. ' +
+    'Create a context at https://www.liveavatar.com, then set the context_id as HEYGEN_CONTEXT_ID in Railway.'
+  );
 }
 
 /**
