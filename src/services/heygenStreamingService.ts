@@ -295,10 +295,14 @@ export async function createSessionToken(): Promise<string> {
     const client = createLiveAvatarClient();
 
     // LiveAvatar API: POST /sessions/token
-    // Try different configurations to enable speaking
+    // IMPORTANT: mode: "full" enables avatar.speak_text and avatar.speak_response events
+    // Without this, only CUSTOM mode is available which requires pre-encoded audio
     const requestBody = {
+      mode: 'full',  // Required for text-to-speech (avatar.speak_text, avatar.speak_response)
       avatar_id: avatarId || undefined,
-      voice_id: voiceId || undefined,
+      avatar_persona: voiceId ? {
+        voice_id: voiceId,
+      } : undefined,
     };
 
     console.log('[liveavatar] Request:', JSON.stringify(requestBody));
