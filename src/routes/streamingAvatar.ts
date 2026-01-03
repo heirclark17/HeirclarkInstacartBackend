@@ -370,6 +370,98 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
 });
 
 /**
+ * GET /api/v1/avatar/liveavatar/voices
+ * List available voices from LiveAvatar API (for debugging)
+ */
+streamingAvatarRouter.get('/liveavatar/voices', async (_req: Request, res: Response) => {
+  const apiKey = process.env.HEYGEN_API_KEY;
+
+  if (!apiKey) {
+    return res.status(503).json({
+      ok: false,
+      error: 'API key not configured',
+    });
+  }
+
+  try {
+    const axios = require('axios');
+    const response = await axios.get('https://api.liveavatar.com/v1/voices', {
+      headers: {
+        'X-API-KEY': apiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    const voices = response.data?.data || response.data || [];
+
+    return res.json({
+      ok: true,
+      voices: Array.isArray(voices) ? voices.map((v: any) => ({
+        id: v.voice_id || v.id,
+        name: v.name || v.voice_name || 'Unnamed',
+        language: v.language || 'unknown',
+        gender: v.gender || null,
+      })) : voices,
+      raw: response.data,
+    });
+  } catch (error: any) {
+    console.error('[liveavatar] List voices error:', error.response?.data || error.message);
+    return res.status(500).json({
+      ok: false,
+      error: error.response?.data?.message || error.message,
+      details: error.response?.data,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/avatar/liveavatar/avatars
+ * List available avatars from LiveAvatar API (for debugging)
+ */
+streamingAvatarRouter.get('/liveavatar/avatars', async (_req: Request, res: Response) => {
+  const apiKey = process.env.HEYGEN_API_KEY;
+
+  if (!apiKey) {
+    return res.status(503).json({
+      ok: false,
+      error: 'API key not configured',
+    });
+  }
+
+  try {
+    const axios = require('axios');
+    const response = await axios.get('https://api.liveavatar.com/v1/avatars', {
+      headers: {
+        'X-API-KEY': apiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    const avatars = response.data?.data || response.data || [];
+
+    return res.json({
+      ok: true,
+      avatars: Array.isArray(avatars) ? avatars.map((a: any) => ({
+        id: a.avatar_id || a.id,
+        name: a.name || a.avatar_name || 'Unnamed',
+        preview: a.preview_url || a.preview_image_url || null,
+        defaultVoice: a.default_voice_id || a.default_voice || null,
+      })) : avatars,
+      raw: response.data,
+    });
+  } catch (error: any) {
+    console.error('[liveavatar] List avatars error:', error.response?.data || error.message);
+    return res.status(500).json({
+      ok: false,
+      error: error.response?.data?.message || error.message,
+      details: error.response?.data,
+    });
+  }
+});
+
+/**
  * POST /api/v1/avatar/coach/mealplan
  * Combined endpoint: creates token + generates meal plan coaching script
  * Convenience endpoint for meal plan coach button
