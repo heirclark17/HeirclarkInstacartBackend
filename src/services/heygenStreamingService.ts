@@ -282,52 +282,57 @@ interface LiveAvatarTokenResponse {
 
 /**
  * Create a session token for frontend SDK
- * Uses HeyGen Streaming API for StreamingAvatar SDK
+ * Uses LiveAvatar API (api.liveavatar.com)
  * @returns Session token for frontend use
  */
 export async function createSessionToken(): Promise<string> {
-  console.log('[heygen-streaming] Creating session token...');
-  console.log('[heygen-streaming] API Key prefix:', process.env.HEYGEN_API_KEY?.substring(0, 8));
+  console.log('[liveavatar] Creating session token...');
+
+  const avatarId = process.env.HEYGEN_AVATAR_ID;
+  const voiceId = process.env.HEYGEN_VOICE_ID;
 
   try {
-    // Use HeyGen Streaming API endpoint
-    const client = createHttpClient();
-    console.log('[heygen-streaming] Calling POST /v1/streaming.create_token...');
+    const client = createLiveAvatarClient();
+
+    // LiveAvatar API: POST /sessions/token
+    // Try different configurations to enable speaking
+    const requestBody = {
+      avatar_id: avatarId || undefined,
+      voice_id: voiceId || undefined,
+    };
+
+    console.log('[liveavatar] Request:', JSON.stringify(requestBody));
 
     const response = await withRetry(() =>
-      client.post<SessionTokenResponse>('/v1/streaming.create_token')
+      client.post<LiveAvatarTokenResponse>('/sessions/token', requestBody)
     );
 
-    console.log('[heygen-streaming] Token response status:', response.status);
-    console.log('[heygen-streaming] Token response data:', JSON.stringify(response.data));
+    console.log('[liveavatar] Response:', JSON.stringify(response.data));
 
-    if (response.data.error) {
-      console.error('[heygen-streaming] API returned error:', response.data.error);
-      throw new Error(response.data.error.message || 'Token creation failed');
+    // Extract token from response
+    const sessionToken = response.data.session_token
+      || (response.data as any).token
+      || (response.data as any).data?.session_token
+      || (response.data as any).data?.token;
+
+    if (!sessionToken) {
+      console.error('[liveavatar] No token found. Response keys:', Object.keys(response.data));
+      throw new Error('No session_token returned from API');
     }
 
-    const token = response.data.data?.token;
-    if (!token) {
-      console.error('[heygen-streaming] No token in response. Keys:', Object.keys(response.data));
-      throw new Error('No token returned from API');
-    }
-
-    console.log('[heygen-streaming] Session token created successfully, length:', token.length);
-    return token;
+    console.log('[liveavatar] Token created, length:', sessionToken.length);
+    return sessionToken;
   } catch (error) {
     if (error instanceof AxiosError) {
-      console.error('[heygen-streaming] API Error Details:', {
+      console.error('[liveavatar] API Error:', {
         status: error.response?.status,
-        statusText: error.response?.statusText,
         data: JSON.stringify(error.response?.data),
         message: error.message,
-        url: error.config?.url,
-        headers: error.config?.headers ? Object.keys(error.config.headers) : [],
       });
     } else {
-      console.error('[heygen-streaming] Error:', error);
+      console.error('[liveavatar] Error:', error);
     }
-    throw error; // Re-throw original error for better debugging
+    throw error;
   }
 }
 
