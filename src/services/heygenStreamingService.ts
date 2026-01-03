@@ -338,11 +338,17 @@ export async function createSessionToken(): Promise<string> {
     return sessionToken;
   } catch (error) {
     if (error instanceof AxiosError) {
+      const apiErrorData = error.response?.data;
       console.error('[liveavatar] API Error:', {
         status: error.response?.status,
-        data: JSON.stringify(error.response?.data),
+        data: JSON.stringify(apiErrorData),
         message: error.message,
       });
+      // Include API error details in the thrown error for debugging
+      const apiErrorMsg = typeof apiErrorData === 'object'
+        ? JSON.stringify(apiErrorData)
+        : String(apiErrorData);
+      throw new Error(`LiveAvatar API ${error.response?.status}: ${apiErrorMsg}`);
     } else {
       console.error('[liveavatar] Error:', error);
     }
