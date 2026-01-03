@@ -294,27 +294,52 @@ export async function createSessionToken(): Promise<string> {
     const client = createLiveAvatarClient();
 
     // LiveAvatar API: POST /sessions/token
+    const requestBody = {
+      mode: 'CUSTOM', // CUSTOM mode: we control what avatar says
+      avatar_id: avatarId || undefined,
+      voice_id: voiceId || undefined,
+      language: 'en',
+    };
+
+    console.log('[liveavatar] Request body:', JSON.stringify(requestBody));
+
     const response = await withRetry(() =>
-      client.post<LiveAvatarTokenResponse>('/sessions/token', {
-        mode: 'CUSTOM', // CUSTOM mode: we control what avatar says
-        avatar_id: avatarId || undefined,
-        voice_id: voiceId || undefined,
-        language: 'en',
-      })
+      client.post<LiveAvatarTokenResponse>('/sessions/token', requestBody)
     );
 
-    const sessionToken = response.data.session_token;
+    // Log the full response to debug
+    console.log('[liveavatar] Full API response:', JSON.stringify(response.data));
+
+    // Try different possible response formats
+    const sessionToken = response.data.session_token
+      || (response.data as any).token
+      || (response.data as any).data?.session_token
+      || (response.data as any).data?.token;
+
     if (!sessionToken) {
+      console.error('[liveavatar] Response structure:', Object.keys(response.data));
       throw new Error('No session_token returned from API');
     }
 
     console.log('[liveavatar] Session token created successfully', {
-      session_id: response.data.session_id,
+      session_id: response.data.session_id || (response.data as any).data?.session_id,
     });
 
     return sessionToken;
   } catch (error) {
-    console.error('[liveavatar] Token creation failed, trying legacy HeyGen API...');
+    // Log the full error details
+    if (error instanceof AxiosError) {
+      console.error('[liveavatar] API Error:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: JSON.stringify(error.response?.data),
+        message: error.message,
+      });
+    } else {
+      console.error('[liveavatar] Error:', error);
+    }
+
+    console.log('[liveavatar] Token creation failed, trying legacy HeyGen API...');
 
     // Fallback to legacy HeyGen Streaming API
     try {
