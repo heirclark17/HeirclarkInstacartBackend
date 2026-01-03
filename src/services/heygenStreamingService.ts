@@ -519,12 +519,15 @@ export function generateGoalCoachingScript(goalData: {
     totalWeeks = 0,
   } = goalData || {};
 
-  const name = userInputs?.name || 'there';
+  const userName = userInputs?.name;
   const goalWord = goalType === 'lose' ? 'lose weight' : goalType === 'gain' ? 'build muscle' : 'maintain your weight';
   const absWeekly = Math.abs(weeklyChange).toFixed(2);
   const absDelta = Math.abs(Math.round(dailyDelta));
 
-  let script = `Hey ${name}! Congratulations on setting up your personalized nutrition plan.\n\n`;
+  // Personalized greeting - use name if provided
+  let script = userName
+    ? `Hey! ${userName}, congratulations on setting up your personalized nutrition plan.\n\n`
+    : `Hey there! Congratulations on setting up your personalized nutrition plan.\n\n`;
 
   script += `Your BMI is ${bmi.toFixed(1)}, in the "${bmiCategory.name}" category. `;
 
@@ -545,7 +548,7 @@ export function generateGoalCoachingScript(goalData: {
     script += `At ${calories.toLocaleString()} calories, you'll maintain your weight.\n\n`;
   }
 
-  script += `Your macros: ${protein}g protein, ${carbs}g carbs, ${fat}g fat. `;
+  script += `Your macros: ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
   script += `Protein is especially important for your goals.\n\n`;
 
   script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this!`;

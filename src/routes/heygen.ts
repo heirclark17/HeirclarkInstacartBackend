@@ -651,12 +651,15 @@ function generateGoalCoachScript(goalData: any, userInputs: any): string {
     totalWeeks = 0,
   } = goalData || {};
 
-  const name = userInputs?.name || 'there';
+  const userName = userInputs?.name;
   const goalWord = goalType === 'lose' ? 'lose weight' : goalType === 'gain' ? 'build muscle' : 'maintain your weight';
   const absWeekly = Math.abs(weeklyChange).toFixed(2);
   const absDelta = Math.abs(Math.round(dailyDelta));
 
-  let script = `Hey ${name}! Congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`;
+  // Personalized greeting - use name if provided
+  let script = userName
+    ? `Hey! ${userName}, congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`
+    : `Hey there! Congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`;
 
   // BMI section
   script += `First, let's talk about where you're starting. Your BMI is ${bmi.toFixed(1)}, which puts you in the "${bmiCategory.name}" category. `;
