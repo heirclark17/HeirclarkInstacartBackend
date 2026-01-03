@@ -1,7 +1,10 @@
 // src/instacartClient.ts
 
-// Use development URL for dev API keys, production URL for production keys
-// Set INSTACART_ENV=production in Railway when you get a production API key
+// Instacart IDP API base URLs
+// Documentation: https://docs.instacart.com/developer_platform_api/
+// - Production: https://connect.instacart.com (requires production API key)
+// - Development: https://connect.dev.instacart.tools (for dev API keys - confirmed by Instacart support)
+// Set INSTACART_ENV=production in Railway when you have a production API key
 const INSTACART_BASE = process.env.INSTACART_ENV === 'production'
   ? "https://connect.instacart.com"
   : "https://connect.dev.instacart.tools";

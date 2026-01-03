@@ -15,15 +15,17 @@ router.use(rateLimitMiddleware({
 }));
 
 /**
- * Instacart Connect API Configuration
- * See: https://docs.instacart.com/connect/api/
+ * Instacart IDP API Configuration
+ * See: https://docs.instacart.com/developer_platform_api/
  *
  * Base URL options:
- * - Production: https://connect.instacart.com
- * - Sandbox: https://connect.sandbox.instacart.com
+ * - Production: https://connect.instacart.com (production API key required)
+ * - Development: https://connect.dev.instacart.tools (for dev API keys - confirmed by Instacart support)
+ * Set INSTACART_ENV=production in Railway when you have a production API key
  */
-const INSTACART_BASE_URL =
-  process.env.INSTACART_BASE_URL || "https://connect.instacart.com";
+const INSTACART_BASE_URL = process.env.INSTACART_ENV === 'production'
+  ? "https://connect.instacart.com"
+  : "https://connect.dev.instacart.tools";
 const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
 
 // Validate API key at startup
@@ -162,14 +164,12 @@ router.post("/instacart/search", asyncHandler(async (req: Request, res: Response
   const postalCode = req.body.postalCode || null;
 
   /**
-   * Instacart Connect API - Product Search
-   * See: https://docs.instacart.com/connect/api/catalog/
+   * Instacart IDP API - Product Search
+   * See: https://docs.instacart.com/developer_platform_api/
    *
-   * The actual endpoint depends on your Instacart integration type:
-   * - Catalog API: GET /v2/fulfillment/catalog/products
-   * - Connect API: POST /v2/fulfillment/orders/products_link
+   * Uses the IDP v1 products endpoint for searching products
    */
-  const searchUrl = new URL(`${INSTACART_BASE_URL}/v2/fulfillment/catalog/products`);
+  const searchUrl = new URL(`${INSTACART_BASE_URL}/idp/v1/products`);
   searchUrl.searchParams.set("query", query);
   searchUrl.searchParams.set("limit", "20");
 
@@ -273,7 +273,9 @@ router.post("/instacart/products-link", asyncHandler(async (req: Request, res: R
   }
 
   try {
-    const apiRes = await fetch(`${INSTACART_BASE_URL}/v2/fulfillment/orders/products_link`, {
+    // Instacart IDP API - Create products link
+    // See: https://docs.instacart.com/developer_platform_api/
+    const apiRes = await fetch(`${INSTACART_BASE_URL}/idp/v1/products/products_link`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${INSTACART_API_KEY}`,
@@ -281,14 +283,15 @@ router.post("/instacart/products-link", asyncHandler(async (req: Request, res: R
         "Accept": "application/json",
       },
       body: JSON.stringify({
-        items: items.map((item: any) => ({
+        title: "Shopping List",
+        line_items: items.map((item: any) => ({
           name: item.name || item.query,
           quantity: item.quantity || 1,
           unit: item.unit || "each",
         })),
-        landing_page_url: landingUrl,
-        partner_linkback_url: landingUrl,
-        partner_id: partnerId,
+        landing_page_configuration: {
+          partner_linkback_url: landingUrl,
+        },
       }),
     });
 
@@ -326,8 +329,9 @@ router.get("/instacart/retailers", asyncHandler(async (req: Request, res: Respon
   }
 
   try {
+    // Note: Retailers endpoint may vary - check Instacart IDP documentation
     const apiRes = await fetch(
-      `${INSTACART_BASE_URL}/v2/fulfillment/retailers?postal_code=${encodeURIComponent(postalCode)}`,
+      `${INSTACART_BASE_URL}/idp/v1/retailers?postal_code=${encodeURIComponent(postalCode)}`,
       {
         method: "GET",
         headers: {

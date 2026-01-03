@@ -476,6 +476,7 @@ mealPlanRouter.post('/instacart-order', planRateLimit, async (req: Request, res:
 
   try {
     console.log('[mealPlan] Calling createInstacartProductsLink with', lineItems.length, 'items');
+    console.log('[mealPlan] INSTACART_ENV:', process.env.INSTACART_ENV || 'not set (using sandbox)');
 
     // Use the shared Instacart client
     const result = await createInstacartProductsLink({
