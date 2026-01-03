@@ -551,7 +551,12 @@ export function generateGoalCoachingScript(goalData: {
   script += `Your macros: ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
   script += `Protein is especially important for your goals.\n\n`;
 
-  script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this!`;
+  // Personalized ending with name
+  if (userName) {
+    script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this, ${userName}!`;
+  } else {
+    script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this!`;
+  }
 
   return script;
 }

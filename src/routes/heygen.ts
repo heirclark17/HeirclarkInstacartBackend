@@ -696,7 +696,12 @@ function generateGoalCoachScript(goalData: any, userInputs: any): string {
   // Encouragement
   script += `Here's my advice: Consistency beats perfection. You don't need to hit these numbers exactly every day. Aim for the weekly average. Track your food for the first couple of weeks to build awareness, then you can be more flexible.\n\n`;
 
-  script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you. Let's crush this together!`;
+  // Personalized ending with name
+  if (userName) {
+    script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you, ${userName}. Let's crush this together!`;
+  } else {
+    script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you. Let's crush this together!`;
+  }
 
   return script;
 }
