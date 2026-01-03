@@ -778,14 +778,50 @@ async function handlePhoto(req: Request, res: Response) {
       .jpeg({ quality: 82 })
       .toBuffer();
 
-    // Vision pass: identify foods / portions (still simple list, but better notes)
+    // Vision pass: identify foods / portions with enhanced prompting for accuracy
     const visionPrompt = [
-      "Analyze this meal photo.",
-      "Return ONLY valid JSON with keys:",
-      '{ "foods": string[], "portionNotes": string, "clarity": number }',
-      "foods = list of visible foods (be specific: e.g., 'grilled chicken breast', 'white rice', 'broccoli')",
-      "portionNotes = short but specific portion estimate (e.g., 'about 6 oz chicken, 1 cup rice, 1 cup broccoli')",
-      "clarity = 0-100 confidence in what you see",
+      "You are an expert nutritionist analyzing a meal photo for calorie tracking.",
+      "",
+      "STEP 1 - IDENTIFY FOODS:",
+      "List every distinct food item visible. Be specific about:",
+      "- Protein source and preparation (e.g., 'grilled chicken breast', 'pan-fried salmon fillet')",
+      "- Grains/starches (e.g., 'white jasmine rice', 'whole wheat pasta')",
+      "- Vegetables and preparation (e.g., 'steamed broccoli', 'roasted carrots')",
+      "- Sauces, dressings, oils visible",
+      "",
+      "STEP 2 - ESTIMATE PORTIONS:",
+      "Use visual references to estimate portions accurately:",
+      "- Standard dinner plate = 10-11 inches diameter",
+      "- Salad plate = 7-8 inches",
+      "- Palm of hand = ~3 oz cooked protein",
+      "- Fist = ~1 cup of grains/vegetables",
+      "- Thumb = ~1 tablespoon of fats/oils",
+      "- Standard fork = ~7 inches long",
+      "",
+      "STEP 3 - COOKING METHOD:",
+      "Note if food appears fried, grilled, baked, steamed, or raw (affects calories).",
+      "",
+      "Return ONLY valid JSON:",
+      '{',
+      '  "foods": [',
+      '    { "name": "string", "portion": "string with unit", "cookingMethod": "string" }',
+      '  ],',
+      '  "portionNotes": "detailed portion breakdown string",',
+      '  "clarity": 0-100,',
+      '  "plateSize": "dinner|salad|bowl|unknown"',
+      '}',
+      "",
+      "Example:",
+      '{',
+      '  "foods": [',
+      '    { "name": "grilled chicken breast", "portion": "5 oz", "cookingMethod": "grilled" },',
+      '    { "name": "white rice", "portion": "1.5 cups", "cookingMethod": "steamed" },',
+      '    { "name": "steamed broccoli", "portion": "1 cup", "cookingMethod": "steamed" }',
+      '  ],',
+      '  "portionNotes": "Chicken appears to cover about 1/4 of a standard dinner plate, rice takes up 1/3, vegetables fill the remaining space",',
+      '  "clarity": 85,',
+      '  "plateSize": "dinner"',
+      '}',
     ].join("\n");
 
     const vision = await openai.chat.completions.create({
@@ -811,11 +847,31 @@ async function handlePhoto(req: Request, res: Response) {
     const visionRaw = vision.choices?.[0]?.message?.content || "{}";
     const visionParsed = safeParseJson(visionRaw);
 
-    const foodsList = Array.isArray(visionParsed.foods)
-      ? visionParsed.foods.map(String)
-      : [];
+    // Parse enhanced vision response - handle both new format (array of objects) and legacy (array of strings)
+    const rawFoods = Array.isArray(visionParsed.foods) ? visionParsed.foods : [];
+    const foodsWithDetails = rawFoods.map((f: any) => {
+      if (typeof f === "string") {
+        return { name: f, portion: "", cookingMethod: "" };
+      }
+      return {
+        name: String(f.name || f),
+        portion: String(f.portion || ""),
+        cookingMethod: String(f.cookingMethod || ""),
+      };
+    });
+
+    // Create formatted string for macro prompt
+    const foodsList = foodsWithDetails.map((f: any) => f.name);
+    const foodsForPrompt = foodsWithDetails.map((f: any) => {
+      const parts = [f.name];
+      if (f.portion) parts.push(`(${f.portion})`);
+      if (f.cookingMethod) parts.push(`- ${f.cookingMethod}`);
+      return parts.join(" ");
+    });
+
     const portionNotes = String(visionParsed.portionNotes || "");
     const clarity = Math.max(0, Math.min(100, Number(visionParsed.clarity) || 0));
+    const plateSize = String(visionParsed.plateSize || "unknown");
 
     // Generate image hash for RAG logging
     const imageHash = crypto.createHash("sha256").update(processed).digest("hex").slice(0, 16);
@@ -875,29 +931,52 @@ async function handlePhoto(req: Request, res: Response) {
 
     // ===== LEGACY (NON-RAG) PATH =====
     const macroPrompt = [
-      "You are a nutrition estimator for a meal photo.",
-      "Use the foods list + portion notes to estimate totals and per-item macros.",
-      "Return ONLY JSON (no markdown). Required shape:",
-      "{",
-      '  "mealName": string,',
-      '  "calories": number, "protein": number, "carbs": number, "fat": number,',
-      '  "foods": [',
-      '    { "name": string, "portion": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number }, "notes": string }',
-      "  ],",
-      '  "healthierSwaps": [',
-      '    { "swap": string, "why": string, "macros": { "calories": number, "protein": number, "carbs": number, "fat": number } }',
-      "  ],",
-      '  "confidence": number,',
-      '  "explanation": string',
-      "}",
-      "Rules:",
-      "- foods[].macros should roughly sum to totals.",
-      "- healthierSwaps must be 2–5 items with detailed WHY.",
-      "- confidence is 0-100.",
-      "- explanation should be 2–4 sentences and mention assumptions.",
+      "You are an expert nutritionist estimating macros for a meal photo.",
       "",
-      `Foods seen: ${JSON.stringify(foodsList)}`,
-      `Portion notes: ${portionNotes}`,
+      "FOOD ITEMS IDENTIFIED:",
+      ...foodsForPrompt.map((f: string, i: number) => `${i + 1}. ${f}`),
+      "",
+      `PORTION NOTES: ${portionNotes}`,
+      `PLATE SIZE: ${plateSize}`,
+      `PHOTO CLARITY: ${clarity}/100`,
+      "",
+      "INSTRUCTIONS:",
+      "1. Use USDA nutrition data as reference for macro calculations",
+      "2. Account for cooking method (fried adds ~50-100 cal from oil, grilled adds minimal)",
+      "3. Be precise with portions - use the portion sizes provided",
+      "4. Include visible sauces/dressings/oils (often 100-200 cal overlooked)",
+      "",
+      "Return ONLY valid JSON (no markdown):",
+      "{",
+      '  "mealName": "descriptive name for the meal",',
+      '  "calories": number,',
+      '  "protein": number,',
+      '  "carbs": number,',
+      '  "fat": number,',
+      '  "foods": [',
+      '    {',
+      '      "name": "food name",',
+      '      "portion": "amount with unit",',
+      '      "macros": { "calories": number, "protein": number, "carbs": number, "fat": number },',
+      '      "notes": "any relevant notes about preparation"',
+      '    }',
+      '  ],',
+      '  "healthierSwaps": [',
+      '    {',
+      '      "swap": "swap suggestion",',
+      '      "why": "detailed explanation of benefits",',
+      '      "macros": { "calories": number, "protein": number, "carbs": number, "fat": number }',
+      '    }',
+      '  ],',
+      '  "confidence": 0-100,',
+      '  "explanation": "2-4 sentences explaining your estimation methodology"',
+      "}",
+      "",
+      "RULES:",
+      "- foods[].macros MUST sum to match the totals (calories, protein, carbs, fat)",
+      "- healthierSwaps: 2-5 items with specific calorie/macro savings",
+      `- If photo clarity is low (${clarity}<60), be more conservative with estimates`,
+      "- Include any hidden calories (oils, sauces, butter) you can reasonably assume",
     ].join("\n");
 
     const macro = await openai.chat.completions.create({
@@ -912,23 +991,38 @@ async function handlePhoto(req: Request, res: Response) {
     const foods = normalizeFoods(macroParsed.foods);
     const swaps = normalizeSwaps(macroParsed.healthierSwaps ?? macroParsed.swaps);
 
+    const calories = int0(macroParsed.calories);
+    const protein = int0(macroParsed.protein);
+    const carbs = int0(macroParsed.carbs);
+    const fat = int0(macroParsed.fat);
+    const confidence = clamp(macroParsed.confidence, 0, 100);
+
+    // Add ranges for low-confidence estimates (< 70%)
+    const ranges = confidence < 70 ? {
+      calories: { min: Math.round(calories * 0.8), max: Math.round(calories * 1.2) },
+      protein: { min: Math.round(protein * 0.85), max: Math.round(protein * 1.15) },
+      carbs: { min: Math.round(carbs * 0.8), max: Math.round(carbs * 1.2) },
+      fat: { min: Math.round(fat * 0.75), max: Math.round(fat * 1.25) },
+    } : null;
+
     const normalized = {
       label: String((req.body as any)?.label || "Meal"),
       mealName: String(macroParsed.mealName || macroParsed.name || "Meal"),
       name: String(macroParsed.mealName || macroParsed.name || "Meal"), // compat
 
-      calories: int0(macroParsed.calories),
-      protein: int0(macroParsed.protein),
-      carbs: int0(macroParsed.carbs),
-      fat: int0(macroParsed.fat),
+      calories,
+      protein,
+      carbs,
+      fat,
 
       foods: foods.length ? foods : foodsList.map((f: string) => ({ name: f, calories: 0, protein: 0, carbs: 0, fat: 0 })),
       portionNotes,
       healthierSwaps: swaps,
 
       explanation: String(macroParsed.explanation || ""),
-      confidence: clamp(macroParsed.confidence, 0, 100),
-      meta: { source: "ai_photo", clarity, autoLogged: false },
+      confidence,
+      ranges, // Include ranges for low-confidence estimates
+      meta: { source: "ai_photo", clarity, plateSize, autoLogged: false },
     };
 
     console.log("[nutrition][ai-photo] ok", {
@@ -937,12 +1031,16 @@ async function handlePhoto(req: Request, res: Response) {
       cid,
       visionModel: VISION_MODEL,
       macroModel: MACRO_MODEL,
+      clarity,
+      confidence,
+      hasRanges: !!ranges,
       fieldUsed: (req as any).files?.image?.length ? "image" : "photo",
     });
 
     // ✅ NEVER auto-log
     return res.json({
       ...aiResponse(normalized),
+      ranges,
       rag_enabled: false,
     });
   } catch (err: any) {
