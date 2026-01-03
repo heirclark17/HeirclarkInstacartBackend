@@ -524,26 +524,16 @@ export function generateGoalCoachingScript(goalData: {
   const absWeekly = Math.abs(weeklyChange).toFixed(2);
   const absDelta = Math.abs(Math.round(dailyDelta));
 
-  // Personalized greeting - use name if provided
+  // Personalized greeting - simple "Hi! {name}" per user request
   let script = userName
-    ? `Hey! ${userName}, congratulations on setting up your personalized nutrition plan.\n\n`
-    : `Hey there! Congratulations on setting up your personalized nutrition plan.\n\n`;
-
-  script += `Your BMI is ${bmi.toFixed(1)}, in the "${bmiCategory.name}" category. `;
-
-  if (goalType === 'lose') {
-    script += `Since you're looking to lose weight, focus on how you feel, not just the scale.\n\n`;
-  } else if (goalType === 'gain') {
-    script += `As you build muscle, your BMI will increase, and that's healthy.\n\n`;
-  } else {
-    script += `For maintenance, consistency is key.\n\n`;
-  }
+    ? `Hi! ${userName}!\n\n`
+    : `Hi there!\n\n`;
 
   script += `Your body burns about ${tdee.toLocaleString()} calories daily. `;
 
   if (goalType !== 'maintain') {
     script += `You'll eat ${calories.toLocaleString()} calories with a ${absDelta} calorie ${dailyDelta < 0 ? 'deficit' : 'surplus'}, `;
-    script += `losing about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks.\n\n`;
+    script += `${goalType === 'lose' ? 'losing' : 'gaining'} about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks.\n\n`;
   } else {
     script += `At ${calories.toLocaleString()} calories, you'll maintain your weight.\n\n`;
   }
@@ -600,21 +590,13 @@ export function generateMealPlanCoachingScript(plan: {
     }
   }
 
-  // Personalized greeting
+  // Personalized greeting - simple "Hi! {name}" per user request
   let script = userName
-    ? `Hey! ${userName}, I'm excited to walk you through your personalized 7-day meal plan.\n\n`
-    : `Hey there! I'm excited to walk you through your personalized 7-day meal plan.\n\n`;
+    ? `Hi! ${userName}!\n\n`
+    : `Hi there!\n\n`;
 
   // Target overview
   script += `Your plan is designed for ${calories.toLocaleString()} calories per day, with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat.\n\n`;
-
-  // Meal count and highlights
-  script += `Over the next 7 days, you'll enjoy ${totalMeals} delicious AI-generated meals. `;
-  if (mealHighlights.length > 0) {
-    script += `Some highlights include ${mealHighlights.join(', ')}.\n\n`;
-  } else {
-    script += `Each day includes breakfast, lunch, and dinner.\n\n`;
-  }
 
   // How to use the meal cards
   script += `Let me show you how to use your meal plan. At the top, you'll see tabs for each day of the week. Tap any day to see that day's meals.\n\n`;
