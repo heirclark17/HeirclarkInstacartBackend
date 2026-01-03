@@ -290,27 +290,29 @@ export async function createSessionToken(): Promise<string> {
 
   const avatarId = process.env.HEYGEN_AVATAR_ID;
   const voiceId = process.env.HEYGEN_VOICE_ID;
+  const contextId = process.env.HEYGEN_CONTEXT_ID;
+
+  // Validate required configuration
+  if (!avatarId) {
+    throw new Error('HEYGEN_AVATAR_ID environment variable is not set');
+  }
+  if (!voiceId) {
+    throw new Error('HEYGEN_VOICE_ID environment variable is not set');
+  }
 
   try {
     const client = createLiveAvatarClient();
 
     // LiveAvatar API: POST /sessions/token
-    // IMPORTANT: mode: "full" requires avatar_persona to be set
-    // avatar_persona must include at least voice_id
-    const requestBody: Record<string, unknown> = {
-      mode: 'full',  // Required for text-to-speech (avatar.speak_text, avatar.speak_response)
-    };
-
-    // avatar_id is optional but helps if user has a custom avatar
-    if (avatarId) {
-      requestBody.avatar_id = avatarId;
-    }
-
-    // avatar_persona is REQUIRED for FULL mode
-    // Must have at least voice_id (use default if not provided)
-    requestBody.avatar_persona = {
-      voice_id: voiceId || 'default',  // Use 'default' if no voice ID configured
-      language: 'en',  // Default to English
+    // FULL mode requires: avatar_id, avatar_persona (voice_id, context_id, language)
+    const requestBody = {
+      mode: 'FULL',  // Required for text-to-speech (avatar.speak_text, avatar.speak_response)
+      avatar_id: avatarId,
+      avatar_persona: {
+        voice_id: voiceId,
+        context_id: contextId || undefined,  // Optional - for knowledge base
+        language: 'en',
+      },
     };
 
     console.log('[liveavatar] Request:', JSON.stringify(requestBody));
