@@ -551,11 +551,16 @@ export function generateGoalCoachingScript(goalData: {
   script += `Your macros: ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
   script += `Protein is especially important for your goals.\n\n`;
 
+  // Next steps guidance
+  script += `Now let me show you what to do next. Below you'll see a button that says "Generate 7-Day Meal Plan". `;
+  script += `Tap that and I'll create a personalized week of meals based on these exact calorie and macro targets.\n\n`;
+  script += `Or if you're ready to start tracking on your own, hit "Save and Start Tracking" to lock in these goals and head to your dashboard.\n\n`;
+
   // Personalized ending with name
   if (userName) {
-    script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this, ${userName}!`;
+    script += `You've got this, ${userName}!`;
   } else {
-    script += `Remember: Consistency beats perfection. Track your food, hit your protein, and trust the process. You've got this!`;
+    script += `You've got this!`;
   }
 
   return script;

@@ -694,13 +694,18 @@ function generateGoalCoachScript(goalData: any, userInputs: any): string {
   }
 
   // Encouragement
-  script += `Here's my advice: Consistency beats perfection. You don't need to hit these numbers exactly every day. Aim for the weekly average. Track your food for the first couple of weeks to build awareness, then you can be more flexible.\n\n`;
+  script += `Here's my advice: Consistency beats perfection. You don't need to hit these numbers exactly every day. Aim for the weekly average.\n\n`;
+
+  // Next steps guidance
+  script += `Now let me show you what to do next. Below you'll see a button that says "Generate 7-Day Meal Plan". `;
+  script += `Tap that and I'll create a personalized week of meals based on these exact calorie and macro targets.\n\n`;
+  script += `Or if you're ready to start tracking on your own, hit "Save and Start Tracking" to lock in these goals and head to your dashboard.\n\n`;
 
   // Personalized ending with name
   if (userName) {
-    script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you, ${userName}. Let's crush this together!`;
+    script += `You've got this, ${userName}!`;
   } else {
-    script += `You've taken the first step by setting clear goals. Now it's about showing up each day, one meal at a time. I believe in you. Let's crush this together!`;
+    script += `You've got this!`;
   }
 
   return script;
