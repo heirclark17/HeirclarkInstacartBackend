@@ -62,7 +62,7 @@ Local time ISO: "${localTimeIso || ""}" (hour=${hour})
 `;
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: "gpt-4.1-mini",
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: systemPrompt.trim() },

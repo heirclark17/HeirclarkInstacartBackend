@@ -373,7 +373,7 @@ async function callOpenAIAPI(prompt: string): Promise<AIBackgroundsResponse | nu
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4.1-mini",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {

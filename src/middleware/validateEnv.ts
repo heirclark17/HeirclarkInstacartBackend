@@ -16,7 +16,7 @@ const envSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
   OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
-  OPENAI_VISION_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_VISION_MODEL: z.string().default("gpt-4.1-mini"),
   OPENAI_MACRO_MODEL: z.string().default("gpt-4.1-mini"),
 
   // Instacart (optional - warn if missing)

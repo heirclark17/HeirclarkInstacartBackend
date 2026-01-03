@@ -316,8 +316,8 @@ function aiResponse(normalized: any) {
    ====================================================================== */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
-const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4o-mini";
+const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4.1-mini";
+const MACRO_MODEL = process.env.OPENAI_MACRO_MODEL || "gpt-4.1-mini";
 
 // RAG mode flag (set USE_RAG=true to enable RAG-enhanced meal estimation)
 const USE_RAG = process.env.USE_RAG === "true";

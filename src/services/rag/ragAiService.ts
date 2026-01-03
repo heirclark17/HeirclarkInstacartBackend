@@ -24,7 +24,7 @@ import {
 // Configuration
 // ============================================================================
 
-const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4o-mini';
+const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4.1-mini';
 const MAX_RETRIES = 2;
 
 // Initialize OpenAI client (optional - RAG AI won't work without it)
