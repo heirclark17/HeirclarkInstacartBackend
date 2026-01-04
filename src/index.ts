@@ -73,6 +73,9 @@ import { scrapeRouter } from "./routes/scrape";
 // Meal Favorites router (quick re-log)
 import { favoritesRouter } from "./routes/favorites";
 
+// Progress Photos router
+import { progressPhotosRouter } from "./routes/progressPhotos";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -233,6 +236,9 @@ app.use("/api/v1/scrape", scrapeRouter);
 
 // Meal Favorites (quick re-log)
 app.use("/api/v1/favorites", favoritesRouter);
+
+// Progress Photos
+app.use("/api/v1/progress-photos", progressPhotosRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
