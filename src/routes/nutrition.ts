@@ -6,6 +6,9 @@ import sharp from "sharp";
 import OpenAI from "openai";
 import crypto from "crypto";
 
+// Fast photo handler (single API call, 2x faster)
+import { handlePhotoFast } from "./photoFast";
+
 // RAG Integration (optional - enabled via USE_RAG=true)
 import {
   estimateMealFromTextWithRag,
@@ -749,9 +752,9 @@ nutritionRouter.post("/ai/meal-from-text", async (req, res) => {
    ✅ NEVER AUTO-LOGS
    ✅ Accepts multipart field "image" OR "photo" (no MulterError)
    ====================================================================== */
-nutritionRouter.post("/ai/meal-from-photo", uploadImageOrPhoto, handlePhoto);
-nutritionRouter.post("/ai/photo", uploadImageOrPhoto, handlePhoto);
-nutritionRouter.post("/ai/photo-estimate", uploadImageOrPhoto, handlePhoto);
+nutritionRouter.post("/ai/meal-from-photo", uploadImageOrPhoto, handlePhotoFast);
+nutritionRouter.post("/ai/photo", uploadImageOrPhoto, handlePhotoFast);
+nutritionRouter.post("/ai/photo-estimate", uploadImageOrPhoto, handlePhotoFast);
 
 async function handlePhoto(req: Request, res: Response) {
   const reqId = uuidv4();
