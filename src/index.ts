@@ -79,6 +79,9 @@ import { progressPhotosRouter } from "./routes/progressPhotos";
 // Wearables integration router (OAuth, sync, connected sources)
 import { wearablesRouter } from "./routes/wearables";
 
+// Health data router (synced wearable data)
+import { healthDataRouter } from "./routes/healthData";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -245,6 +248,9 @@ app.use("/api/v1/progress-photos", progressPhotosRouter);
 
 // Wearables integration (OAuth connections, sync, data)
 app.use("/api/v1/wearables", wearablesRouter);
+
+// Health data (synced wearable data - activity, sleep, workouts, etc.)
+app.use("/api/v1/health-data", healthDataRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)

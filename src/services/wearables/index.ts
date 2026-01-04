@@ -3,6 +3,8 @@
 
 export * from './types';
 export { tokenManager, TokenManager } from './tokenManager';
+export { syncOrchestrator, SyncOrchestrator } from './syncOrchestrator';
+export { dedupeService, DedupeService } from './dedupeService';
 export {
   BaseWearableProvider,
   IWearableProvider,
@@ -22,3 +24,6 @@ export {
   normalizeBody,
   normalizeHeart,
 } from './providers/baseProvider';
+
+// Providers
+export { fitbitProvider, FitbitProvider } from './providers/fitbit';
