@@ -180,51 +180,104 @@ healthBridgeRouter.post("/device", createDevice);
 
 /* ======================================================================
    INGEST
+   Supports two modes:
+   1. deviceKey + ts (Shortcut-based pairing)
+   2. shopifyCustomerId + date (iOS app direct sync)
    ====================================================================== */
 
 healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
   const deviceKey = normStr(req.body?.deviceKey);
+  const shopifyCustomerIdDirect = normStr(req.body?.shopifyCustomerId);
   const tsRaw = normStr(req.body?.ts);
+  const dateRaw = normStr(req.body?.date); // iOS app sends date in YYYY-MM-DD format
+  const source = normStr(req.body?.source) || "shortcut";
 
-  if (!deviceKey) return res.status(400).json({ ok: false, error: "Missing deviceKey" });
-  if (!tsRaw) return res.status(400).json({ ok: false, error: "Missing ts" });
+  // Determine timestamp - use ts if provided, else construct from date
+  let ts: Date;
+  if (tsRaw) {
+    ts = new Date(tsRaw);
+  } else if (dateRaw) {
+    // iOS app sends date as YYYY-MM-DD, create timestamp for end of day
+    ts = new Date(dateRaw + "T23:59:59Z");
+  } else {
+    ts = new Date(); // Default to now
+  }
 
-  const ts = new Date(tsRaw);
   if (Number.isNaN(ts.getTime())) {
-    return res.status(400).json({ ok: false, error: "Invalid ts" });
+    return res.status(400).json({ ok: false, error: "Invalid ts or date" });
+  }
+
+  // Must have either deviceKey or shopifyCustomerId
+  if (!deviceKey && !shopifyCustomerIdDirect) {
+    return res.status(400).json({ ok: false, error: "Missing deviceKey or shopifyCustomerId" });
   }
 
   const steps = toIntOrNull(req.body?.steps);
   const activeCalories = toIntOrNull(req.body?.activeCalories);
   const restingEnergy = toIntOrNull(req.body?.restingEnergy) ?? toIntOrNull(req.body?.basalEnergy);
   const latestHeartRateBpm = toIntOrNull(req.body?.latestHeartRateBpm);
-  const workoutsToday = toIntOrNull(req.body?.workoutsToday);
+  const workoutsToday = toIntOrNull(req.body?.workouts) ?? toIntOrNull(req.body?.workoutsToday);
+  const caloriesOut = toIntOrNull(req.body?.caloriesOut); // Total calories out from iOS app
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    const dev = await client.query(
-      `
-      SELECT shopify_customer_id
-      FROM hc_health_devices
-      WHERE device_key = $1
-      FOR UPDATE
-      `,
-      [deviceKey]
-    );
+    let shopifyCustomerId: string;
 
-    if (dev.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(401).json({ ok: false, error: "Invalid deviceKey" });
+    if (deviceKey) {
+      // Mode 1: Shortcut-based pairing (existing flow)
+      const dev = await client.query(
+        `
+        SELECT shopify_customer_id
+        FROM hc_health_devices
+        WHERE device_key = $1
+        FOR UPDATE
+        `,
+        [deviceKey]
+      );
+
+      if (dev.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(401).json({ ok: false, error: "Invalid deviceKey" });
+      }
+
+      shopifyCustomerId = dev.rows[0].shopify_customer_id;
+
+      await client.query(
+        `UPDATE hc_health_devices SET last_seen_at = NOW() WHERE device_key = $1`,
+        [deviceKey]
+      );
+    } else {
+      // Mode 2: iOS app direct sync (no deviceKey required)
+      shopifyCustomerId = shopifyCustomerIdDirect;
+
+      // Auto-register device for iOS app users (so they show up in devices list)
+      const existingDevice = await client.query(
+        `SELECT device_key FROM hc_health_devices WHERE shopify_customer_id = $1 AND device_key LIKE 'ios-app-%'`,
+        [shopifyCustomerId]
+      );
+
+      if (existingDevice.rowCount === 0) {
+        // Create a pseudo-device for the iOS app
+        const iosDeviceKey = `ios-app-${shopifyCustomerId}`;
+        await client.query(
+          `INSERT INTO hc_health_devices (device_key, shopify_customer_id, last_seen_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (device_key) DO UPDATE SET last_seen_at = NOW()`,
+          [iosDeviceKey, shopifyCustomerId]
+        );
+      } else {
+        // Update last seen
+        await client.query(
+          `UPDATE hc_health_devices SET last_seen_at = NOW() WHERE shopify_customer_id = $1 AND device_key LIKE 'ios-app-%'`,
+          [shopifyCustomerId]
+        );
+      }
     }
 
-    const shopifyCustomerId = dev.rows[0].shopify_customer_id;
-
-    await client.query(
-      `UPDATE hc_health_devices SET last_seen_at = NOW() WHERE device_key = $1`,
-      [deviceKey]
-    );
+    // Determine the actual source label
+    const sourceLabel = source === "heirclark-ios-app" ? "ios-app" : source;
 
     await client.query(
       `
@@ -232,17 +285,17 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
         shopify_customer_id, ts, steps, active_calories, resting_energy,
         latest_heart_rate_bpm, workouts_today, received_at, source
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), 'shortcut')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
       ON CONFLICT (shopify_customer_id)
       DO UPDATE SET
         ts = EXCLUDED.ts,
-        steps = EXCLUDED.steps,
-        active_calories = EXCLUDED.active_calories,
-        resting_energy = EXCLUDED.resting_energy,
-        latest_heart_rate_bpm = EXCLUDED.latest_heart_rate_bpm,
-        workouts_today = EXCLUDED.workouts_today,
+        steps = COALESCE(EXCLUDED.steps, hc_health_latest.steps),
+        active_calories = COALESCE(EXCLUDED.active_calories, hc_health_latest.active_calories),
+        resting_energy = COALESCE(EXCLUDED.resting_energy, hc_health_latest.resting_energy),
+        latest_heart_rate_bpm = COALESCE(EXCLUDED.latest_heart_rate_bpm, hc_health_latest.latest_heart_rate_bpm),
+        workouts_today = COALESCE(EXCLUDED.workouts_today, hc_health_latest.workouts_today),
         received_at = NOW(),
-        source = 'shortcut'
+        source = $8
       `,
       [
         shopifyCustomerId,
@@ -252,11 +305,17 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
         restingEnergy,
         latestHeartRateBpm,
         workoutsToday,
+        sourceLabel,
       ]
     );
 
     await client.query("COMMIT");
-    return res.json({ ok: true });
+
+    console.log(`[healthBridge] Ingest success for ${shopifyCustomerId} via ${sourceLabel}:`, {
+      steps, activeCalories, restingEnergy, workoutsToday
+    });
+
+    return res.json({ ok: true, source: sourceLabel });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("[healthBridge] ingest failed:", err);
