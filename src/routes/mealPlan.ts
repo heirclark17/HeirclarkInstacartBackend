@@ -101,7 +101,7 @@ interface MealPlanResponse {
 // ============================================================
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
 
 // ============================================================
@@ -251,13 +251,12 @@ async function generateMealPlanWithAI(
     : '';
   const skillText = preferences.cookingSkill || 'intermediate';
 
-  const systemPrompt = `You are a nutritionist. Create a 7-day meal plan as JSON ONLY (no markdown).
+  // Simplified prompt for faster generation - recipes fetched separately
+  const systemPrompt = `Create 7-day meal plan as JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}
+Target: ${targets.calories}cal, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat per day. Diet: ${dietTypeText}. ${allergiesText}
+Include 3 meals per day. Return ONLY JSON.`;
 
-Format: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1,"recipe":{"ingredients":[{"name":"ingredient","quantity":1,"unit":"cup"}],"instructions":["Step 1"],"prepMinutes":10,"cookMinutes":15}}],"totalCalories":2000,"totalMacros":{"protein":150,"carbs":200,"fat":65}}],"shoppingList":[{"name":"item","quantity":2,"unit":"lb","category":"Protein"}]}
-
-Rules: 7 days, ${mealsPerDay} meals/day (Breakfast/Lunch/Dinner), target ~${targets.calories}cal/${targets.protein}g protein/${targets.carbs}g carbs/${targets.fat}g fat per day. Diet: ${dietTypeText}. Skill: ${skillText}. ${allergiesText} Keep recipes simple with 3-5 ingredients each.`;
-
-  const userPrompt = `Generate the 7-day ${dietTypeText} meal plan now. ${allergiesText}`;
+  const userPrompt = `Generate 7-day ${dietTypeText} meal plan.`;
 
   // Set 45 second timeout (meal plan generation is slow)
   const controller = new AbortController();
