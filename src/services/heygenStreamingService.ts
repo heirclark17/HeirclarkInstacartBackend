@@ -12,6 +12,7 @@
  */
 
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import OpenAI from 'openai';
 
 // ============================================================
 // TYPES & INTERFACES
@@ -455,6 +456,14 @@ export function getConfigStatus(): {
 }
 
 // ============================================================
+// OPENAI CLIENT FOR AI-GENERATED SCRIPTS
+// ============================================================
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// ============================================================
 // SCRIPT GENERATION HELPERS
 // ============================================================
 
@@ -487,9 +496,10 @@ export function sanitizeAvatarText(text: string): string {
 }
 
 /**
- * Generate a goal coaching script
+ * Generate a goal coaching script using AI
+ * Creates a unique, personalized script for each user based on their specific data
  */
-export function generateGoalCoachingScript(goalData: {
+export async function generateGoalCoachingScript(goalData: {
   calories?: number;
   protein?: number;
   carbs?: number;
@@ -504,6 +514,114 @@ export function generateGoalCoachingScript(goalData: {
   currentWeight?: number;
   targetWeight?: number;
   totalWeeks?: number;
+}, userInputs?: { name?: string }): Promise<string> {
+  const {
+    calories = 2000,
+    protein = 150,
+    carbs = 200,
+    fat = 65,
+    bmr = 1800,
+    tdee = 2300,
+    bmi = 25,
+    bmiCategory = { name: 'Normal' },
+    weeklyChange = 0,
+    dailyDelta = 0,
+    goalType = 'maintain',
+    currentWeight = 0,
+    targetWeight = 0,
+    totalWeeks = 0,
+  } = goalData || {};
+
+  const userName = userInputs?.name || null;
+
+  const systemPrompt = `You are a warm, encouraging AI nutrition coach named Chef Clark for the Heirclark nutrition app. You're about to speak to a user via video avatar, so write conversational spoken text (not written text).
+
+VOICE STYLE:
+- Warm, friendly, and confident like a personal trainer who genuinely cares
+- Use natural speech patterns with occasional pauses (use commas and periods naturally)
+- Vary sentence length - mix short punchy statements with longer explanations
+- Be encouraging without being cheesy or over-the-top
+- Sound like a real person, not a robot reading a script
+- Say numbers naturally (e.g., "twenty-three hundred" not "2,300")
+
+SCRIPT REQUIREMENTS:
+- Start with a personalized greeting using the user's name if provided
+- Explain their TDEE (daily calorie burn) in relatable terms
+- Explain their calorie target and how it relates to their goal
+- Break down their macros (protein, carbs, fat) with context on why each matters
+- Guide them to the next steps (Generate Meal Plan button OR Save and Start Tracking)
+- End with an encouraging, personalized sign-off
+- Keep total length between 150-250 words (about 60-90 seconds when spoken)
+- NEVER use bullet points, numbered lists, or markdown formatting
+- Write everything as flowing, natural speech`;
+
+  const userPrompt = `Generate a unique coaching script for this user:
+
+USER DATA:
+- Name: ${userName || 'Not provided (use friendly generic greeting)'}
+- Goal Type: ${goalType} (lose weight / gain muscle / maintain)
+- Current Weight: ${currentWeight} lbs
+- Target Weight: ${targetWeight} lbs
+- BMI: ${bmi.toFixed(1)} (${bmiCategory.name})
+
+CALCULATED TARGETS:
+- BMR (Basal Metabolic Rate): ${bmr} calories/day
+- TDEE (Total Daily Energy Expenditure): ${tdee} calories/day
+- Daily Calorie Target: ${calories} calories
+- Daily ${dailyDelta < 0 ? 'Deficit' : dailyDelta > 0 ? 'Surplus' : 'Balance'}: ${Math.abs(Math.round(dailyDelta))} calories
+- Weekly Weight Change: ${Math.abs(weeklyChange).toFixed(2)} lbs/week
+- Estimated Time to Goal: ${Math.round(totalWeeks)} weeks
+
+MACRO TARGETS:
+- Protein: ${protein}g per day
+- Carbs: ${carbs}g per day
+- Fat: ${fat}g per day
+
+Create a unique, conversational script that feels personal to THIS specific user and their goals. Make it sound natural when spoken aloud by a video avatar coach.`;
+
+  try {
+    console.log('[heygen-streaming] Generating AI goal coaching script...');
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.8, // Higher creativity for unique scripts
+      max_tokens: 600,
+    });
+
+    const script = completion.choices[0]?.message?.content?.trim();
+
+    if (!script || script.length < 50) {
+      throw new Error('AI returned empty or too short script');
+    }
+
+    console.log('[heygen-streaming] AI script generated successfully, length:', script.length);
+    return script;
+
+  } catch (error) {
+    console.error('[heygen-streaming] AI script generation failed, using fallback:', error);
+
+    // Fallback to template-based script
+    return generateGoalCoachingScriptFallback(goalData, userInputs);
+  }
+}
+
+/**
+ * Fallback template-based goal script (used if AI fails)
+ */
+function generateGoalCoachingScriptFallback(goalData: {
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  tdee?: number;
+  weeklyChange?: number;
+  dailyDelta?: number;
+  goalType?: string;
+  totalWeeks?: number;
 }, userInputs?: { name?: string }): string {
   const {
     calories = 2000,
@@ -511,8 +629,6 @@ export function generateGoalCoachingScript(goalData: {
     carbs = 200,
     fat = 65,
     tdee = 2300,
-    bmi = 25,
-    bmiCategory = { name: 'Normal' },
     weeklyChange = 0,
     dailyDelta = 0,
     goalType = 'maintain',
@@ -520,48 +636,135 @@ export function generateGoalCoachingScript(goalData: {
   } = goalData || {};
 
   const userName = userInputs?.name;
-  const goalWord = goalType === 'lose' ? 'lose weight' : goalType === 'gain' ? 'build muscle' : 'maintain your weight';
   const absWeekly = Math.abs(weeklyChange).toFixed(2);
   const absDelta = Math.abs(Math.round(dailyDelta));
 
-  // Personalized greeting - simple "Hi! {name}" per user request
-  let script = userName
-    ? `Hi! ${userName}!\n\n`
-    : `Hi there!\n\n`;
-
+  let script = userName ? `Hi ${userName}! ` : `Hey there! `;
   script += `Your body burns about ${tdee.toLocaleString()} calories daily. `;
 
   if (goalType !== 'maintain') {
     script += `You'll eat ${calories.toLocaleString()} calories with a ${absDelta} calorie ${dailyDelta < 0 ? 'deficit' : 'surplus'}, `;
-    script += `${goalType === 'lose' ? 'losing' : 'gaining'} about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks.\n\n`;
+    script += `${goalType === 'lose' ? 'losing' : 'gaining'} about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks. `;
   } else {
-    script += `At ${calories.toLocaleString()} calories, you'll maintain your weight.\n\n`;
+    script += `At ${calories.toLocaleString()} calories, you'll maintain your weight. `;
   }
 
   script += `Your macros: ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
-  script += `Protein is especially important for your goals.\n\n`;
-
-  // Next steps guidance
-  script += `Now let me show you what to do next. Below you'll see a button that says "Generate 7-Day Meal Plan". `;
-  script += `Tap that and I'll create a personalized week of meals based on these exact calorie and macro targets.\n\n`;
-  script += `Or if you're ready to start tracking on your own, hit "Save and Start Tracking" to lock in these goals and head to your dashboard.\n\n`;
-
-  // Personalized ending with name
-  if (userName) {
-    script += `You've got this, ${userName}!`;
-  } else {
-    script += `You've got this!`;
-  }
+  script += `Tap Generate Meal Plan to get started, or Save and Start Tracking to begin logging. `;
+  script += userName ? `You've got this, ${userName}!` : `You've got this!`;
 
   return script;
 }
 
 /**
- * Generate a meal plan coaching script
+ * Generate a meal plan coaching script using AI
+ * Creates a unique, personalized script for each user based on their meal plan
  */
-export function generateMealPlanCoachingScript(plan: {
+export async function generateMealPlanCoachingScript(plan: {
   days?: Array<{ meals?: Array<{ dishName?: string; name?: string; mealType?: string; type?: string; calories?: number }> }>;
   shoppingList?: Array<unknown>;
+}, targets?: {
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+}, userInputs?: { name?: string }): Promise<string> {
+  const calories = targets?.calories || 2000;
+  const protein = targets?.protein || 150;
+  const carbs = targets?.carbs || 200;
+  const fat = targets?.fat || 65;
+  const userName = userInputs?.name || null;
+
+  const days = plan?.days || [];
+  const totalMeals = days.reduce((sum, day) => sum + (day.meals?.length || 0), 0);
+
+  // Extract meal highlights for context
+  const mealHighlights: string[] = [];
+  for (const day of days.slice(0, 3)) {
+    if (day.meals) {
+      for (const meal of day.meals.slice(0, 2)) {
+        const mealName = meal?.dishName || meal?.name;
+        if (mealName && !mealHighlights.includes(mealName)) {
+          mealHighlights.push(mealName);
+        }
+      }
+    }
+  }
+
+  const systemPrompt = `You are a warm, encouraging AI nutrition coach named Chef Clark for the Heirclark nutrition app. You're about to speak to a user via video avatar about their new 7-day meal plan.
+
+VOICE STYLE:
+- Warm, friendly, and excited about helping them eat well
+- Use natural speech patterns - vary rhythm and sentence length
+- Be encouraging and make cooking feel approachable, not intimidating
+- Sound genuinely enthusiastic about the meals in their plan
+- Speak conversationally as if you're right there with them
+
+SCRIPT REQUIREMENTS:
+- Start with a personalized, excited greeting
+- Briefly mention their calorie/macro targets
+- Highlight 2-3 specific meals from their plan by name - be genuinely enthusiastic about how delicious they sound
+- Explain how to navigate the meal plan (day tabs, tapping meal cards for recipes)
+- Mention the Instacart grocery ordering feature
+- Give 1-2 practical tips for meal prep success
+- End with encouragement personalized to them
+- Keep total length between 150-250 words (about 60-90 seconds when spoken)
+- NEVER use bullet points, numbered lists, or markdown
+- Write flowing, natural speech only`;
+
+  const userPrompt = `Generate a unique coaching script for this user's new meal plan:
+
+USER INFO:
+- Name: ${userName || 'Not provided (use friendly generic greeting)'}
+
+DAILY TARGETS:
+- Calories: ${calories}
+- Protein: ${protein}g
+- Carbs: ${carbs}g
+- Fat: ${fat}g
+
+MEAL PLAN DETAILS:
+- Total Days: ${days.length}
+- Total Meals: ${totalMeals}
+- Sample Meals: ${mealHighlights.length > 0 ? mealHighlights.join(', ') : 'Various balanced meals'}
+
+Create an excited, personalized script that makes this user feel great about their meal plan and confident they can follow it. Mention at least 2 of the specific meals by name if available. Make it sound natural when spoken by a video avatar.`;
+
+  try {
+    console.log('[heygen-streaming] Generating AI meal plan coaching script...');
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.8,
+      max_tokens: 600,
+    });
+
+    const script = completion.choices[0]?.message?.content?.trim();
+
+    if (!script || script.length < 50) {
+      throw new Error('AI returned empty or too short script');
+    }
+
+    console.log('[heygen-streaming] AI meal plan script generated successfully, length:', script.length);
+    return script;
+
+  } catch (error) {
+    console.error('[heygen-streaming] AI meal plan script generation failed, using fallback:', error);
+
+    // Fallback to template-based script
+    return generateMealPlanCoachingScriptFallback(plan, targets, userInputs);
+  }
+}
+
+/**
+ * Fallback template-based meal plan script (used if AI fails)
+ */
+function generateMealPlanCoachingScriptFallback(plan: {
+  days?: Array<{ meals?: Array<{ dishName?: string; name?: string }> }>;
 }, targets?: {
   calories?: number;
   protein?: number;
@@ -574,47 +777,11 @@ export function generateMealPlanCoachingScript(plan: {
   const fat = targets?.fat || 65;
   const userName = userInputs?.name;
 
-  const days = plan?.days || [];
-  const totalMeals = days.reduce((sum, day) => sum + (day.meals?.length || 0), 0);
-
-  // Get meal highlights from each day
-  const mealHighlights: string[] = [];
-  for (let i = 0; i < Math.min(3, days.length); i++) {
-    const day = days[i];
-    if (day.meals && day.meals.length > 0) {
-      const randomMeal = day.meals[Math.floor(Math.random() * day.meals.length)];
-      const mealName = randomMeal?.dishName || randomMeal?.name;
-      if (mealName && !mealHighlights.includes(mealName)) {
-        mealHighlights.push(mealName);
-      }
-    }
-  }
-
-  // Personalized greeting - simple "Hi! {name}" per user request
-  let script = userName
-    ? `Hi! ${userName}!\n\n`
-    : `Hi there!\n\n`;
-
-  // Target overview
-  script += `Your plan is designed for ${calories.toLocaleString()} calories per day, with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat.\n\n`;
-
-  // How to use the meal cards
-  script += `Let me show you how to use your meal plan. At the top, you'll see tabs for each day of the week. Tap any day to see that day's meals.\n\n`;
-
-  script += `Each meal card shows the dish name, calories, and macros. Tap on any meal card to see the full recipe, including ingredients and step-by-step cooking instructions.\n\n`;
-
-  // Instacart integration
-  script += `Here's the best part: when you're ready to shop, tap the green "Order Week's Groceries" button at the bottom. This will send all your ingredients straight to Instacart, so you can get everything delivered without making a list yourself.\n\n`;
-
-  // Best practices
-  script += `A few tips for success: First, do your meal prep on Sunday. Spend about an hour prepping proteins and chopping vegetables, and you'll save hours during the week. Second, don't stress about hitting your targets exactly. Aim to be within 100 calories, and you're doing great. Third, stay hydrated and listen to your body.\n\n`;
-
-  // Personalized closing
-  if (userName) {
-    script += `You've got this, ${userName}! Each meal is a step toward your goals.`;
-  } else {
-    script += `You've got this! Each meal is a step toward your goals.`;
-  }
+  let script = userName ? `Hi ${userName}! ` : `Hey there! `;
+  script += `Your plan is designed for ${calories.toLocaleString()} calories per day, with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
+  script += `Use the day tabs at the top to navigate between days. Tap any meal card to see the full recipe. `;
+  script += `When you're ready to shop, hit the green Order Groceries button to send everything to Instacart. `;
+  script += userName ? `You've got this, ${userName}!` : `You've got this!`;
 
   return script;
 }

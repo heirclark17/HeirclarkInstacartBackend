@@ -8,6 +8,10 @@ import {
 } from '../services/heygenService';
 import { generateVideoScript, hashPlan } from '../services/scriptGenerator';
 import { videoRateLimitMiddleware } from '../middleware/rateLimiter';
+import {
+  generateGoalCoachingScript,
+  generateMealPlanCoachingScript,
+} from '../services/heygenStreamingService';
 
 export const heygenRouter = Router();
 
@@ -393,9 +397,9 @@ heygenRouter.post('/goal-coach', videoRateLimit, async (req: Request, res: Respo
   }
 
   try {
-    // Generate personalized coaching script
-    const script = generateGoalCoachScript(goalData, userInputs);
-    console.log(`[heygen] [${requestId}] Script generated in ${Date.now() - startTime}ms`);
+    // Generate personalized coaching script using AI
+    const script = await generateGoalCoachingScript(goalData, userInputs);
+    console.log(`[heygen] [${requestId}] AI Script generated in ${Date.now() - startTime}ms`);
 
     // Try to create HeyGen video if API key is configured
     const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
@@ -485,8 +489,8 @@ heygenRouter.post('/meal-plan-coach', videoRateLimit, async (req: Request, res: 
   }
 
   try {
-    // Generate personalized meal plan coaching script
-    const script = generateMealPlanCoachScript(plan, targets);
+    // Generate personalized meal plan coaching script using AI
+    const script = await generateMealPlanCoachingScript(plan, targets);
 
     // Try to create HeyGen video if API key is configured
     const hasHeyGenKey = !!process.env.HEYGEN_API_KEY && process.env.HEYGEN_API_KEY.length > 20;
@@ -573,140 +577,4 @@ heygenRouter.post('/meal-plan-coach', videoRateLimit, async (req: Request, res: 
   }
 });
 
-/**
- * Generate a personalized meal plan coaching script
- */
-function generateMealPlanCoachScript(plan: any, targets: any): string {
-  const calories = targets?.calories || 2000;
-  const protein = targets?.protein || 150;
-  const carbs = targets?.carbs || 200;
-  const fat = targets?.fat || 65;
-
-  // Extract highlights from the plan
-  const days = plan?.days || [];
-  const totalMeals = days.reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0);
-  const shoppingItems = plan?.shoppingList?.length || 0;
-
-  // Get some meal highlights
-  const mealHighlights: string[] = [];
-  if (days.length > 0) {
-    for (let i = 0; i < Math.min(3, days.length); i++) {
-      const day = days[i];
-      if (day.meals && day.meals.length > 0) {
-        const meal = day.meals[Math.floor(Math.random() * day.meals.length)];
-        if (meal?.dishName && !mealHighlights.includes(meal.dishName)) {
-          mealHighlights.push(meal.dishName);
-        }
-      }
-    }
-  }
-
-  let script = `Hey there! I'm so excited to walk you through your personalized 7-day meal plan. This is going to be a game-changer for your nutrition journey.\n\n`;
-
-  script += `Let me start with the big picture. Your plan is designed to hit ${calories.toLocaleString()} calories per day, `;
-  script += `with ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
-  script += `These macros are specifically calculated to help you reach your goals.\n\n`;
-
-  script += `Over the next 7 days, you'll enjoy ${totalMeals} delicious meals. `;
-
-  if (mealHighlights.length > 0) {
-    script += `Some highlights include ${mealHighlights.join(', ')}. `;
-    script += `Each recipe is designed to be practical, tasty, and easy to prepare.\n\n`;
-  } else {
-    script += `Each day features breakfast, lunch, and dinner options that are both nutritious and satisfying.\n\n`;
-  }
-
-  if (shoppingItems > 0) {
-    script += `I've also prepared a shopping list with ${shoppingItems} items. `;
-    script += `You can order everything through Instacart with just one tap, making meal prep a breeze.\n\n`;
-  }
-
-  script += `Here are my top tips for success with this plan:\n\n`;
-  script += `First, do your meal prep on Sunday. Spending just an hour prepping proteins and chopping vegetables will save you hours during the week.\n\n`;
-  script += `Second, don't stress about being perfect. If you're within a hundred calories of your target, you're doing great. Consistency matters more than perfection.\n\n`;
-  script += `Third, stay hydrated. Drink plenty of water throughout the day. It helps with energy, digestion, and even appetite control.\n\n`;
-
-  script += `Remember, this plan is your roadmap, not a prison. If you need to swap a meal, that's fine. Just try to keep the calories and macros similar.\n\n`;
-
-  script += `You've got this! Each meal you eat according to plan is a step toward your goals. I'm here to support you every step of the way. Let's make this week amazing!`;
-
-  return script;
-}
-
-function generateGoalCoachScript(goalData: any, userInputs: any): string {
-  const {
-    calories = 2000,
-    protein = 150,
-    carbs = 200,
-    fat = 65,
-    bmr = 1800,
-    tdee = 2300,
-    bmi = 25,
-    bmiCategory = { name: 'Normal' },
-    weeklyChange = 0,
-    dailyDelta = 0,
-    goalType = 'maintain',
-    currentWeight = 180,
-    targetWeight = 180,
-    totalWeeks = 0,
-  } = goalData || {};
-
-  const userName = userInputs?.name;
-  const goalWord = goalType === 'lose' ? 'lose weight' : goalType === 'gain' ? 'build muscle' : 'maintain your weight';
-  const absWeekly = Math.abs(weeklyChange).toFixed(2);
-  const absDelta = Math.abs(Math.round(dailyDelta));
-
-  // Personalized greeting - use name if provided
-  let script = userName
-    ? `Hey! ${userName}, congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`
-    : `Hey there! Congratulations on setting up your personalized nutrition plan. I'm excited to walk you through your goals.\n\n`;
-
-  // BMI section
-  script += `First, let's talk about where you're starting. Your BMI is ${bmi.toFixed(1)}, which puts you in the "${bmiCategory.name}" category. `;
-
-  if (goalType === 'lose') {
-    script += `Since your goal is to lose weight, remember that BMI is just one number. What matters more is how you feel, your energy levels, and your body composition. As you shed fat while keeping muscle, your health will improve even if the scale moves slowly.\n\n`;
-  } else if (goalType === 'gain') {
-    script += `As you work toward gaining weight, your BMI will naturally increase. That's expected and healthy when you're building muscle. Focus on your strength gains and measurements alongside the scale.\n\n`;
-  } else {
-    script += `For maintenance, track how you feel day to day rather than fixating on numbers.\n\n`;
-  }
-
-  // TDEE section
-  script += `Now let's talk about your metabolism. Your body burns about ${tdee.toLocaleString()} calories per day at your current activity level. This is called your TDEE, or maintenance calories. `;
-
-  // Goal-specific calorie explanation
-  if (goalType === 'lose') {
-    script += `To ${goalWord}, you'll be eating ${calories.toLocaleString()} calories daily, which creates a ${absDelta} calorie deficit. This means you'll lose about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks.\n\n`;
-  } else if (goalType === 'gain') {
-    script += `To ${goalWord}, you'll be eating ${calories.toLocaleString()} calories daily, giving you a ${absDelta} calorie surplus. Combined with strength training, you'll gain about ${absWeekly} pounds per week.\n\n`;
-  } else {
-    script += `You'll be eating right at maintenance with ${calories.toLocaleString()} calories daily.\n\n`;
-  }
-
-  // Macros
-  script += `Your macro targets are ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
-
-  if (goalType === 'lose' || goalType === 'gain') {
-    script += `Protein is especially important for your goal. Hitting ${protein} grams daily helps preserve muscle during a cut or build it during a bulk.\n\n`;
-  } else {
-    script += `These macros give you a balanced approach to nutrition.\n\n`;
-  }
-
-  // Encouragement
-  script += `Here's my advice: Consistency beats perfection. You don't need to hit these numbers exactly every day. Aim for the weekly average.\n\n`;
-
-  // Next steps guidance
-  script += `Now let me show you what to do next. Below you'll see a button that says "Generate 7-Day Meal Plan". `;
-  script += `Tap that and I'll create a personalized week of meals based on these exact calorie and macro targets.\n\n`;
-  script += `Or if you're ready to start tracking on your own, hit "Save and Start Tracking" to lock in these goals and head to your dashboard.\n\n`;
-
-  // Personalized ending with name
-  if (userName) {
-    script += `You've got this, ${userName}!`;
-  } else {
-    script += `You've got this!`;
-  }
-
-  return script;
-}
+// AI-powered script generation functions are imported from heygenStreamingService

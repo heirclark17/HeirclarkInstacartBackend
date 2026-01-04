@@ -260,7 +260,7 @@ streamingAvatarRouter.post('/speak', avatarRateLimit, async (req: Request, res: 
             error: 'Missing goalData for goals context',
           });
         }
-        script = generateGoalCoachingScript(goalData, userInputs);
+        script = await generateGoalCoachingScript(goalData, userInputs);
         break;
 
       case 'mealplan':
@@ -270,7 +270,7 @@ streamingAvatarRouter.post('/speak', avatarRateLimit, async (req: Request, res: 
             error: 'Missing mealPlan for mealplan context',
           });
         }
-        script = generateMealPlanCoachingScript(mealPlan, mealTargets);
+        script = await generateMealPlanCoachingScript(mealPlan, mealTargets, userInputs);
         break;
 
       case 'general':
@@ -313,7 +313,7 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
   if (!isConfigured()) {
     // Fallback: Return script only without streaming
     try {
-      const script = generateGoalCoachingScript(goalData || {}, userInputs);
+      const script = await generateGoalCoachingScript(goalData || {}, userInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -332,7 +332,7 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
     // Generate token and script in parallel
     const [token, script] = await Promise.all([
       createSessionToken(),
-      Promise.resolve(generateGoalCoachingScript(goalData || {}, userInputs)),
+      generateGoalCoachingScript(goalData || {}, userInputs),
     ]);
 
     return res.json({
@@ -349,7 +349,7 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
 
     // Fallback: Return script only with debug info
     try {
-      const script = generateGoalCoachingScript(goalData || {}, userInputs);
+      const script = await generateGoalCoachingScript(goalData || {}, userInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -475,7 +475,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
   if (!isConfigured()) {
     // Fallback: Return script only without streaming
     try {
-      const script = generateMealPlanCoachingScript(plan || {}, targets, userInputs);
+      const script = await generateMealPlanCoachingScript(plan || {}, targets, userInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -494,7 +494,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
     // Generate token and script in parallel
     const [token, script] = await Promise.all([
       createSessionToken(),
-      Promise.resolve(generateMealPlanCoachingScript(plan || {}, targets, userInputs)),
+      generateMealPlanCoachingScript(plan || {}, targets, userInputs),
     ]);
 
     return res.json({
@@ -510,7 +510,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
 
     // Fallback: Return script only
     try {
-      const script = generateMealPlanCoachingScript(plan || {}, targets);
+      const script = await generateMealPlanCoachingScript(plan || {}, targets, userInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
