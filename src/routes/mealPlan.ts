@@ -111,85 +111,125 @@ const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
 // Simple in-memory cache for image URLs (avoid duplicate API calls)
 const imageCache = new Map<string, string>();
 
-async function getUnsplashImage(dishName: string): Promise<string | null> {
+// Curated food images from Unsplash (reliable direct URLs)
+const FOOD_IMAGES: Record<string, string> = {
+  // Breakfast
+  'yogurt': 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=400&h=300&fit=crop',
+  'parfait': 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=400&h=300&fit=crop',
+  'oatmeal': 'https://images.unsplash.com/photo-1517673400267-0251440c45dc?w=400&h=300&fit=crop',
+  'oats': 'https://images.unsplash.com/photo-1517673400267-0251440c45dc?w=400&h=300&fit=crop',
+  'eggs': 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=400&h=300&fit=crop',
+  'scramble': 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=400&h=300&fit=crop',
+  'pancake': 'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=400&h=300&fit=crop',
+  'toast': 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=400&h=300&fit=crop',
+  'avocado': 'https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?w=400&h=300&fit=crop',
+  'smoothie': 'https://images.unsplash.com/photo-1553530666-ba11a7da3888?w=400&h=300&fit=crop',
+  'burrito': 'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=400&h=300&fit=crop',
+  'cottage': 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=400&h=300&fit=crop',
+  // Lunch
+  'salad': 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&h=300&fit=crop',
+  'chicken salad': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'wrap': 'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=400&h=300&fit=crop',
+  'sandwich': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&h=300&fit=crop',
+  'bowl': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'buddha': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'quinoa': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'soup': 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=400&h=300&fit=crop',
+  'tuna': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'caesar': 'https://images.unsplash.com/photo-1550304943-4f24f54ddde9?w=400&h=300&fit=crop',
+  'lettuce': 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&h=300&fit=crop',
+  // Dinner proteins
+  'salmon': 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&h=300&fit=crop',
+  'fish': 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&h=300&fit=crop',
+  'tilapia': 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&h=300&fit=crop',
+  'cod': 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&h=300&fit=crop',
+  'shrimp': 'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=400&h=300&fit=crop',
+  'chicken': 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop',
+  'grilled chicken': 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop',
+  'roasted chicken': 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop',
+  'beef': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&h=300&fit=crop',
+  'steak': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&h=300&fit=crop',
+  'stir-fry': 'https://images.unsplash.com/photo-1512058564366-18510be2db19?w=400&h=300&fit=crop',
+  'turkey': 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop',
+  'meatball': 'https://images.unsplash.com/photo-1529042410759-befb1204b468?w=400&h=300&fit=crop',
+  'pasta': 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=400&h=300&fit=crop',
+  // Generic fallbacks
+  'breakfast': 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=400&h=300&fit=crop',
+  'lunch': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+  'dinner': 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&h=300&fit=crop',
+  'meal': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
+};
+
+function getFoodImage(dishName: string, mealType?: string): string {
+  const nameLower = dishName.toLowerCase();
+
+  // Check for keyword matches
+  for (const [keyword, url] of Object.entries(FOOD_IMAGES)) {
+    if (nameLower.includes(keyword)) {
+      return url;
+    }
+  }
+
+  // Fallback based on meal type
+  const typeLower = (mealType || '').toLowerCase();
+  if (typeLower.includes('breakfast')) {
+    return FOOD_IMAGES['breakfast'];
+  } else if (typeLower.includes('lunch')) {
+    return FOOD_IMAGES['lunch'];
+  } else if (typeLower.includes('dinner')) {
+    return FOOD_IMAGES['dinner'];
+  }
+
+  return FOOD_IMAGES['meal'];
+}
+
+async function getUnsplashImage(dishName: string, mealType?: string): Promise<string | null> {
   // Check cache first
   const cacheKey = dishName.toLowerCase().trim();
   if (imageCache.has(cacheKey)) {
     return imageCache.get(cacheKey)!;
   }
 
-  // If no API key, use source.unsplash.com (free, no key needed)
-  if (!UNSPLASH_ACCESS_KEY) {
-    const searchQuery = encodeURIComponent(`${dishName} food`);
-    const imageUrl = `https://source.unsplash.com/400x300/?${searchQuery}`;
-    imageCache.set(cacheKey, imageUrl);
-    return imageUrl;
+  // If API key available, try Unsplash API
+  if (UNSPLASH_ACCESS_KEY) {
+    try {
+      const searchQuery = encodeURIComponent(`${dishName} food dish`);
+      const response = await fetch(
+        `https://api.unsplash.com/search/photos?query=${searchQuery}&per_page=1&orientation=landscape`,
+        {
+          headers: {
+            'Authorization': `Client-ID ${UNSPLASH_ACCESS_KEY}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.results && data.results.length > 0) {
+          const imageUrl = data.results[0].urls?.small || data.results[0].urls?.regular;
+          if (imageUrl) {
+            imageCache.set(cacheKey, imageUrl);
+            return imageUrl;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[unsplash] API error for "${dishName}":`, err.message);
+    }
   }
 
-  try {
-    const searchQuery = encodeURIComponent(`${dishName} food dish`);
-    const response = await fetch(
-      `https://api.unsplash.com/search/photos?query=${searchQuery}&per_page=1&orientation=landscape`,
-      {
-        headers: {
-          'Authorization': `Client-ID ${UNSPLASH_ACCESS_KEY}`,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      console.warn(`[unsplash] API error: ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (data.results && data.results.length > 0) {
-      // Use small size for faster loading (400px wide)
-      const imageUrl = data.results[0].urls?.small || data.results[0].urls?.regular;
-      if (imageUrl) {
-        imageCache.set(cacheKey, imageUrl);
-        return imageUrl;
-      }
-    }
-
-    return null;
-  } catch (err: any) {
-    console.warn(`[unsplash] Fetch error for "${dishName}":`, err.message);
-    return null;
-  }
+  // Use curated image library as fallback
+  const imageUrl = getFoodImage(dishName, mealType);
+  imageCache.set(cacheKey, imageUrl);
+  return imageUrl;
 }
 
 async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
-  // Collect all unique dish names
-  const dishNames = new Set<string>();
+  // Add images directly to each meal (using curated library is fast, no batching needed)
   for (const day of plan.days) {
     for (const meal of day.meals) {
-      dishNames.add(meal.dishName);
-    }
-  }
-
-  // Fetch images in parallel (max 10 concurrent to avoid rate limits)
-  const dishArray = Array.from(dishNames);
-  const imageMap = new Map<string, string>();
-
-  // Process in batches of 10
-  for (let i = 0; i < dishArray.length; i += 10) {
-    const batch = dishArray.slice(i, i + 10);
-    const results = await Promise.all(
-      batch.map(async (name) => ({
-        name,
-        url: await getUnsplashImage(name),
-      }))
-    );
-    results.forEach(({ name, url }) => {
-      if (url) imageMap.set(name, url);
-    });
-  }
-
-  // Add image URLs to meals
-  for (const day of plan.days) {
-    for (const meal of day.meals) {
-      (meal as any).imageUrl = imageMap.get(meal.dishName) || null;
+      const imageUrl = await getUnsplashImage(meal.dishName, meal.mealType);
+      (meal as any).imageUrl = imageUrl;
     }
   }
 
