@@ -259,9 +259,9 @@ Rules: 7 days, ${mealsPerDay} meals/day (Breakfast/Lunch/Dinner), target ~${targ
 
   const userPrompt = `Generate the 7-day ${dietTypeText} meal plan now. ${allergiesText}`;
 
-  // Set 15 second timeout for faster fallback
+  // Set 45 second timeout (meal plan generation is slow)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -323,7 +323,7 @@ Rules: 7 days, ${mealsPerDay} meals/day (Breakfast/Lunch/Dinner), target ~${targ
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      console.warn('[mealPlan] OpenAI request timed out after 15s');
+      console.warn('[mealPlan] OpenAI request timed out after 45s');
       throw new Error('Request timed out');
     }
     console.error('[mealPlan] Failed to parse OpenAI response:', err.message);
