@@ -76,6 +76,9 @@ import { favoritesRouter } from "./routes/favorites";
 // Progress Photos router
 import { progressPhotosRouter } from "./routes/progressPhotos";
 
+// Wearables integration router (OAuth, sync, connected sources)
+import { wearablesRouter } from "./routes/wearables";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -239,6 +242,9 @@ app.use("/api/v1/favorites", favoritesRouter);
 
 // Progress Photos
 app.use("/api/v1/progress-photos", progressPhotosRouter);
+
+// Wearables integration (OAuth connections, sync, data)
+app.use("/api/v1/wearables", wearablesRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
