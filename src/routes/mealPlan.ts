@@ -68,6 +68,7 @@ interface Meal {
   };
   servings: number;
   recipe: Recipe;
+  imageUrl?: string | null;
 }
 
 interface DayPlan {
@@ -101,6 +102,99 @@ interface MealPlanResponse {
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
+
+// ============================================================
+// UNSPLASH IMAGE FETCHING
+// ============================================================
+
+// Simple in-memory cache for image URLs (avoid duplicate API calls)
+const imageCache = new Map<string, string>();
+
+async function getUnsplashImage(dishName: string): Promise<string | null> {
+  // Check cache first
+  const cacheKey = dishName.toLowerCase().trim();
+  if (imageCache.has(cacheKey)) {
+    return imageCache.get(cacheKey)!;
+  }
+
+  // If no API key, use source.unsplash.com (free, no key needed)
+  if (!UNSPLASH_ACCESS_KEY) {
+    const searchQuery = encodeURIComponent(`${dishName} food`);
+    const imageUrl = `https://source.unsplash.com/400x300/?${searchQuery}`;
+    imageCache.set(cacheKey, imageUrl);
+    return imageUrl;
+  }
+
+  try {
+    const searchQuery = encodeURIComponent(`${dishName} food dish`);
+    const response = await fetch(
+      `https://api.unsplash.com/search/photos?query=${searchQuery}&per_page=1&orientation=landscape`,
+      {
+        headers: {
+          'Authorization': `Client-ID ${UNSPLASH_ACCESS_KEY}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`[unsplash] API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.results && data.results.length > 0) {
+      // Use small size for faster loading (400px wide)
+      const imageUrl = data.results[0].urls?.small || data.results[0].urls?.regular;
+      if (imageUrl) {
+        imageCache.set(cacheKey, imageUrl);
+        return imageUrl;
+      }
+    }
+
+    return null;
+  } catch (err: any) {
+    console.warn(`[unsplash] Fetch error for "${dishName}":`, err.message);
+    return null;
+  }
+}
+
+async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
+  // Collect all unique dish names
+  const dishNames = new Set<string>();
+  for (const day of plan.days) {
+    for (const meal of day.meals) {
+      dishNames.add(meal.dishName);
+    }
+  }
+
+  // Fetch images in parallel (max 10 concurrent to avoid rate limits)
+  const dishArray = Array.from(dishNames);
+  const imageMap = new Map<string, string>();
+
+  // Process in batches of 10
+  for (let i = 0; i < dishArray.length; i += 10) {
+    const batch = dishArray.slice(i, i + 10);
+    const results = await Promise.all(
+      batch.map(async (name) => ({
+        name,
+        url: await getUnsplashImage(name),
+      }))
+    );
+    results.forEach(({ name, url }) => {
+      if (url) imageMap.set(name, url);
+    });
+  }
+
+  // Add image URLs to meals
+  for (const day of plan.days) {
+    for (const meal of day.meals) {
+      (meal as any).imageUrl = imageMap.get(meal.dishName) || null;
+    }
+  }
+
+  return plan;
+}
 
 async function generateMealPlanWithAI(
   targets: MealPlanTargets,
@@ -379,6 +473,15 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
     } catch (aiErr: any) {
       console.warn('[mealPlan] AI generation failed, using fallback:', aiErr.message);
       plan = generateFallbackPlan(validatedTargets);
+    }
+
+    // Add Unsplash images to each meal
+    try {
+      console.log('[mealPlan] Fetching meal images from Unsplash...');
+      plan = await addImagesToMealPlan(plan);
+      console.log('[mealPlan] Images added successfully');
+    } catch (imgErr: any) {
+      console.warn('[mealPlan] Image fetch failed (continuing without images):', imgErr.message);
     }
 
     // Store plan in database for user if logged in
