@@ -101,7 +101,7 @@ interface MealPlanResponse {
 // ============================================================
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
 
 // ============================================================
@@ -506,12 +506,17 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
   try {
     // Try AI generation first
     let plan: MealPlanResponse;
+    let source: 'ai' | 'fallback' = 'ai';
+    let failureReason: string | undefined;
 
     try {
+      console.log(`[mealPlan] Calling OpenAI with model: ${OPENAI_MODEL}`);
       plan = await generateMealPlanWithAI(validatedTargets, validatedPreferences);
       console.log('[mealPlan] AI plan generated successfully');
     } catch (aiErr: any) {
       console.warn('[mealPlan] AI generation failed, using fallback:', aiErr.message);
+      source = 'fallback';
+      failureReason = aiErr.message;
       plan = generateFallbackPlan(validatedTargets);
     }
 
@@ -540,7 +545,7 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
       }
     }
 
-    return sendSuccess(res, { plan });
+    return sendSuccess(res, { plan, source, failureReason });
 
   } catch (err: any) {
     console.error('[mealPlan] Generation failed:', err);
