@@ -5,6 +5,9 @@ import { pool } from '../../db/pool';
 import { tokenManager } from './tokenManager';
 import { dedupeService } from './dedupeService';
 import { fitbitProvider } from './providers/fitbit';
+import { stravaProvider } from './providers/strava';
+import { ouraProvider } from './providers/oura';
+import { withingsProvider } from './providers/withings';
 import {
   BaseWearableProvider,
   IWearableProvider,
@@ -37,12 +40,11 @@ import type {
 /**
  * Provider registry
  */
-const providers: Map<SourceType, IWearableProvider> = new Map([
-  ['fitbit', fitbitProvider],
-  // Add more providers as implemented:
-  // ['strava', stravaProvider],
-  // ['oura', ouraProvider],
-  // ['withings', withingsProvider],
+const providers = new Map<SourceType, IWearableProvider>([
+  ['fitbit', fitbitProvider as IWearableProvider],
+  ['strava', stravaProvider as IWearableProvider],
+  ['oura', ouraProvider as IWearableProvider],
+  ['withings', withingsProvider as IWearableProvider],
 ]);
 
 /**

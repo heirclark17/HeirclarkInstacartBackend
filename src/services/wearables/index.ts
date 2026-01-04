@@ -27,3 +27,6 @@ export {
 
 // Providers
 export { fitbitProvider, FitbitProvider } from './providers/fitbit';
+export { stravaProvider, StravaProvider } from './providers/strava';
+export { ouraProvider, OuraProvider } from './providers/oura';
+export { withingsProvider, WithingsProvider } from './providers/withings';

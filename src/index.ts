@@ -85,6 +85,9 @@ import { healthDataRouter } from "./routes/healthData";
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
+// Wearables sync cron job
+import { scheduleWearablesSyncJob } from "./jobs/wearablesSync";
+
 // Validate environment at startup
 function validateStartupEnvironment(): void {
   const required = ["DATABASE_URL"];
@@ -501,6 +504,10 @@ const server = app.listen(PORT, () => {
       scheduleNutritionScraper('0 3 * * *');
       console.log('Nutrition scraper job scheduled for 3:00 AM daily');
     }
+
+    // Schedule wearables sync job (runs every 4 hours)
+    scheduleWearablesSyncJob('0 */4 * * *');
+    console.log('Wearables sync job scheduled every 4 hours');
   }
 });
 
