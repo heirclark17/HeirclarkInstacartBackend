@@ -5,6 +5,15 @@ import multer from "multer";
 import sharp from "sharp";
 import OpenAI from "openai";
 import crypto from "crypto";
+import { Pool } from "pg";
+
+// PostgreSQL connection for persistent meal storage
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes("localhost")
+    ? false
+    : { rejectUnauthorized: false },
+});
 
 // Fast photo handler (single API call, 2x faster)
 import { handlePhotoFast } from "./photoFast";
@@ -328,8 +337,9 @@ const USE_RAG = process.env.USE_RAG === "true";
 /* ======================================================================
    GET /api/v1/nutrition/meals
    Supports pagination with ?page=1&limit=20
+   Now uses PostgreSQL for persistent storage
    ====================================================================== */
-nutritionRouter.get("/meals", (req: Request, res: Response) => {
+nutritionRouter.get("/meals", async (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
@@ -337,8 +347,6 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
       return res
         .status(400)
         .json({ ok: false, error: "Missing shopifyCustomerId" });
-
-    const mealsAll = getMealsArrayForUser(cid);
 
     const date = String(req.query.date || "").trim();
     const today = String(req.query.today || "").trim() === "1";
@@ -350,34 +358,71 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
     // Pagination params
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50));
+    const offset = (page - 1) * limit;
 
-    let filtered = mealsAll;
+    let query: string;
+    let params: any[];
+    let countQuery: string;
+    let countParams: any[];
 
     if (date) {
-      filtered = mealsAll.filter(
-        (m: any) => String(m?.datetime || "").slice(0, 10) === date
-      );
+      // Specific date
+      query = `
+        SELECT id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source
+        FROM hc_meals
+        WHERE shopify_customer_id = $1 AND DATE(datetime) = $2
+        ORDER BY datetime DESC
+        LIMIT $3 OFFSET $4
+      `;
+      params = [cid, date, limit, offset];
+      countQuery = `SELECT COUNT(*) FROM hc_meals WHERE shopify_customer_id = $1 AND DATE(datetime) = $2`;
+      countParams = [cid, date];
     } else if (today) {
-      const key = isoDateKey(new Date());
-      filtered = mealsAll.filter(
-        (m: any) => String(m?.datetime || "").slice(0, 10) === key
-      );
+      // Today only
+      query = `
+        SELECT id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source
+        FROM hc_meals
+        WHERE shopify_customer_id = $1 AND DATE(datetime) = CURRENT_DATE
+        ORDER BY datetime DESC
+        LIMIT $2 OFFSET $3
+      `;
+      params = [cid, limit, offset];
+      countQuery = `SELECT COUNT(*) FROM hc_meals WHERE shopify_customer_id = $1 AND DATE(datetime) = CURRENT_DATE`;
+      countParams = [cid];
     } else {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - (days - 1));
-      const cutoffKey = isoDateKey(cutoff);
-
-      filtered = mealsAll.filter((m: any) => {
-        const k = String(m?.datetime || "").slice(0, 10);
-        return k >= cutoffKey;
-      });
+      // Last N days
+      query = `
+        SELECT id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source
+        FROM hc_meals
+        WHERE shopify_customer_id = $1 AND datetime >= CURRENT_DATE - INTERVAL '${days} days'
+        ORDER BY datetime DESC
+        LIMIT $2 OFFSET $3
+      `;
+      params = [cid, limit, offset];
+      countQuery = `SELECT COUNT(*) FROM hc_meals WHERE shopify_customer_id = $1 AND datetime >= CURRENT_DATE - INTERVAL '${days} days'`;
+      countParams = [cid];
     }
 
-    const deduped = dedupeMeals(filtered);
-    const total = deduped.length;
+    const [mealsResult, countResult] = await Promise.all([
+      pool.query(query, params),
+      pool.query(countQuery, countParams),
+    ]);
+
+    const total = parseInt(countResult.rows[0]?.count || "0", 10);
     const totalPages = Math.ceil(total / limit);
-    const offset = (page - 1) * limit;
-    const meals = deduped.slice(offset, offset + limit);
+
+    // Transform rows to match expected format
+    const meals = mealsResult.rows.map((row: any) => ({
+      id: row.id,
+      datetime: row.datetime,
+      label: row.label,
+      items: row.items || [],
+      totalCalories: row.total_calories,
+      totalProtein: row.total_protein,
+      totalCarbs: row.total_carbs,
+      totalFat: row.total_fat,
+      source: row.source,
+    }));
 
     return res.json({
       ok: true,
@@ -399,8 +444,9 @@ nutritionRouter.get("/meals", (req: Request, res: Response) => {
 
 /* ======================================================================
    POST /api/v1/nutrition/meal
+   Now uses PostgreSQL for persistent storage
    ====================================================================== */
-nutritionRouter.post("/meal", (req: Request, res: Response) => {
+nutritionRouter.post("/meal", async (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
@@ -410,7 +456,11 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
         .json({ ok: false, error: "Missing shopifyCustomerId" });
 
     const body: any = req.body || {};
-    const label = body.label ? String(body.label) : undefined;
+    const label = body.label ? String(body.label) : null;
+    const source = body.source ? String(body.source) : "manual";
+
+    // Support custom datetime for syncing historical data
+    const datetime = body.datetime ? new Date(body.datetime) : new Date();
 
     let items = Array.isArray(body.items) ? body.items : null;
     if (!items || !items.length) {
@@ -429,20 +479,43 @@ nutritionRouter.post("/meal", (req: Request, res: Response) => {
       return res.status(400).json({ ok: false, error: "Missing items" });
     }
 
+    // Calculate totals
+    const formattedItems = items.map((it: any) => ({
+      name: String(it?.name || "Meal"),
+      calories: Number(it?.calories || 0),
+      protein: Number(it?.protein || 0),
+      carbs: Number(it?.carbs || 0),
+      fat: Number(it?.fat || 0),
+    }));
+
+    const totalCalories = formattedItems.reduce((sum: number, it: any) => sum + it.calories, 0);
+    const totalProtein = formattedItems.reduce((sum: number, it: any) => sum + it.protein, 0);
+    const totalCarbs = formattedItems.reduce((sum: number, it: any) => sum + it.carbs, 0);
+    const totalFat = formattedItems.reduce((sum: number, it: any) => sum + it.fat, 0);
+
+    // Insert into database
+    const result = await pool.query(
+      `INSERT INTO hc_meals
+        (shopify_customer_id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source`,
+      [cid, datetime, label, JSON.stringify(formattedItems), totalCalories, totalProtein, totalCarbs, totalFat, source]
+    );
+
+    const row = result.rows[0];
     const meal = {
-      id: uuidv4(),
-      datetime: new Date().toISOString(),
-      label,
-      items: items.map((it: any) => ({
-        name: String(it?.name || "Meal"),
-        calories: Number(it?.calories || 0),
-        protein: Number(it?.protein || 0),
-        carbs: Number(it?.carbs || 0),
-        fat: Number(it?.fat || 0),
-      })),
+      id: row.id,
+      datetime: row.datetime,
+      label: row.label,
+      items: row.items,
+      totalCalories: row.total_calories,
+      totalProtein: row.total_protein,
+      totalCarbs: row.total_carbs,
+      totalFat: row.total_fat,
+      source: row.source,
     };
 
-    addMealForUser(cid, meal);
+    console.log("[nutrition][meal] saved to DB", { reqId, mealId: meal.id, cid });
     return res.status(201).json({ ok: true, meal });
   } catch (err: any) {
     console.error("[nutrition][meal] error", { reqId, msg: errMessage(err) });
@@ -458,8 +531,9 @@ nutritionRouter.post("/meals", (req, res) => {
 
 /* ======================================================================
    DELETE /api/v1/nutrition/meal/:id
+   Now uses PostgreSQL for persistent storage
    ====================================================================== */
-nutritionRouter.delete("/meal/:id", (req: Request, res: Response) => {
+nutritionRouter.delete("/meal/:id", async (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
@@ -471,13 +545,14 @@ nutritionRouter.delete("/meal/:id", (req: Request, res: Response) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ ok: false, error: "Missing meal id" });
 
-    const meals = getMealsArrayForUser(cid);
-    const before = meals.length;
+    // Delete from database (ensure it belongs to this user)
+    const result = await pool.query(
+      `DELETE FROM hc_meals WHERE id = $1 AND shopify_customer_id = $2 RETURNING id`,
+      [id, cid]
+    );
 
-    const next = meals.filter((m: any) => String(m?.id || "") !== id);
-    setMealsArrayForUser(cid, next);
-
-    const removed = before - next.length;
+    const removed = result.rowCount || 0;
+    console.log("[nutrition][meal-delete] removed from DB", { reqId, mealId: id, removed });
     return res.json({ ok: true, id, removed });
   } catch (err: any) {
     console.error("[nutrition][meal-delete] error", { reqId, msg: errMessage(err) });
@@ -493,8 +568,9 @@ nutritionRouter.delete("/meals/:id", (req, res) => {
 
 /* ======================================================================
    GET /api/v1/nutrition/day-summary
+   Now uses PostgreSQL for persistent storage
    ====================================================================== */
-nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
+nutritionRouter.get("/day-summary", async (req: Request, res: Response) => {
   const reqId = uuidv4();
   try {
     const cid = getShopifyCustomerId(req);
@@ -503,22 +579,55 @@ nutritionRouter.get("/day-summary", (req: Request, res: Response) => {
         .status(400)
         .json({ ok: false, error: "Missing shopifyCustomerId" });
 
-    const meals = getMealsArrayForUser(cid);
-    const todayKey = isoDateKey(new Date());
+    // Support custom date for historical data
+    const dateParam = String(req.query.date || "").trim();
+    const dateCondition = dateParam ? `DATE(datetime) = $2` : `DATE(datetime) = CURRENT_DATE`;
+    const params = dateParam ? [cid, dateParam] : [cid];
 
-    const todaysMealsRaw = meals.filter(
-      (m: any) => String(m.datetime || "").slice(0, 10) === todayKey
+    // Get today's meals from database
+    const mealsResult = await pool.query(
+      `SELECT id, datetime, label, items, total_calories, total_protein, total_carbs, total_fat, source
+       FROM hc_meals
+       WHERE shopify_customer_id = $1 AND ${dateCondition}
+       ORDER BY datetime DESC
+       LIMIT 20`,
+      params
     );
-    const todaysMeals = dedupeMeals(todaysMealsRaw);
 
-    const totals = computeTotalsFromMeals(todaysMeals);
+    const meals = mealsResult.rows.map((row: any) => ({
+      id: row.id,
+      datetime: row.datetime,
+      label: row.label,
+      items: row.items || [],
+    }));
+
+    // Calculate totals from database
+    const totalsResult = await pool.query(
+      `SELECT
+        COALESCE(SUM(total_calories), 0) as calories,
+        COALESCE(SUM(total_protein), 0) as protein,
+        COALESCE(SUM(total_carbs), 0) as carbs,
+        COALESCE(SUM(total_fat), 0) as fat
+       FROM hc_meals
+       WHERE shopify_customer_id = $1 AND ${dateCondition}`,
+      params
+    );
+
+    const totals = {
+      calories: parseInt(totalsResult.rows[0]?.calories || "0", 10),
+      protein: parseInt(totalsResult.rows[0]?.protein || "0", 10),
+      carbs: parseInt(totalsResult.rows[0]?.carbs || "0", 10),
+      fat: parseInt(totalsResult.rows[0]?.fat || "0", 10),
+    };
+
     const targets = getTargetsForUser(cid);
 
     return res.json({
       ok: true,
+      date: dateParam || isoDateKey(new Date()),
       totals,
       targets,
-      recentMeals: todaysMeals.slice(-8).reverse(),
+      recentMeals: meals.slice(0, 8),
     });
   } catch (err: any) {
     console.error("[nutrition][day-summary] error", { reqId, msg: errMessage(err) });
