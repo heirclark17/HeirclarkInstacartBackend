@@ -70,6 +70,9 @@ import { mealPlanRouter } from "./routes/mealPlan";
 // Web Scraping router (Firecrawl)
 import { scrapeRouter } from "./routes/scrape";
 
+// Meal Favorites router (quick re-log)
+import { favoritesRouter } from "./routes/favorites";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -227,6 +230,9 @@ app.use("/api/v1/ai", mealPlanRouter);
 
 // Web scraping routes (Firecrawl integration)
 app.use("/api/v1/scrape", scrapeRouter);
+
+// Meal Favorites (quick re-log)
+app.use("/api/v1/favorites", favoritesRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
