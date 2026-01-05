@@ -85,6 +85,57 @@ export function createAdminRouter(pool: Pool): Router {
     seedUSDAFoodsBackground(pool, dataType, pages).catch(console.error);
   });
 
+  // POST /api/v1/admin/migrate-programs
+  // Add missing columns for programs and create tasks table
+  router.post('/migrate-programs', checkAdminAuth, async (req: Request, res: Response) => {
+    try {
+      console.log('[Admin] Running programs migration...');
+
+      // Add missing columns to hc_programs
+      await pool.query(`
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS slug VARCHAR(100) UNIQUE;
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS is_default_onboarding BOOLEAN DEFAULT false;
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS target_audience JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS prerequisites JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS learning_objectives JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE hc_programs ADD COLUMN IF NOT EXISTS methodology VARCHAR(50);
+      `);
+
+      // Create hc_tasks table if not exists
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS hc_tasks (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          program_id UUID NOT NULL REFERENCES hc_programs(id) ON DELETE CASCADE,
+          task_order INTEGER NOT NULL,
+          day_number INTEGER NOT NULL,
+          task_type VARCHAR(50) NOT NULL CHECK (task_type IN ('lesson', 'action', 'reflection', 'quiz')),
+          title VARCHAR(255) NOT NULL,
+          content TEXT NOT NULL,
+          points_value INTEGER DEFAULT 10,
+          action_type VARCHAR(50),
+          quiz_questions JSONB,
+          estimated_minutes INTEGER DEFAULT 5,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+
+          UNIQUE(program_id, task_order)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_program ON hc_tasks(program_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_day ON hc_tasks(program_id, day_number);
+      `);
+
+      console.log('[Admin] Programs migration complete');
+
+      return res.json({
+        ok: true,
+        message: 'Migration complete',
+      });
+    } catch (error: any) {
+      console.error('[Admin] Migration error:', error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   // POST /api/v1/admin/seed-onboarding
   // Seed the 7-day onboarding program
   router.post('/seed-onboarding', checkAdminAuth, async (req: Request, res: Response) => {
@@ -290,10 +341,11 @@ async function seedOnboardingProgram(pool: Pool): Promise<{ program_id: string; 
   // Create the program
   const programResult = await pool.query(`
     INSERT INTO hc_programs (
-      name, slug, description, category, difficulty_level, duration_days,
+      type, name, slug, description, category, difficulty, duration_days,
       is_default_onboarding, is_active, target_audience, prerequisites,
-      learning_objectives, methodology, estimated_daily_time_minutes
+      learning_objectives, methodology, estimated_daily_minutes
     ) VALUES (
+      'onboarding',
       'Nutrition Foundations: 7-Day Kickstart',
       'nutrition-foundations-7day',
       'Master the fundamentals of nutrition tracking in just 7 days. This science-backed program uses cognitive behavioral techniques to build lasting habits around food awareness, protein optimization, and mindful eating.',
