@@ -4,6 +4,7 @@
 
 import OpenAI from 'openai';
 import { Pool } from 'pg';
+import crypto from 'crypto';
 import { NutritionGraphDB } from '../db/nutritionGraph';
 import { NutritionFood, NutrientProfile } from '../types/nutrition';
 
