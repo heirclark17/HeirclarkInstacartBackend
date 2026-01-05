@@ -90,6 +90,7 @@ import { createGroceryBudgetRouter } from "./routes/groceryBudget";
 import { createBodyScanReportsRouter } from "./routes/bodyScanReports";
 import { createSocialRouter } from "./routes/social";
 import { createImportRouter } from "./routes/import";
+import { createAdminRouter } from "./routes/admin";
 
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
@@ -294,6 +295,9 @@ app.use("/api/v1/social", createSocialRouter(dbPool));
 
 // Data Import - MyFitnessPal, LoseIt, CSV import
 app.use("/api/v1/import", createImportRouter(dbPool));
+
+// Admin routes - database management, seeding
+app.use("/api/v1/admin", createAdminRouter(dbPool));
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
