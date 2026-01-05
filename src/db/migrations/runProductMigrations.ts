@@ -346,6 +346,12 @@ CREATE INDEX IF NOT EXISTS idx_reminders_scheduled ON hc_program_reminders(sched
 // 3. Body Scan Reports Schema
 // ==========================================================================
 const BODY_SCAN_REPORTS_SCHEMA = `
+-- Drop existing tables to ensure clean state (removes corrupted tables)
+DROP TABLE IF EXISTS hc_body_goals CASCADE;
+DROP TABLE IF EXISTS hc_recomp_reports CASCADE;
+DROP TABLE IF EXISTS hc_body_measurements CASCADE;
+DROP TABLE IF EXISTS hc_progress_photos CASCADE;
+
 -- Progress photos
 CREATE TABLE IF NOT EXISTS hc_progress_photos (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
