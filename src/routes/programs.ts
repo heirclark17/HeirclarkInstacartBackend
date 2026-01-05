@@ -1116,7 +1116,7 @@ export function createProgramsRouter(pool: Pool): Router {
 
       // Get completed tasks
       const completedTasksResult = await pool.query(`
-        SELECT task_id, day, completed_at, quiz_score, quiz_passed, response_text
+        SELECT task_id, day, completed_at, quiz_score, quiz_passed, response_data
         FROM hc_program_task_responses
         WHERE enrollment_id = $1 AND completed = true
         ORDER BY day, completed_at
