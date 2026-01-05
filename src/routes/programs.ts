@@ -764,6 +764,95 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // PATCH /api/v1/programs/enrollments/:enrollmentId
+  // Pause or resume an enrollment
+  // ==========================================================================
+  router.patch('/enrollments/:enrollmentId', async (req: Request, res: Response) => {
+    try {
+      const { enrollmentId } = req.params;
+      const userId = req.body.userId || req.headers['x-shopify-customer-id'] as string;
+      const { action } = req.body; // 'pause' or 'resume'
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      if (!action || !['pause', 'resume'].includes(action)) {
+        return res.status(400).json({ ok: false, error: 'action required (pause or resume)' });
+      }
+
+      // Get enrollment and verify ownership
+      const enrollmentResult = await pool.query(`
+        SELECT id, status, paused_at, program_id
+        FROM hc_program_enrollments
+        WHERE id = $1 AND user_id = $2
+      `, [enrollmentId, userId]);
+
+      if (enrollmentResult.rows.length === 0) {
+        return res.status(404).json({ ok: false, error: 'Enrollment not found' });
+      }
+
+      const enrollment = enrollmentResult.rows[0];
+
+      // Validate action based on current status
+      if (action === 'pause') {
+        if (enrollment.status === 'paused') {
+          return res.status(400).json({ ok: false, error: 'Enrollment is already paused' });
+        }
+        if (enrollment.status === 'completed') {
+          return res.status(400).json({ ok: false, error: 'Cannot pause a completed enrollment' });
+        }
+
+        // Pause the enrollment
+        await pool.query(`
+          UPDATE hc_program_enrollments
+          SET status = 'paused', paused_at = NOW(), updated_at = NOW()
+          WHERE id = $1
+        `, [enrollmentId]);
+
+        return res.json({
+          ok: true,
+          data: {
+            enrollment_id: enrollmentId,
+            status: 'paused',
+            paused_at: new Date().toISOString(),
+            message: 'Enrollment paused successfully',
+          },
+        });
+      }
+
+      if (action === 'resume') {
+        if (enrollment.status === 'active') {
+          return res.status(400).json({ ok: false, error: 'Enrollment is already active' });
+        }
+        if (enrollment.status === 'completed') {
+          return res.status(400).json({ ok: false, error: 'Cannot resume a completed enrollment. Use re-enroll instead.' });
+        }
+
+        // Resume the enrollment
+        await pool.query(`
+          UPDATE hc_program_enrollments
+          SET status = 'active', paused_at = NULL, updated_at = NOW()
+          WHERE id = $1
+        `, [enrollmentId]);
+
+        return res.json({
+          ok: true,
+          data: {
+            enrollment_id: enrollmentId,
+            status: 'active',
+            resumed_at: new Date().toISOString(),
+            message: 'Enrollment resumed successfully',
+          },
+        });
+      }
+    } catch (error) {
+      console.error('[Programs] Update enrollment error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to update enrollment' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/enrollments
   // List all enrollments for a user
   // ==========================================================================
