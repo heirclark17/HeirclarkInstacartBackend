@@ -267,8 +267,18 @@ export class ProgramsDB {
       throw new Error('Program not found');
     }
 
-    // Calculate total tasks
-    const totalTasks = program.days.reduce((sum, day) => sum + day.tasks.length, 0);
+    // Calculate total tasks from hc_tasks table (preferred) or fall back to days JSONB
+    let totalTasks = 0;
+    const taskCountResult = await this.pool.query(
+      `SELECT COUNT(*) as count FROM hc_tasks WHERE program_id = $1`,
+      [programId]
+    );
+    totalTasks = parseInt(taskCountResult.rows[0]?.count || '0');
+
+    // Fall back to JSONB days if no tasks in hc_tasks table
+    if (totalTasks === 0 && program.days && program.days.length > 0) {
+      totalTasks = program.days.reduce((sum, day) => sum + (day.tasks?.length || 0), 0);
+    }
 
     const result = await this.pool.query(
       `INSERT INTO hc_program_enrollments (user_id, program_id, total_tasks)
@@ -283,8 +293,25 @@ export class ProgramsDB {
 
     const enrollment = this.mapEnrollmentRow(result.rows[0]);
 
-    // Initialize day 1 as available
-    await this.initializeDayProgress(enrollment.id, 1, program.days[0]);
+    // Initialize day 1 as available - get task count for day 1 from hc_tasks table
+    const day1TasksResult = await this.pool.query(
+      `SELECT COUNT(*) as count FROM hc_tasks WHERE program_id = $1 AND day_number = 1`,
+      [programId]
+    );
+    const day1TaskCount = parseInt(day1TasksResult.rows[0]?.count || '0');
+
+    if (day1TaskCount > 0) {
+      // Initialize with task count from hc_tasks table
+      await this.pool.query(
+        `INSERT INTO hc_program_day_progress (enrollment_id, day, status, total_tasks)
+         VALUES ($1, 1, 'available', $2)
+         ON CONFLICT (enrollment_id, day) DO NOTHING`,
+        [enrollment.id, day1TaskCount]
+      );
+    } else if (program.days && program.days[0]) {
+      // Fall back to JSONB days
+      await this.initializeDayProgress(enrollment.id, 1, program.days[0]);
+    }
 
     return enrollment;
   }
