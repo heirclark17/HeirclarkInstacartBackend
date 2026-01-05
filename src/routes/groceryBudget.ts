@@ -8,6 +8,108 @@ import { MealPlanAIService, MealPlanConstraints, BudgetConstraints, PantryItem }
 import { GroceryOptimizer, BUDGET_TIERS } from '../services/groceryOptimizer';
 
 // ==========================================================================
+// Instacart API Configuration
+// ==========================================================================
+const INSTACART_BASE_URL = process.env.INSTACART_ENV === 'production'
+  ? "https://connect.instacart.com"
+  : "https://connect.dev.instacart.tools";
+const INSTACART_API_KEY = process.env.INSTACART_API_KEY || "";
+
+// ==========================================================================
+// Helper: Create Instacart products link from grocery list
+// ==========================================================================
+interface GroceryItem {
+  name: string;
+  total_amount: number;
+  unit: string;
+  category?: string;
+}
+
+async function createInstacartLink(
+  groceryList: GroceryItem[],
+  landingUrl: string = 'https://heirclark.com/meal-plan'
+): Promise<{ link_url: string; items_count: number } | null> {
+  if (!INSTACART_API_KEY) {
+    console.warn('[GroceryBudget] INSTACART_API_KEY not set, skipping cart creation');
+    return null;
+  }
+
+  // Convert grocery list to Instacart-friendly format with better product names
+  const instacartItems = groceryList.map(item => {
+    // Map generic names to better Instacart search terms
+    const nameMapping: Record<string, string> = {
+      'chicken breast': 'Boneless Skinless Chicken Breast',
+      'salmon fillet': 'Atlantic Salmon Fillet',
+      'ground turkey': 'Lean Ground Turkey',
+      'greek yogurt': 'Plain Greek Yogurt',
+      'mixed vegetables': 'Frozen Mixed Vegetables',
+      'mixed berries': 'Frozen Mixed Berries',
+      'sweet potato': 'Sweet Potato',
+      'brown rice': 'Long Grain Brown Rice',
+      'rice': 'Long Grain White Rice',
+      'quinoa': 'Organic Quinoa',
+      'oats': 'Old Fashioned Rolled Oats',
+      'eggs': 'Large Grade A Eggs',
+      'whole grain bread': 'Whole Wheat Bread',
+      'broccoli': 'Fresh Broccoli',
+      'spinach': 'Fresh Baby Spinach',
+      'protein source': 'Chicken Breast',
+      'vegetables': 'Frozen Mixed Vegetables',
+    };
+
+    const lowerName = item.name.toLowerCase();
+    const instacartName = nameMapping[lowerName] || item.name;
+
+    // Calculate sensible quantities
+    let quantity = 1;
+    if (item.unit === 'g' && item.total_amount > 400) {
+      quantity = Math.ceil(item.total_amount / 400);
+    } else if (item.unit === 'large' && item.total_amount > 12) {
+      quantity = Math.ceil(item.total_amount / 12); // dozens
+    }
+
+    return {
+      name: instacartName,
+      quantity,
+      unit: item.unit === 'g' ? 'each' : item.unit,
+    };
+  });
+
+  try {
+    const response = await fetch(`${INSTACART_BASE_URL}/idp/v1/products/products_link`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${INSTACART_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Weekly Meal Plan Groceries',
+        line_items: instacartItems,
+        landing_page_configuration: {
+          partner_linkback_url: landingUrl,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[GroceryBudget] Instacart products link error:', response.status, data);
+      return null;
+    }
+
+    return {
+      link_url: data.products_link_url || data.link_url,
+      items_count: instacartItems.length,
+    };
+  } catch (error) {
+    console.error('[GroceryBudget] Failed to create Instacart link:', error);
+    return null;
+  }
+}
+
+// ==========================================================================
 // Router Factory
 // ==========================================================================
 
@@ -156,6 +258,132 @@ export function createGroceryBudgetRouter(pool: Pool): Router {
       return res.status(500).json({
         ok: false,
         error: 'Failed to generate meal plan with cart',
+        details: error.message || 'Unknown error',
+      });
+    }
+  });
+
+  // ==========================================================================
+  // POST /api/v1/grocery/plan-to-instacart
+  // Single endpoint: Generate meal plan AND create Instacart cart
+  // ==========================================================================
+  router.post('/plan-to-instacart', async (req: Request, res: Response) => {
+    try {
+      const {
+        // Nutrition constraints
+        daily_calories,
+        daily_protein_g,
+        daily_carbs_g,
+        daily_fat_g,
+        dietary_restrictions,
+        allergies,
+        cuisine_preferences,
+        cooking_skill,
+        max_prep_time_minutes,
+        meals_per_day,
+
+        // Budget constraints
+        weekly_budget_cents,
+        budget_tier,
+        preferred_stores,
+
+        // Pantry
+        pantry_items,
+
+        // Instacart options
+        landing_url,
+      } = req.body;
+
+      // Build constraints
+      const constraints: MealPlanConstraints = {
+        daily_calories: daily_calories || 2000,
+        daily_protein_g: daily_protein_g || 150,
+        daily_carbs_g: daily_carbs_g || 200,
+        daily_fat_g: daily_fat_g || 70,
+        dietary_restrictions,
+        allergies,
+        cuisine_preferences,
+        cooking_skill: cooking_skill || 'intermediate',
+        max_prep_time_minutes: max_prep_time_minutes || 45,
+        meals_per_day: meals_per_day || 3,
+      };
+
+      // Determine budget from tier if not specified
+      let budgetCents = weekly_budget_cents;
+      if (!budgetCents && budget_tier) {
+        const tier = BUDGET_TIERS.find(t => t.name === budget_tier);
+        if (tier) {
+          budgetCents = Math.round((tier.weekly_min_cents + tier.weekly_max_cents) / 2);
+        }
+      }
+
+      const budget: BudgetConstraints | undefined = budgetCents
+        ? {
+            weekly_budget_cents: budgetCents,
+            preferred_stores: preferred_stores || ['instacart'],
+          }
+        : undefined;
+
+      const pantry: PantryItem[] | undefined = pantry_items?.map((item: any) => ({
+        name: item.name || item,
+        quantity: item.quantity,
+        unit: item.unit,
+      }));
+
+      console.log('[GroceryBudget] Plan-to-Instacart starting:', {
+        calories: constraints.daily_calories,
+        protein: constraints.daily_protein_g,
+        budget: budgetCents ? `$${(budgetCents / 100).toFixed(2)}` : 'none',
+      });
+
+      // Step 1: Generate meal plan
+      let plan = await mealPlanService.generateWeekPlan(constraints, pantry, budget);
+
+      // Step 2: Adjust for pantry items
+      let pantryAdjustment;
+      if (pantry && pantry.length > 0) {
+        pantryAdjustment = await groceryOptimizer.adjustForPantry(plan.grocery_list, pantry);
+        plan.grocery_list = pantryAdjustment.grocery_list;
+        if (plan.weekly_cost_cents) {
+          plan.weekly_cost_cents -= pantryAdjustment.cost_reduction_cents;
+        }
+      }
+
+      // Step 3: Create Instacart cart directly from grocery list
+      const instacartResult = await createInstacartLink(
+        plan.grocery_list,
+        landing_url || 'https://heirclark.com/meal-plan'
+      );
+
+      console.log('[GroceryBudget] Plan-to-Instacart complete:', {
+        groceryItems: plan.grocery_list.length,
+        instacartLink: instacartResult?.link_url ? 'created' : 'failed',
+      });
+
+      return res.json({
+        ok: true,
+        data: {
+          plan: {
+            id: plan.id,
+            days: plan.days,
+            weekly_totals: plan.weekly_totals,
+            weekly_cost_cents: plan.weekly_cost_cents,
+            grocery_list: plan.grocery_list,
+          },
+          instacart: instacartResult
+            ? {
+                cart_url: instacartResult.link_url,
+                items_count: instacartResult.items_count,
+              }
+            : null,
+          pantry_savings_cents: pantryAdjustment?.cost_reduction_cents || 0,
+        },
+      });
+    } catch (error: any) {
+      console.error('[GroceryBudget] Plan-to-Instacart error:', error);
+      return res.status(500).json({
+        ok: false,
+        error: 'Failed to generate meal plan with Instacart cart',
         details: error.message || 'Unknown error',
       });
     }
