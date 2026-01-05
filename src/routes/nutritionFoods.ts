@@ -4,6 +4,7 @@
 
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import crypto from 'crypto';
 import { NutritionGraphDB } from '../db/nutritionGraph';
 import {
   FoodSearchFilters,
