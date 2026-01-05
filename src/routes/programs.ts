@@ -764,6 +764,136 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // POST /api/v1/programs/enroll
+  // Enroll user in a program (by program_id or slug)
+  // ==========================================================================
+  router.post('/enroll', async (req: Request, res: Response) => {
+    try {
+      const userId = req.body.userId || req.headers['x-shopify-customer-id'] as string;
+      const { program_id, slug } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      if (!program_id && !slug) {
+        return res.status(400).json({ ok: false, error: 'program_id or slug required' });
+      }
+
+      // Get program by ID or slug
+      let programResult;
+      if (program_id) {
+        programResult = await pool.query(
+          `SELECT id, name, slug, duration_days FROM hc_programs WHERE id = $1`,
+          [program_id]
+        );
+      } else {
+        programResult = await pool.query(
+          `SELECT id, name, slug, duration_days FROM hc_programs WHERE slug = $1`,
+          [slug]
+        );
+      }
+
+      if (programResult.rows.length === 0) {
+        return res.status(404).json({ ok: false, error: 'Program not found' });
+      }
+
+      const program = programResult.rows[0];
+
+      // Check if already enrolled
+      const existingEnrollment = await pool.query(`
+        SELECT id, status, started_at, completed_at
+        FROM hc_program_enrollments
+        WHERE user_id = $1 AND program_id = $2
+      `, [userId, program.id]);
+
+      if (existingEnrollment.rows.length > 0) {
+        const existing = existingEnrollment.rows[0];
+
+        // If completed, allow re-enrollment
+        if (existing.status === 'completed') {
+          await pool.query(`
+            UPDATE hc_program_enrollments
+            SET status = 'active', started_at = NOW(), completed_at = NULL,
+                current_day = 1, tasks_completed = 0, points_earned = 0,
+                streak_days = 0, updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+          `, [existing.id]);
+
+          // Clear previous task responses
+          await pool.query(`
+            DELETE FROM hc_program_task_responses WHERE enrollment_id = $1
+          `, [existing.id]);
+
+          return res.json({
+            ok: true,
+            data: {
+              enrollment_id: existing.id,
+              program_id: program.id,
+              program_name: program.name,
+              status: 'active',
+              re_enrolled: true,
+              message: 'Re-enrolled in program',
+            },
+          });
+        }
+
+        // Already actively enrolled
+        return res.json({
+          ok: true,
+          data: {
+            enrollment_id: existing.id,
+            program_id: program.id,
+            program_name: program.name,
+            status: existing.status,
+            already_enrolled: true,
+            started_at: existing.started_at,
+            message: 'Already enrolled in this program',
+          },
+        });
+      }
+
+      // Get total tasks for the program
+      const taskCountResult = await pool.query(
+        `SELECT COUNT(*) as count FROM hc_tasks WHERE program_id = $1`,
+        [program.id]
+      );
+      const totalTasks = parseInt(taskCountResult.rows[0].count) || 0;
+
+      // Create new enrollment
+      const enrollmentResult = await pool.query(`
+        INSERT INTO hc_program_enrollments (
+          user_id, program_id, status, current_day, total_tasks,
+          tasks_completed, points_earned, streak_days
+        ) VALUES ($1, $2, 'active', 1, $3, 0, 0, 0)
+        RETURNING id, status, started_at, current_day
+      `, [userId, program.id, totalTasks]);
+
+      const enrollment = enrollmentResult.rows[0];
+
+      return res.status(201).json({
+        ok: true,
+        data: {
+          enrollment_id: enrollment.id,
+          program_id: program.id,
+          program_name: program.name,
+          program_slug: program.slug,
+          status: enrollment.status,
+          started_at: enrollment.started_at,
+          current_day: enrollment.current_day,
+          total_tasks: totalTasks,
+          duration_days: program.duration_days,
+          message: 'Successfully enrolled in program',
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Enroll error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to enroll in program' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/by-slug/:slug
   // Get program by slug (e.g., "nutrition-foundations-7day")
   // ==========================================================================
