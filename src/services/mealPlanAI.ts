@@ -157,7 +157,7 @@ export class MealPlanAIService {
           },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 4000,
+        max_tokens: 2500,
         temperature: 0.7,
       }, { signal: controller.signal });
 
@@ -290,17 +290,19 @@ Write a 2-3 paragraph explanation that:
     foodsContext: string
   ): string {
     const restrictions = constraints.dietary_restrictions?.length
-      ? constraints.dietary_restrictions.join(', ')
+      ? `Restrictions: ${constraints.dietary_restrictions.join(', ')}.`
       : '';
     const allergies = constraints.allergies?.length
-      ? `Allergies: ${constraints.allergies.join(', ')}`
+      ? `Allergies: ${constraints.allergies.join(', ')}.`
       : '';
 
-    return `Create 7-day meal plan. Daily targets: ${constraints.daily_calories}cal, ${constraints.daily_protein_g}g protein, ${constraints.daily_carbs_g}g carbs, ${constraints.daily_fat_g}g fat. ${restrictions} ${allergies} ${pantryContext} ${budgetContext}
+    // Simplified prompt - just meal names and macros, no ingredients
+    return `7-day meal plan. ${constraints.daily_calories}cal, ${constraints.daily_protein_g}g protein daily. ${restrictions} ${allergies}
 
-Return JSON: {"days":[{"day":1,"day_name":"Monday","meals":[{"meal_type":"breakfast","name":"Meal Name","prep_time_minutes":10,"servings":1,"ingredients":[{"name":"ingredient","amount":100,"unit":"g"}],"nutrients":{"calories":400,"protein_g":30,"carbs_g":40,"fat_g":15}}]}],"grocery_list":[{"name":"item","total_amount":500,"unit":"g","category":"Protein"}],"ai_notes":"notes"}
+JSON format:
+{"days":[{"day":1,"day_name":"Mon","meals":[{"meal_type":"breakfast","name":"Eggs & Toast","nutrients":{"calories":400,"protein_g":25,"carbs_g":30,"fat_g":20}},{"meal_type":"lunch","name":"Chicken Salad","nutrients":{"calories":500,"protein_g":45,"carbs_g":25,"fat_g":25}},{"meal_type":"dinner","name":"Salmon Rice","nutrients":{"calories":600,"protein_g":50,"carbs_g":50,"fat_g":20}}]},{"day":2,"day_name":"Tue","meals":[...]},...]}
 
-Keep meal names short. Include 3 meals per day. Focus on high-protein foods. No instructions needed.`;
+Return all 7 days. Use varied high-protein meals. Short names only.`;
   }
 
   private buildAdjustmentPrompt(plan: WeekPlan, feedback: PlanFeedback): string {
@@ -332,6 +334,12 @@ Return JSON with the replacement meal(s) or adjusted plan section.
     const days: DayPlan[] = [];
     const groceryMap = new Map<string, GroceryListItem>();
 
+    // Day name mapping
+    const dayNames: Record<string, string> = {
+      'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday',
+      'Thu': 'Thursday', 'Fri': 'Friday', 'Sat': 'Saturday', 'Sun': 'Sunday'
+    };
+
     // Process each day
     for (const rawDay of rawPlan.days || []) {
       const dayMeals: PlannedMeal[] = [];
@@ -340,19 +348,14 @@ Return JSON with the replacement meal(s) or adjusted plan section.
       };
 
       for (const rawMeal of rawDay.meals || []) {
+        // Generate basic ingredients from meal name
+        const ingredients = this.inferIngredientsFromMealName(rawMeal.name);
+
         const meal: PlannedMeal = {
           meal_type: rawMeal.meal_type,
           name: rawMeal.name,
-          description: rawMeal.description,
-          prep_time_minutes: rawMeal.prep_time_minutes,
-          cook_time_minutes: rawMeal.cook_time_minutes,
-          servings: rawMeal.servings || 1,
-          ingredients: rawMeal.ingredients?.map((i: any) => ({
-            name: i.name,
-            amount: i.amount,
-            unit: i.unit,
-          })) || [],
-          instructions: rawMeal.instructions,
+          servings: 1,
+          ingredients,
           nutrients: rawMeal.nutrients || { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
         };
 
@@ -362,8 +365,8 @@ Return JSON with the replacement meal(s) or adjusted plan section.
         dailyTotals.carbs_g += meal.nutrients.carbs_g || 0;
         dailyTotals.fat_g += meal.nutrients.fat_g || 0;
 
-        // Accumulate grocery list
-        for (const ing of meal.ingredients) {
+        // Accumulate grocery list from inferred ingredients
+        for (const ing of ingredients) {
           const key = `${ing.name.toLowerCase()}_${ing.unit}`;
           const existing = groceryMap.get(key);
           if (existing) {
@@ -373,6 +376,7 @@ Return JSON with the replacement meal(s) or adjusted plan section.
               name: ing.name,
               total_amount: ing.amount,
               unit: ing.unit,
+              category: this.inferCategory(ing.name),
             });
           }
         }
@@ -380,9 +384,10 @@ Return JSON with the replacement meal(s) or adjusted plan section.
         dayMeals.push(meal);
       }
 
+      const fullDayName = dayNames[rawDay.day_name] || rawDay.day_name;
       days.push({
         day: rawDay.day,
-        day_name: rawDay.day_name,
+        day_name: fullDayName,
         meals: dayMeals,
         daily_totals: dailyTotals,
       });
@@ -396,13 +401,7 @@ Return JSON with the replacement meal(s) or adjusted plan section.
       fat_g: days.reduce((sum, d) => sum + d.daily_totals.fat_g, 0),
     };
 
-    // Enrich grocery list with store mappings if budget specified
     const groceryList = Array.from(groceryMap.values());
-    if (budget?.preferred_stores?.length) {
-      await this.enrichGroceryListWithPrices(groceryList, budget.preferred_stores);
-    }
-
-    const weeklyPrice = groceryList.reduce((sum, item) => sum + (item.price_cents || 0), 0);
 
     return {
       id: crypto.randomUUID(),
@@ -411,10 +410,61 @@ Return JSON with the replacement meal(s) or adjusted plan section.
       budget,
       days,
       weekly_totals: weeklyTotals,
-      weekly_cost_cents: weeklyPrice > 0 ? weeklyPrice : undefined,
       grocery_list: groceryList,
-      ai_notes: rawPlan.ai_notes,
+      ai_notes: rawPlan.ai_notes || 'AI-generated meal plan',
     };
+  }
+
+  private inferIngredientsFromMealName(mealName: string): PlannedIngredient[] {
+    const nameLower = mealName.toLowerCase();
+    const ingredients: PlannedIngredient[] = [];
+
+    // Common protein sources
+    if (nameLower.includes('chicken')) ingredients.push({ name: 'Chicken Breast', amount: 150, unit: 'g' });
+    if (nameLower.includes('salmon') || nameLower.includes('fish')) ingredients.push({ name: 'Salmon Fillet', amount: 150, unit: 'g' });
+    if (nameLower.includes('beef') || nameLower.includes('steak')) ingredients.push({ name: 'Beef', amount: 150, unit: 'g' });
+    if (nameLower.includes('egg')) ingredients.push({ name: 'Eggs', amount: 3, unit: 'large' });
+    if (nameLower.includes('turkey')) ingredients.push({ name: 'Ground Turkey', amount: 150, unit: 'g' });
+    if (nameLower.includes('shrimp')) ingredients.push({ name: 'Shrimp', amount: 150, unit: 'g' });
+    if (nameLower.includes('tofu')) ingredients.push({ name: 'Tofu', amount: 200, unit: 'g' });
+    if (nameLower.includes('yogurt')) ingredients.push({ name: 'Greek Yogurt', amount: 200, unit: 'g' });
+    if (nameLower.includes('cottage')) ingredients.push({ name: 'Cottage Cheese', amount: 200, unit: 'g' });
+
+    // Common carbs
+    if (nameLower.includes('rice')) ingredients.push({ name: 'Rice', amount: 100, unit: 'g' });
+    if (nameLower.includes('quinoa')) ingredients.push({ name: 'Quinoa', amount: 100, unit: 'g' });
+    if (nameLower.includes('pasta')) ingredients.push({ name: 'Pasta', amount: 100, unit: 'g' });
+    if (nameLower.includes('oat')) ingredients.push({ name: 'Oats', amount: 80, unit: 'g' });
+    if (nameLower.includes('toast') || nameLower.includes('bread')) ingredients.push({ name: 'Whole Grain Bread', amount: 2, unit: 'slices' });
+    if (nameLower.includes('potato') || nameLower.includes('sweet potato')) ingredients.push({ name: 'Sweet Potato', amount: 150, unit: 'g' });
+
+    // Common vegetables
+    if (nameLower.includes('salad')) ingredients.push({ name: 'Mixed Greens', amount: 100, unit: 'g' });
+    if (nameLower.includes('broccoli')) ingredients.push({ name: 'Broccoli', amount: 100, unit: 'g' });
+    if (nameLower.includes('vegetable') || nameLower.includes('veggies')) ingredients.push({ name: 'Mixed Vegetables', amount: 150, unit: 'g' });
+    if (nameLower.includes('spinach')) ingredients.push({ name: 'Spinach', amount: 50, unit: 'g' });
+
+    // Fruits
+    if (nameLower.includes('berr')) ingredients.push({ name: 'Mixed Berries', amount: 100, unit: 'g' });
+    if (nameLower.includes('banana')) ingredients.push({ name: 'Banana', amount: 1, unit: 'medium' });
+
+    // If no ingredients matched, add generic ones based on meal type
+    if (ingredients.length === 0) {
+      ingredients.push({ name: 'Protein Source', amount: 150, unit: 'g' });
+      ingredients.push({ name: 'Vegetables', amount: 100, unit: 'g' });
+    }
+
+    return ingredients;
+  }
+
+  private inferCategory(ingredientName: string): string {
+    const nameLower = ingredientName.toLowerCase();
+    if (/chicken|beef|turkey|salmon|fish|shrimp|egg|tofu/.test(nameLower)) return 'Protein';
+    if (/rice|quinoa|pasta|oat|bread|potato/.test(nameLower)) return 'Grains';
+    if (/yogurt|cheese|milk/.test(nameLower)) return 'Dairy';
+    if (/greens|broccoli|spinach|vegetable/.test(nameLower)) return 'Vegetables';
+    if (/berr|banana|fruit/.test(nameLower)) return 'Fruits';
+    return 'Other';
   }
 
   private async enrichGroceryListWithPrices(
