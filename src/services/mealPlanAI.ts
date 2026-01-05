@@ -128,29 +128,22 @@ export class MealPlanAIService {
   ): Promise<WeekPlan> {
     const startTime = Date.now();
 
-    // Build context for AI
+    // Build context for AI (keep it concise)
     const pantryContext = pantry?.length
-      ? `User has these items in pantry: ${pantry.map(p => p.name).join(', ')}`
+      ? `Pantry: ${pantry.slice(0, 10).map(p => p.name).join(', ')}`
       : '';
 
     const budgetContext = budget
-      ? `Weekly budget: $${(budget.weekly_budget_cents / 100).toFixed(2)}. ${budget.prioritize_sales ? 'Prioritize items on sale.' : ''}`
+      ? `Budget: $${(budget.weekly_budget_cents / 100).toFixed(0)}/week`
       : '';
 
-    // Get high-protein foods from our database for reference
-    const highProteinFoods = await this.nutritionDB.searchFoods({
-      min_protein_g: 20,
-      max_calories: 400,
-      has_store_mapping: true,
-    }, 1, 20);
-
-    const foodsContext = highProteinFoods.foods.length > 0
-      ? `Available high-protein foods in database: ${highProteinFoods.foods.map(f => `${f.name} (${f.nutrients.protein_g}g protein)`).join(', ')}`
-      : '';
-
-    const prompt = this.buildMealPlanPrompt(constraints, pantryContext, budgetContext, foodsContext);
+    const prompt = this.buildMealPlanPrompt(constraints, pantryContext, budgetContext, '');
 
     try {
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 55000); // 55 second timeout
+
       const response = await this.openai.chat.completions.create({
         model: 'gpt-4.1-mini',
         messages: [
@@ -164,9 +157,11 @@ export class MealPlanAIService {
           },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 8000,
+        max_tokens: 4000,
         temperature: 0.7,
-      });
+      }, { signal: controller.signal });
+
+      clearTimeout(timeoutId);
 
       const content = response.choices[0]?.message?.content;
       if (!content) {
@@ -179,8 +174,8 @@ export class MealPlanAIService {
       console.log(`[MealPlanAI] Generated plan in ${Date.now() - startTime}ms`);
       return weekPlan;
 
-    } catch (error) {
-      console.error('[MealPlanAI] Generation error:', error);
+    } catch (error: any) {
+      console.error('[MealPlanAI] Generation error:', error?.message || error);
       // Return fallback plan
       return this.generateFallbackPlan(constraints, budget);
     }
@@ -294,61 +289,18 @@ Write a 2-3 paragraph explanation that:
     budgetContext: string,
     foodsContext: string
   ): string {
-    return `
-Generate a 7-day meal plan with the following requirements:
+    const restrictions = constraints.dietary_restrictions?.length
+      ? constraints.dietary_restrictions.join(', ')
+      : '';
+    const allergies = constraints.allergies?.length
+      ? `Allergies: ${constraints.allergies.join(', ')}`
+      : '';
 
-NUTRITION TARGETS (per day):
-- Calories: ${constraints.daily_calories}
-- Protein: ${constraints.daily_protein_g}g
-- Carbs: ${constraints.daily_carbs_g}g
-- Fat: ${constraints.daily_fat_g}g
+    return `Create 7-day meal plan. Daily targets: ${constraints.daily_calories}cal, ${constraints.daily_protein_g}g protein, ${constraints.daily_carbs_g}g carbs, ${constraints.daily_fat_g}g fat. ${restrictions} ${allergies} ${pantryContext} ${budgetContext}
 
-DIETARY REQUIREMENTS:
-- Restrictions: ${constraints.dietary_restrictions?.join(', ') || 'None'}
-- Allergies: ${constraints.allergies?.join(', ') || 'None'}
-- Cuisine preferences: ${constraints.cuisine_preferences?.join(', ') || 'Any'}
-- Cooking skill: ${constraints.cooking_skill || 'intermediate'}
-- Max prep time: ${constraints.max_prep_time_minutes || 45} minutes
-- Meals per day: ${constraints.meals_per_day || 3}
+Return JSON: {"days":[{"day":1,"day_name":"Monday","meals":[{"meal_type":"breakfast","name":"Meal Name","prep_time_minutes":10,"servings":1,"ingredients":[{"name":"ingredient","amount":100,"unit":"g"}],"nutrients":{"calories":400,"protein_g":30,"carbs_g":40,"fat_g":15}}]}],"grocery_list":[{"name":"item","total_amount":500,"unit":"g","category":"Protein"}],"ai_notes":"notes"}
 
-${pantryContext}
-${budgetContext}
-${foodsContext}
-
-Return a JSON object with this structure:
-{
-  "days": [
-    {
-      "day": 1,
-      "day_name": "Monday",
-      "meals": [
-        {
-          "meal_type": "breakfast",
-          "name": "...",
-          "description": "...",
-          "prep_time_minutes": 10,
-          "cook_time_minutes": 15,
-          "servings": 1,
-          "ingredients": [
-            {"name": "...", "amount": 100, "unit": "g"}
-          ],
-          "instructions": ["Step 1...", "Step 2..."],
-          "nutrients": {
-            "calories": 400,
-            "protein_g": 30,
-            "carbs_g": 40,
-            "fat_g": 15
-          }
-        }
-      ]
-    }
-  ],
-  "grocery_list": [
-    {"name": "...", "total_amount": 500, "unit": "g", "category": "Protein"}
-  ],
-  "ai_notes": "Brief notes about the plan..."
-}
-`;
+Keep meal names short. Include 3 meals per day. Focus on high-protein foods. No instructions needed.`;
   }
 
   private buildAdjustmentPrompt(plan: WeekPlan, feedback: PlanFeedback): string {
@@ -562,24 +514,6 @@ Return JSON with the replacement meal(s) or adjusted plan section.
 // System Prompts
 // ==========================================================================
 
-const MEAL_PLAN_SYSTEM_PROMPT = `You are an expert nutritionist and meal planner for the Heirclark fitness platform.
-
-Your role is to create personalized, practical meal plans that:
-1. Meet exact macro and calorie targets (within 5% tolerance)
-2. Use whole, nutritious foods with high protein sources
-3. Balance variety and practicality (some meal prep, some quick meals)
-4. Consider budget constraints when specified
-5. Accommodate dietary restrictions and allergies strictly
-
-Guidelines:
-- Prioritize lean proteins: chicken breast, turkey, fish, Greek yogurt, eggs, tofu
-- Include fiber-rich vegetables at every meal
-- Use complex carbs: oats, brown rice, quinoa, sweet potato
-- Include healthy fats: avocado, olive oil, nuts in moderation
-- Keep sodium reasonable (<2500mg/day)
-- Make weekday breakfasts quick (<15 min prep)
-- Allow more elaborate cooking on weekends
-
-Always return valid JSON matching the requested structure.`;
+const MEAL_PLAN_SYSTEM_PROMPT = `Expert nutritionist creating meal plans. Meet macro targets within 5%. Use lean proteins (chicken, fish, eggs, Greek yogurt), vegetables, complex carbs. Return valid JSON only.`;
 
 export default MealPlanAIService;
