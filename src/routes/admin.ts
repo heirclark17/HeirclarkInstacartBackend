@@ -337,13 +337,14 @@ async function seedUSDAFoodsBackground(pool: Pool, dataType: string, maxPages: n
 // Onboarding Program Seeder
 // ==========================================================================
 async function seedOnboardingProgram(pool: Pool): Promise<{ program_id: string; tasks_created: number }> {
-  // First, check if program already exists
+  // First, check if ANY onboarding program already exists (by type OR slug)
   const existingProgram = await pool.query(
-    `SELECT id FROM hc_programs WHERE slug = 'nutrition-foundations-7day'`
+    `SELECT id FROM hc_programs WHERE type = 'onboarding' OR slug = 'nutrition-foundations-7day' LIMIT 1`
   );
 
   if (existingProgram.rows.length > 0) {
     const programId = existingProgram.rows[0].id;
+    console.log(`[Admin] Found existing onboarding program: ${programId}`);
 
     // Check if there are any enrollments
     const enrollments = await pool.query(
@@ -351,11 +352,14 @@ async function seedOnboardingProgram(pool: Pool): Promise<{ program_id: string; 
       [programId]
     );
 
-    if (parseInt(enrollments.rows[0].count) > 0) {
+    const enrollmentCount = parseInt(enrollments.rows[0].count);
+    console.log(`[Admin] Program has ${enrollmentCount} enrollments`);
+
+    if (enrollmentCount > 0) {
       // Update existing program and tasks instead of deleting
       console.log('[Admin] Program has enrollments, updating existing tasks...');
       await pool.query(`DELETE FROM hc_tasks WHERE program_id = $1`, [programId]);
-      // Return the existing program ID for task insertion
+      // Seed tasks for the existing program
       return await updateAndSeedTasks(pool, programId);
     }
 
