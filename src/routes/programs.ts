@@ -764,6 +764,116 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // GET /api/v1/programs/by-slug/:slug
+  // Get program by slug (e.g., "nutrition-foundations-7day")
+  // ==========================================================================
+  router.get('/by-slug/:slug', async (req: Request, res: Response) => {
+    try {
+      const { slug } = req.params;
+      const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
+
+      // Get program by slug
+      const programResult = await pool.query(`
+        SELECT
+          id, type, name, slug, description, category, difficulty,
+          duration_days, is_default_onboarding, is_active,
+          target_audience, prerequisites, learning_objectives,
+          methodology, estimated_daily_minutes, thumbnail_url,
+          coach_name, created_at
+        FROM hc_programs
+        WHERE slug = $1
+      `, [slug]);
+
+      if (programResult.rows.length === 0) {
+        return res.status(404).json({
+          ok: false,
+          error: 'Program not found',
+        });
+      }
+
+      const program = programResult.rows[0];
+
+      // Parse JSON fields
+      program.target_audience = program.target_audience || [];
+      program.prerequisites = program.prerequisites || [];
+      program.learning_objectives = program.learning_objectives || [];
+
+      // Get task counts by day
+      const taskCountsResult = await pool.query(`
+        SELECT day_number, COUNT(*) as task_count,
+               SUM(points_value) as total_points,
+               SUM(estimated_minutes) as estimated_minutes
+        FROM hc_tasks
+        WHERE program_id = $1
+        GROUP BY day_number
+        ORDER BY day_number
+      `, [program.id]);
+
+      const days = taskCountsResult.rows.map(row => ({
+        day: row.day_number,
+        task_count: parseInt(row.task_count),
+        total_points: parseInt(row.total_points) || 0,
+        estimated_minutes: parseInt(row.estimated_minutes) || 0,
+      }));
+
+      // Get user enrollment status if userId provided
+      let enrollment = null;
+      let userProgress = null;
+
+      if (userId) {
+        const enrollmentResult = await pool.query(`
+          SELECT id, status, started_at, completed_at, current_day,
+                 tasks_completed, points_earned, streak_days
+          FROM hc_program_enrollments
+          WHERE user_id = $1 AND program_id = $2
+        `, [userId, program.id]);
+
+        if (enrollmentResult.rows.length > 0) {
+          enrollment = enrollmentResult.rows[0];
+
+          // Get completed task IDs
+          const completedResult = await pool.query(`
+            SELECT task_id, day FROM hc_program_task_responses
+            WHERE enrollment_id = $1 AND completed = true
+          `, [enrollment.id]);
+
+          userProgress = {
+            completed_task_ids: completedResult.rows.map(r => r.task_id),
+            completed_by_day: completedResult.rows.reduce((acc: Record<number, string[]>, r: any) => {
+              if (!acc[r.day]) acc[r.day] = [];
+              acc[r.day].push(r.task_id);
+              return acc;
+            }, {}),
+          };
+        }
+      }
+
+      // Calculate totals
+      const totalTasks = days.reduce((sum, d) => sum + d.task_count, 0);
+      const totalPoints = days.reduce((sum, d) => sum + d.total_points, 0);
+      const totalMinutes = days.reduce((sum, d) => sum + d.estimated_minutes, 0);
+
+      return res.json({
+        ok: true,
+        data: {
+          program: {
+            ...program,
+            total_tasks: totalTasks,
+            total_points: totalPoints,
+            total_estimated_minutes: totalMinutes,
+          },
+          days,
+          enrollment,
+          user_progress: userProgress,
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Get by slug error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to get program' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/:programId/days/:day/tasks
   // Get tasks for a specific day of a program
   // ==========================================================================
