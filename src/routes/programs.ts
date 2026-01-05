@@ -764,6 +764,110 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // GET /api/v1/programs/streak-milestones
+  // View streak milestones and progress
+  // ==========================================================================
+  router.get('/streak-milestones', async (req: Request, res: Response) => {
+    try {
+      const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      // All streak milestones
+      const allMilestones = [
+        { days: 3, points: 25, name: '3-Day Streak', icon: '🔥' },
+        { days: 7, points: 50, name: 'Week Warrior', icon: '⚔️' },
+        { days: 14, points: 100, name: 'Two Week Champion', icon: '🏆' },
+        { days: 21, points: 150, name: 'Three Week Master', icon: '🎯' },
+        { days: 30, points: 250, name: 'Monthly Legend', icon: '👑' },
+        { days: 60, points: 500, name: 'Two Month Hero', icon: '🦸' },
+        { days: 90, points: 750, name: 'Quarter Year Elite', icon: '💎' },
+        { days: 365, points: 2000, name: 'Year of Dedication', icon: '🌟' },
+      ];
+
+      // Get user's current streak from their enrollments
+      const streakResult = await pool.query(`
+        SELECT
+          MAX(streak_days) as current_streak,
+          MAX(longest_streak) as longest_streak,
+          MAX(last_activity_date) as last_activity
+        FROM hc_program_enrollments
+        WHERE user_id = $1
+      `, [userId]);
+
+      const currentStreak = streakResult.rows[0]?.current_streak || 0;
+      const longestStreak = streakResult.rows[0]?.longest_streak || 0;
+      const lastActivity = streakResult.rows[0]?.last_activity;
+
+      // Check if streak is still active (last activity was today or yesterday)
+      let isStreakActive = false;
+      if (lastActivity) {
+        const lastDate = new Date(lastActivity);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        lastDate.setHours(0, 0, 0, 0);
+
+        isStreakActive = lastDate.getTime() >= yesterday.getTime();
+      }
+
+      // Categorize milestones
+      const achieved = allMilestones.filter(m => longestStreak >= m.days).map(m => ({
+        ...m,
+        achieved_at: longestStreak >= m.days ? 'achieved' : null,
+        status: 'achieved',
+      }));
+
+      const upcoming = allMilestones.filter(m => longestStreak < m.days).map(m => ({
+        ...m,
+        days_remaining: m.days - currentStreak,
+        progress_percent: Math.min(100, Math.round((currentStreak / m.days) * 100)),
+        status: currentStreak > 0 && m.days === allMilestones.find(am => am.days > currentStreak)?.days
+          ? 'next'
+          : 'upcoming',
+      }));
+
+      // Find next milestone
+      const nextMilestone = upcoming.find(m => m.status === 'next') || upcoming[0] || null;
+
+      // Calculate total points earned from milestones
+      const totalMilestonePoints = achieved.reduce((sum, m) => sum + m.points, 0);
+      const totalPossiblePoints = allMilestones.reduce((sum, m) => sum + m.points, 0);
+
+      return res.json({
+        ok: true,
+        data: {
+          current_streak: isStreakActive ? currentStreak : 0,
+          longest_streak: longestStreak,
+          is_streak_active: isStreakActive,
+          last_activity: lastActivity,
+          milestones: {
+            achieved,
+            upcoming,
+            next: nextMilestone,
+          },
+          points: {
+            earned_from_milestones: totalMilestonePoints,
+            total_possible: totalPossiblePoints,
+            remaining: totalPossiblePoints - totalMilestonePoints,
+          },
+          summary: {
+            milestones_achieved: achieved.length,
+            milestones_remaining: upcoming.length,
+            total_milestones: allMilestones.length,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Streak milestones error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to get streak milestones' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/available
   // List all available programs
   // ==========================================================================
