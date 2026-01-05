@@ -7,6 +7,7 @@
     "migrate": "node dist/db/migrate.js",
     "migrate:product": "node dist/db/migrations/runProductMigrations.js",
     "seed:usda": "node dist/scripts/seed-usda-foods.js",
+    "seed:onboarding": "node dist/scripts/seed-onboarding-program.js",
     "start": "node dist/index.js",
     "rag:seed": "npx ts-node scripts/rag-seed.ts",
     "rag:fetch": "npx ts-node scripts/rag-fetch-nutrition-data.ts",
