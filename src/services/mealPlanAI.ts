@@ -151,7 +151,7 @@ export class MealPlanAIService {
 
     try {
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-mini',
         messages: [
           {
             role: 'system',
@@ -197,7 +197,7 @@ export class MealPlanAIService {
 
     try {
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-mini',
         messages: [
           {
             role: 'system',
@@ -260,7 +260,7 @@ Write a 2-3 paragraph explanation that:
 
     try {
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-mini',
         messages: [
           {
             role: 'system',
