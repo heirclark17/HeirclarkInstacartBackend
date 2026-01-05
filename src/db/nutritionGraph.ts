@@ -208,15 +208,14 @@ export class NutritionGraphDB {
     const params: any[] = [];
     let paramIndex = 1;
 
-    // Text search with trigram similarity
+    // Text search with ILIKE (simple but reliable)
     if (filters.query && filters.query.trim()) {
       conditions.push(`(
-        name_normalized % $${paramIndex}
-        OR name_normalized ILIKE $${paramIndex + 1}
-        OR brand ILIKE $${paramIndex + 1}
+        name ILIKE $${paramIndex}
+        OR brand ILIKE $${paramIndex}
       )`);
-      params.push(filters.query.toLowerCase(), `%${filters.query}%`);
-      paramIndex += 2;
+      params.push(`%${filters.query}%`);
+      paramIndex++;
     }
 
     // Category filter
@@ -292,11 +291,7 @@ export class NutritionGraphDB {
     const total = parseInt(countResult.rows[0].count, 10);
 
     // Determine sort order
-    let orderBy = 'quality_score DESC, name ASC';
-    if (filters.query) {
-      // Sort by similarity when searching
-      orderBy = `similarity(name_normalized, $1) DESC, quality_score DESC`;
-    }
+    const orderBy = 'quality_score DESC, name ASC';
 
     // Main query with pagination
     const offset = (page - 1) * pageSize;
