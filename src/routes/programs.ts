@@ -764,6 +764,135 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // GET /api/v1/programs/available
+  // List all available programs
+  // ==========================================================================
+  router.get('/available', async (req: Request, res: Response) => {
+    try {
+      const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
+      const category = req.query.category as string;
+      const difficulty = req.query.difficulty as string;
+
+      // Build query
+      let query = `
+        SELECT
+          p.id,
+          p.type,
+          p.name,
+          p.slug,
+          p.description,
+          p.category,
+          p.difficulty,
+          p.duration_days,
+          p.is_default_onboarding,
+          p.target_audience,
+          p.learning_objectives,
+          p.methodology,
+          p.estimated_daily_minutes,
+          p.thumbnail_url,
+          p.coach_name,
+          p.created_at
+        FROM hc_programs p
+        WHERE p.is_active = true
+      `;
+      const params: any[] = [];
+      let paramIndex = 1;
+
+      if (category) {
+        query += ` AND p.category = $${paramIndex}`;
+        params.push(category);
+        paramIndex++;
+      }
+
+      if (difficulty) {
+        query += ` AND p.difficulty = $${paramIndex}`;
+        params.push(difficulty);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY p.is_default_onboarding DESC, p.created_at ASC`;
+
+      const programsResult = await pool.query(query, params);
+
+      // Get task counts and user enrollment status for each program
+      const programs = await Promise.all(programsResult.rows.map(async (program) => {
+        // Get task summary
+        const taskSummary = await pool.query(`
+          SELECT
+            COUNT(*) as total_tasks,
+            SUM(points_value) as total_points,
+            SUM(estimated_minutes) as total_minutes
+          FROM hc_tasks
+          WHERE program_id = $1
+        `, [program.id]);
+
+        const summary = taskSummary.rows[0];
+
+        // Check user enrollment if userId provided
+        let enrollment = null;
+        if (userId) {
+          const enrollmentResult = await pool.query(`
+            SELECT id, status, tasks_completed, points_earned, completion_rate
+            FROM hc_program_enrollments
+            WHERE user_id = $1 AND program_id = $2
+          `, [userId, program.id]);
+
+          if (enrollmentResult.rows.length > 0) {
+            enrollment = enrollmentResult.rows[0];
+          }
+        }
+
+        return {
+          id: program.id,
+          type: program.type,
+          name: program.name,
+          slug: program.slug,
+          description: program.description,
+          category: program.category,
+          difficulty: program.difficulty,
+          duration_days: program.duration_days,
+          is_default_onboarding: program.is_default_onboarding,
+          target_audience: program.target_audience || [],
+          learning_objectives: program.learning_objectives || [],
+          methodology: program.methodology,
+          estimated_daily_minutes: program.estimated_daily_minutes,
+          thumbnail_url: program.thumbnail_url,
+          coach_name: program.coach_name,
+          total_tasks: parseInt(summary.total_tasks) || 0,
+          total_points: parseInt(summary.total_points) || 0,
+          total_estimated_minutes: parseInt(summary.total_minutes) || 0,
+          user_enrollment: enrollment,
+        };
+      }));
+
+      // Separate into categories
+      const onboarding = programs.filter(p => p.is_default_onboarding || p.category === 'onboarding');
+      const other = programs.filter(p => !p.is_default_onboarding && p.category !== 'onboarding');
+
+      // Get unique categories and difficulties for filtering
+      const categories = [...new Set(programs.map(p => p.category).filter(Boolean))];
+      const difficulties = [...new Set(programs.map(p => p.difficulty).filter(Boolean))];
+
+      return res.json({
+        ok: true,
+        data: {
+          programs,
+          onboarding,
+          other,
+          filters: {
+            categories,
+            difficulties,
+          },
+          total: programs.length,
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] List available error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to list programs' });
+    }
+  });
+
+  // ==========================================================================
   // PATCH /api/v1/programs/enrollments/:enrollmentId
   // Pause or resume an enrollment
   // ==========================================================================
