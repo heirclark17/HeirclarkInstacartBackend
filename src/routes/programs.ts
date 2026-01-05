@@ -764,6 +764,133 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // GET /api/v1/programs/:programId/days/:day/tasks
+  // Get tasks for a specific day of a program
+  // ==========================================================================
+  router.get('/:programId/days/:day/tasks', async (req: Request, res: Response) => {
+    try {
+      const { programId, day } = req.params;
+      const dayNumber = parseInt(day);
+
+      if (isNaN(dayNumber) || dayNumber < 1) {
+        return res.status(400).json({ ok: false, error: 'Invalid day number' });
+      }
+
+      // Get tasks from hc_tasks table
+      const result = await pool.query(`
+        SELECT
+          id,
+          task_order,
+          day_number,
+          task_type,
+          title,
+          content,
+          points_value,
+          action_type,
+          quiz_questions,
+          estimated_minutes
+        FROM hc_tasks
+        WHERE program_id = $1 AND day_number = $2
+        ORDER BY task_order ASC
+      `, [programId, dayNumber]);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          ok: false,
+          error: 'No tasks found for this day'
+        });
+      }
+
+      // Parse quiz_questions JSON if present
+      const tasks = result.rows.map(task => ({
+        ...task,
+        quiz_questions: task.quiz_questions ?
+          (typeof task.quiz_questions === 'string' ?
+            JSON.parse(task.quiz_questions) : task.quiz_questions) : null
+      }));
+
+      return res.json({
+        ok: true,
+        data: {
+          program_id: programId,
+          day: dayNumber,
+          tasks,
+          total_points: tasks.reduce((sum: number, t: any) => sum + (t.points_value || 0), 0),
+          estimated_minutes: tasks.reduce((sum: number, t: any) => sum + (t.estimated_minutes || 0), 0),
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Get day tasks error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to get tasks' });
+    }
+  });
+
+  // ==========================================================================
+  // GET /api/v1/programs/:programId/tasks
+  // Get all tasks for a program (organized by day)
+  // ==========================================================================
+  router.get('/:programId/tasks', async (req: Request, res: Response) => {
+    try {
+      const { programId } = req.params;
+
+      // Get all tasks for the program
+      const result = await pool.query(`
+        SELECT
+          id,
+          task_order,
+          day_number,
+          task_type,
+          title,
+          content,
+          points_value,
+          action_type,
+          quiz_questions,
+          estimated_minutes
+        FROM hc_tasks
+        WHERE program_id = $1
+        ORDER BY day_number ASC, task_order ASC
+      `, [programId]);
+
+      // Parse quiz_questions and organize by day
+      const tasksByDay: Record<number, any[]> = {};
+
+      for (const task of result.rows) {
+        const dayNum = task.day_number;
+        if (!tasksByDay[dayNum]) {
+          tasksByDay[dayNum] = [];
+        }
+        tasksByDay[dayNum].push({
+          ...task,
+          quiz_questions: task.quiz_questions ?
+            (typeof task.quiz_questions === 'string' ?
+              JSON.parse(task.quiz_questions) : task.quiz_questions) : null
+        });
+      }
+
+      // Convert to array format
+      const days = Object.entries(tasksByDay).map(([day, tasks]) => ({
+        day: parseInt(day),
+        tasks,
+        total_points: tasks.reduce((sum: number, t: any) => sum + (t.points_value || 0), 0),
+        estimated_minutes: tasks.reduce((sum: number, t: any) => sum + (t.estimated_minutes || 0), 0),
+      }));
+
+      return res.json({
+        ok: true,
+        data: {
+          program_id: programId,
+          total_days: days.length,
+          total_tasks: result.rows.length,
+          days,
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Get all tasks error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to get tasks' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/:programId
   // Get program details
   // ==========================================================================
