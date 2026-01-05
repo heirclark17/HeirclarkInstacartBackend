@@ -130,6 +130,11 @@ export function createAdminRouter(pool: Pool): Router {
         ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS points_awarded INTEGER DEFAULT 0;
       `);
 
+      // Add last_activity_date for streak tracking
+      await pool.query(`
+        ALTER TABLE hc_program_enrollments ADD COLUMN IF NOT EXISTS last_activity_date DATE;
+      `);
+
       console.log('[Admin] Programs migration complete');
 
       return res.json({

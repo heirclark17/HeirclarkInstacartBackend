@@ -1601,16 +1601,70 @@ export function createProgramsRouter(pool: Pool): Router {
       const pointsAwarded = task.points_value || 0;
       const newTotalPoints = currentPoints + pointsAwarded;
 
-      // Update enrollment stats
+      // Calculate streak
+      const streakResult = await pool.query(`
+        SELECT
+          streak_days,
+          longest_streak,
+          last_activity_date
+        FROM hc_program_enrollments
+        WHERE id = $1
+      `, [enrollmentId]);
+
+      let currentStreak = streakResult.rows[0]?.streak_days || 0;
+      let longestStreak = streakResult.rows[0]?.longest_streak || 0;
+      const lastActivityDate = streakResult.rows[0]?.last_activity_date;
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      let streakUpdated = false;
+      let streakBroken = false;
+
+      if (lastActivityDate) {
+        const lastDate = new Date(lastActivityDate);
+        lastDate.setHours(0, 0, 0, 0);
+
+        if (lastDate.getTime() === today.getTime()) {
+          // Already completed something today - streak stays the same
+          streakUpdated = false;
+        } else if (lastDate.getTime() === yesterday.getTime()) {
+          // Completed yesterday - increment streak
+          currentStreak += 1;
+          streakUpdated = true;
+        } else {
+          // Missed a day - reset streak to 1
+          streakBroken = currentStreak > 0;
+          currentStreak = 1;
+          streakUpdated = true;
+        }
+      } else {
+        // First activity ever - start streak at 1
+        currentStreak = 1;
+        streakUpdated = true;
+      }
+
+      // Update longest streak if current exceeds it
+      if (currentStreak > longestStreak) {
+        longestStreak = currentStreak;
+      }
+
+      // Update enrollment stats with streak
       await pool.query(`
         UPDATE hc_program_enrollments
         SET
           points_earned = $1,
           tasks_completed = tasks_completed + 1,
           total_time_spent_minutes = total_time_spent_minutes + $2,
+          streak_days = $3,
+          longest_streak = $4,
+          last_activity_date = CURRENT_DATE,
           updated_at = NOW()
-        WHERE id = $3
-      `, [newTotalPoints, Math.ceil((time_spent_seconds || 0) / 60), enrollmentId]);
+        WHERE id = $5
+      `, [newTotalPoints, Math.ceil((time_spent_seconds || 0) / 60), currentStreak, longestStreak, enrollmentId]);
 
       // Check if day is complete
       const dayTasksResult = await pool.query(`
@@ -1657,6 +1711,12 @@ export function createProgramsRouter(pool: Pool): Router {
             tasks_completed: completedDayTasks,
             total_tasks: totalDayTasks,
             day_complete: dayComplete,
+          },
+          streak: {
+            current: currentStreak,
+            longest: longestStreak,
+            updated: streakUpdated,
+            broken: streakBroken,
           },
           program_complete: programComplete,
         },
