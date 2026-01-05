@@ -343,9 +343,25 @@ async function seedOnboardingProgram(pool: Pool): Promise<{ program_id: string; 
   );
 
   if (existingProgram.rows.length > 0) {
-    // Delete existing tasks and program to reseed
-    await pool.query(`DELETE FROM hc_tasks WHERE program_id = $1`, [existingProgram.rows[0].id]);
-    await pool.query(`DELETE FROM hc_programs WHERE id = $1`, [existingProgram.rows[0].id]);
+    const programId = existingProgram.rows[0].id;
+
+    // Check if there are any enrollments
+    const enrollments = await pool.query(
+      `SELECT COUNT(*) FROM hc_program_enrollments WHERE program_id = $1`,
+      [programId]
+    );
+
+    if (parseInt(enrollments.rows[0].count) > 0) {
+      // Update existing program and tasks instead of deleting
+      console.log('[Admin] Program has enrollments, updating existing tasks...');
+      await pool.query(`DELETE FROM hc_tasks WHERE program_id = $1`, [programId]);
+      // Return the existing program ID for task insertion
+      return await updateAndSeedTasks(pool, programId);
+    }
+
+    // No enrollments, safe to delete and recreate
+    await pool.query(`DELETE FROM hc_tasks WHERE program_id = $1`, [programId]);
+    await pool.query(`DELETE FROM hc_programs WHERE id = $1`, [programId]);
     console.log('[Admin] Deleted existing onboarding program for reseed');
   }
 
@@ -849,6 +865,144 @@ Final quiz to cement your knowledge!
   );
 
   console.log(`[Admin] Onboarding program seeded: ${taskCount.rows[0].count} tasks`);
+
+  return {
+    program_id: programId,
+    tasks_created: parseInt(taskCount.rows[0].count),
+  };
+}
+
+// Helper to seed tasks for an existing program (when enrollments exist)
+async function updateAndSeedTasks(pool: Pool, programId: string): Promise<{ program_id: string; tasks_created: number }> {
+  let taskOrder = 1;
+
+  // Day 1 Tasks
+  await insertTask(pool, programId, taskOrder++, 1, 'lesson', 'Welcome to Your Nutrition Journey', `
+# Welcome to Nutrition Foundations
+
+You're about to transform your relationship with food. This science-backed program uses cognitive behavioral techniques to build lasting habits.
+
+## Why Tracking Matters
+
+Research shows that people who track their food intake are **2x more likely** to reach their health goals.
+
+## This Week You'll Learn
+- Protein optimization
+- Calorie awareness
+- Habit building
+- Mindful eating
+- Meal planning
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 1, 'action', 'Log Your First Meal', 'Record what you ate for your most recent meal.', 20, 'log_food');
+  await insertTask(pool, programId, taskOrder++, 1, 'reflection', 'First Logging Reflection', 'What surprised you about logging your first meal?', 15);
+
+  // Day 2 Tasks
+  await insertTask(pool, programId, taskOrder++, 2, 'lesson', 'The Power of Protein', `
+# Protein: Your Body's Building Block
+
+Protein is the most important macronutrient for body transformation.
+
+## Why Protein Matters
+- Builds and repairs muscle tissue
+- Keeps you feeling full longer
+- Burns more calories during digestion
+- Preserves muscle when losing weight
+
+## How Much Do You Need?
+**0.7-1g per pound of body weight** if you're active.
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 2, 'action', 'Log All Meals Today', 'Track everything you eat today and check your protein total.', 25, 'log_food');
+  await insertTask(pool, programId, taskOrder++, 2, 'reflection', 'Protein Check-In', 'How much protein did you eat? Were you surprised?', 15);
+
+  // Day 3 Tasks
+  await insertTask(pool, programId, taskOrder++, 3, 'lesson', 'Understanding Calories', `
+# Calories: The Energy Equation
+
+- **Calories in < Calories out** = Weight loss
+- **Calories in > Calories out** = Weight gain
+- **Calories in = Calories out** = Maintenance
+
+A sustainable deficit: 300-500 calories below maintenance = 1 pound lost per week.
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 3, 'action', 'Set Your Goals', 'Enter your weight, height, and activity level to get personalized targets.', 20, 'set_goals');
+  await insertTask(pool, programId, taskOrder++, 3, 'reflection', 'Energy Awareness', 'How did your actual intake compare to your target?', 15);
+
+  // Day 4 Tasks
+  await insertTask(pool, programId, taskOrder++, 4, 'lesson', 'Building Habits', `
+# The Habit Loop
+
+Every habit has three parts:
+1. **Cue** - The trigger
+2. **Routine** - The behavior
+3. **Reward** - The benefit
+
+For tracking: Sitting down to eat (cue) → Log your meal (routine) → See your progress (reward)
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 4, 'action', 'Design Your Tracking Habit', 'Choose your cue, routine, and reward for food tracking.', 20, 'create_habit');
+  await insertTask(pool, programId, taskOrder++, 4, 'reflection', 'Habit Design', 'What cue will trigger your tracking habit?', 15);
+
+  // Day 5 Tasks
+  await insertTask(pool, programId, taskOrder++, 5, 'lesson', 'Mindful Eating', `
+# Beyond the Numbers
+
+**Hunger Scale (1-10):**
+- 1-2: Starving
+- 3-4: Very hungry
+- 5-6: Comfortable
+- 7-8: Full
+- 9-10: Stuffed
+
+**Aim to:** Start eating at 3-4, stop at 6-7
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 5, 'action', 'Mindful Meal', 'Rate your hunger before and after your next meal.', 20, 'mindful_meal');
+  await insertTask(pool, programId, taskOrder++, 5, 'reflection', 'Body Awareness', 'What did you notice about your hunger patterns?', 15);
+
+  // Day 6 Tasks
+  await insertTask(pool, programId, taskOrder++, 6, 'lesson', 'Planning Ahead', `
+# The Power of Planning
+
+**Why planning works:**
+- Removes decision fatigue
+- Ensures right foods available
+- Prevents impulsive choices
+- Saves time and money
+
+**The 80/20 rule:** Plan 80% of meals, leave 20% for flexibility.
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 6, 'action', 'Plan Tomorrow', 'Use the meal planner to plan all meals for tomorrow.', 25, 'create_meal_plan');
+  await insertTask(pool, programId, taskOrder++, 6, 'reflection', 'Planning Reflection', 'How does having a plan make you feel?', 15);
+
+  // Day 7 Tasks
+  await insertTask(pool, programId, taskOrder++, 7, 'lesson', 'Congratulations!', `
+# You Did It!
+
+**What you've accomplished:**
+- Logged your first meals
+- Learned about protein and calories
+- Built a tracking habit
+- Practiced mindful eating
+- Planned ahead for success
+
+People who track for 7+ days are **3x more likely** to reach their goals. You're now part of that group!
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 7, 'action', 'Review Your Week', 'Look at your nutrition summary for the past 7 days.', 20, 'view_summary');
+  await insertTask(pool, programId, taskOrder++, 7, 'action', 'Set Your Next Goal', 'Set one specific goal for the next 30 days.', 20, 'set_goal');
+  await insertTask(pool, programId, taskOrder++, 7, 'reflection', 'Final Reflection', 'What was your biggest insight this week?', 25);
+
+  // Get task count
+  const taskCount = await pool.query(
+    `SELECT COUNT(*) FROM hc_tasks WHERE program_id = $1`,
+    [programId]
+  );
+
+  console.log(`[Admin] Updated onboarding tasks: ${taskCount.rows[0].count} tasks`);
 
   return {
     program_id: programId,
