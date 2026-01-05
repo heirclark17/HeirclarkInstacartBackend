@@ -403,6 +403,12 @@ Return JSON with the replacement meal(s) or adjusted plan section.
 
     const groceryList = Array.from(groceryMap.values());
 
+    // Enrich grocery list with store mappings and prices
+    await this.enrichGroceryListWithStoreMappings(groceryList);
+
+    // Calculate weekly cost
+    const weeklyPrice = groceryList.reduce((sum, item) => sum + (item.price_cents || 0), 0);
+
     return {
       id: crypto.randomUUID(),
       created_at: new Date(),
@@ -410,6 +416,7 @@ Return JSON with the replacement meal(s) or adjusted plan section.
       budget,
       days,
       weekly_totals: weeklyTotals,
+      weekly_cost_cents: weeklyPrice > 0 ? weeklyPrice : undefined,
       grocery_list: groceryList,
       ai_notes: rawPlan.ai_notes || 'AI-generated meal plan',
     };
@@ -467,30 +474,108 @@ Return JSON with the replacement meal(s) or adjusted plan section.
     return 'Other';
   }
 
+  private async enrichGroceryListWithStoreMappings(
+    groceryList: GroceryListItem[]
+  ): Promise<void> {
+    // Price estimates per unit (in cents) for common grocery items
+    const priceEstimates: Record<string, { price_cents: number; unit: string; instacart_name: string }> = {
+      'chicken breast': { price_cents: 899, unit: 'lb', instacart_name: 'Boneless Skinless Chicken Breast' },
+      'salmon fillet': { price_cents: 1299, unit: 'lb', instacart_name: 'Atlantic Salmon Fillet' },
+      'ground turkey': { price_cents: 699, unit: 'lb', instacart_name: 'Lean Ground Turkey' },
+      'shrimp': { price_cents: 1199, unit: 'lb', instacart_name: 'Large Shrimp Peeled & Deveined' },
+      'eggs': { price_cents: 499, unit: 'dozen', instacart_name: 'Large Grade A Eggs' },
+      'greek yogurt': { price_cents: 599, unit: '32oz', instacart_name: 'Plain Greek Yogurt' },
+      'cottage cheese': { price_cents: 449, unit: '16oz', instacart_name: 'Low Fat Cottage Cheese' },
+      'tofu': { price_cents: 299, unit: '14oz', instacart_name: 'Firm Tofu' },
+      'beef': { price_cents: 999, unit: 'lb', instacart_name: 'Ground Beef 85% Lean' },
+      'rice': { price_cents: 399, unit: '2lb', instacart_name: 'Long Grain White Rice' },
+      'quinoa': { price_cents: 599, unit: '12oz', instacart_name: 'Organic Quinoa' },
+      'pasta': { price_cents: 199, unit: '16oz', instacart_name: 'Whole Wheat Penne Pasta' },
+      'oats': { price_cents: 449, unit: '42oz', instacart_name: 'Old Fashioned Rolled Oats' },
+      'whole grain bread': { price_cents: 449, unit: 'loaf', instacart_name: 'Whole Wheat Bread' },
+      'sweet potato': { price_cents: 199, unit: 'lb', instacart_name: 'Sweet Potatoes' },
+      'mixed greens': { price_cents: 499, unit: '5oz', instacart_name: 'Organic Spring Mix' },
+      'broccoli': { price_cents: 299, unit: 'lb', instacart_name: 'Fresh Broccoli Crowns' },
+      'mixed vegetables': { price_cents: 349, unit: '12oz', instacart_name: 'Frozen Mixed Vegetables' },
+      'spinach': { price_cents: 399, unit: '5oz', instacart_name: 'Baby Spinach' },
+      'mixed berries': { price_cents: 599, unit: '12oz', instacart_name: 'Frozen Mixed Berries' },
+      'banana': { price_cents: 59, unit: 'each', instacart_name: 'Organic Bananas' },
+      'avocado': { price_cents: 199, unit: 'each', instacart_name: 'Hass Avocados' },
+    };
+
+    for (const item of groceryList) {
+      const itemNameLower = item.name.toLowerCase();
+
+      // First try to find in nutrition database
+      try {
+        const searchResult = await this.nutritionDB.searchFoods({
+          query: item.name,
+        }, 1, 1);
+
+        if (searchResult.foods.length > 0) {
+          const food = searchResult.foods[0];
+          item.food_id = food.id;
+
+          // Check for store mapping
+          if (food.store_mappings && food.store_mappings.length > 0) {
+            const mapping = food.store_mappings[0];
+            item.price_cents = mapping.price_cents;
+            item.store = mapping.store;
+            item.instacart_product_id = mapping.product_id;
+            continue;
+          }
+        }
+      } catch (err) {
+        // Continue with price estimation
+      }
+
+      // Fall back to price estimates
+      for (const [key, estimate] of Object.entries(priceEstimates)) {
+        if (itemNameLower.includes(key) || key.includes(itemNameLower)) {
+          // Calculate price based on quantity
+          let priceCents = estimate.price_cents;
+
+          // Adjust for quantity (rough estimates)
+          if (item.unit === 'g') {
+            // Convert grams to typical package size price
+            if (itemNameLower.includes('chicken') || itemNameLower.includes('beef') ||
+                itemNameLower.includes('turkey') || itemNameLower.includes('salmon') ||
+                itemNameLower.includes('shrimp')) {
+              // Protein: ~$9-13/lb, item.total_amount in grams
+              priceCents = Math.round((item.total_amount / 454) * estimate.price_cents);
+            } else if (itemNameLower.includes('yogurt') || itemNameLower.includes('cheese')) {
+              // Dairy: use base price for typical container
+              priceCents = estimate.price_cents;
+            } else {
+              // Vegetables/grains: scale by weight
+              priceCents = Math.round((item.total_amount / 400) * estimate.price_cents);
+            }
+          } else if (item.unit === 'large' && itemNameLower.includes('egg')) {
+            // Eggs: price per dozen, adjust for quantity
+            priceCents = Math.round((item.total_amount / 12) * estimate.price_cents);
+          }
+
+          item.price_cents = Math.max(priceCents, 99); // Minimum 99 cents
+          item.store = 'instacart';
+          item.instacart_product_id = `est_${key.replace(/\s+/g, '_')}`;
+          break;
+        }
+      }
+
+      // Default price if no match found
+      if (!item.price_cents) {
+        item.price_cents = 399; // Default $3.99
+        item.store = 'instacart';
+      }
+    }
+  }
+
   private async enrichGroceryListWithPrices(
     groceryList: GroceryListItem[],
     stores: string[]
   ): Promise<void> {
-    for (const item of groceryList) {
-      // Try to find in our nutrition database with store mapping
-      const searchResult = await this.nutritionDB.searchFoods({
-        query: item.name,
-        has_store_mapping: true,
-        store: stores[0],
-      }, 1, 1);
-
-      if (searchResult.foods.length > 0) {
-        const food = searchResult.foods[0];
-        item.food_id = food.id;
-
-        const storeMapping = food.store_mappings?.find(m => stores.includes(m.store));
-        if (storeMapping) {
-          item.price_cents = storeMapping.price_cents;
-          item.store = storeMapping.store;
-          item.instacart_product_id = storeMapping.product_id;
-        }
-      }
-    }
+    // Deprecated - use enrichGroceryListWithStoreMappings instead
+    await this.enrichGroceryListWithStoreMappings(groceryList);
   }
 
   private applyAdjustment(
