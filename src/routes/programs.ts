@@ -1652,6 +1652,35 @@ export function createProgramsRouter(pool: Pool): Router {
         longestStreak = currentStreak;
       }
 
+      // Check for streak milestone bonus points
+      const streakMilestones: Record<number, { points: number; name: string }> = {
+        3: { points: 25, name: '3-Day Streak' },
+        7: { points: 50, name: 'Week Warrior' },
+        14: { points: 100, name: 'Two Week Champion' },
+        21: { points: 150, name: 'Three Week Master' },
+        30: { points: 250, name: 'Monthly Legend' },
+        60: { points: 500, name: 'Two Month Hero' },
+        90: { points: 750, name: 'Quarter Year Elite' },
+        365: { points: 2000, name: 'Year of Dedication' },
+      };
+
+      let streakBonus = 0;
+      let streakMilestone: { days: number; points: number; name: string } | null = null;
+
+      // Only award milestone if streak was updated (not same day)
+      if (streakUpdated && streakMilestones[currentStreak]) {
+        const milestone = streakMilestones[currentStreak];
+        streakBonus = milestone.points;
+        streakMilestone = {
+          days: currentStreak,
+          points: milestone.points,
+          name: milestone.name,
+        };
+      }
+
+      // Add streak bonus to total points
+      const finalTotalPoints = newTotalPoints + streakBonus;
+
       // Update enrollment stats with streak
       await pool.query(`
         UPDATE hc_program_enrollments
@@ -1664,7 +1693,7 @@ export function createProgramsRouter(pool: Pool): Router {
           last_activity_date = CURRENT_DATE,
           updated_at = NOW()
         WHERE id = $5
-      `, [newTotalPoints, Math.ceil((time_spent_seconds || 0) / 60), currentStreak, longestStreak, enrollmentId]);
+      `, [finalTotalPoints, Math.ceil((time_spent_seconds || 0) / 60), currentStreak, longestStreak, enrollmentId]);
 
       // Check if day is complete
       const dayTasksResult = await pool.query(`
@@ -1703,7 +1732,9 @@ export function createProgramsRouter(pool: Pool): Router {
           task_id: taskId,
           completed: true,
           points_awarded: pointsAwarded,
-          total_points: newTotalPoints,
+          streak_bonus: streakBonus,
+          total_points_earned: pointsAwarded + streakBonus,
+          total_points: finalTotalPoints,
           quiz_score: quizScore,
           quiz_passed: quizPassed,
           day_progress: {
@@ -1717,6 +1748,7 @@ export function createProgramsRouter(pool: Pool): Router {
             longest: longestStreak,
             updated: streakUpdated,
             broken: streakBroken,
+            milestone: streakMilestone,
           },
           program_complete: programComplete,
         },
