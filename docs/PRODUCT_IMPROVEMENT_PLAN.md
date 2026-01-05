@@ -228,19 +228,60 @@ FIRECRAWL_API_KEY=...    # For recipe scraping
 
 ### Remaining Development (Future Sprints)
 
+**H1 Completed (Jan 2026):**
+- [x] Seed 36K+ verified foods from USDA FoodData Central
+- [x] `POST /api/v1/grocery/plan-to-instacart` - Single endpoint meal plan + cart
+- [x] Store price estimation and product name mapping
+- [x] Pantry item deduction from grocery lists
+- [x] API documentation for grocery endpoints
+
 **H1 Remaining:**
-- [ ] Seed 50K verified foods from USDA FoodData Central
 - [ ] Avatar coach script generation integration with HeyGen
 - [ ] Push notification triggers for onboarding reminders
+- [ ] Seed 7-day onboarding program content
 
 **H2 Remaining:**
 - [ ] Receipt OCR integration (Google Vision or AWS Textract)
 - [ ] Body composition AI analysis using Vision API
 - [ ] Challenge auto-scoring cron job
 - [ ] Badge awarding logic and triggers
+- [ ] Social graph foundation (friends, challenges)
+- [ ] Data import from MFP/LoseIt
 
 **H3 Remaining:**
 - [ ] Coach portal dashboard and cohort management
 - [ ] OAuth2 provider for API platform
 - [ ] Longevity metrics engine
 - [ ] Rate limiting and API key management
+
+---
+
+## Latest Updates (Jan 2026)
+
+### New Single Endpoint: Plan-to-Instacart
+
+**`POST /api/v1/grocery/plan-to-instacart`**
+
+Combines meal plan generation + Instacart cart creation in one call:
+
+```json
+{
+  "daily_calories": 2200,
+  "daily_protein_g": 180,
+  "dietary_restrictions": ["gluten-free"],
+  "allergies": ["shellfish"],
+  "budget_tier": "moderate",
+  "pantry_items": [
+    {"name": "rice", "quantity": 2, "unit": "lb"},
+    {"name": "eggs", "quantity": 12, "unit": "large"}
+  ]
+}
+```
+
+Response includes:
+- 7-day meal plan
+- Grocery list (adjusted for pantry)
+- Instacart cart URL
+- Pantry savings calculation
+
+See full docs: `docs/API_GROCERY_ENDPOINTS.md`
