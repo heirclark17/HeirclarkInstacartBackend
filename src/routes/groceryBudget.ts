@@ -151,11 +151,13 @@ export function createGroceryBudgetRouter(pool: Pool): Router {
           instacart_cart: instacartCart,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('[GroceryBudget] Plan with cart error:', error);
       return res.status(500).json({
         ok: false,
         error: 'Failed to generate meal plan with cart',
+        details: error.message || 'Unknown error',
+        has_openai_key: !!process.env.OPENAI_API_KEY,
       });
     }
   });
