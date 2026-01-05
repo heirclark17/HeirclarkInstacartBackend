@@ -891,6 +891,295 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // POST /api/v1/programs/:programId/tasks/:taskId/complete
+  // Mark a task as complete
+  // ==========================================================================
+  router.post('/:programId/tasks/:taskId/complete', async (req: Request, res: Response) => {
+    try {
+      const { programId, taskId } = req.params;
+      const userId = req.body.userId || req.headers['x-shopify-customer-id'] as string;
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      const {
+        response_text,      // For reflections/journals
+        quiz_answers,       // For quizzes: array of selected answer indices
+        time_spent_seconds, // How long spent on task
+      } = req.body;
+
+      // Get the task to validate and get points
+      const taskResult = await pool.query(`
+        SELECT id, task_type, title, points_value, quiz_questions, day_number
+        FROM hc_tasks
+        WHERE id = $1 AND program_id = $2
+      `, [taskId, programId]);
+
+      if (taskResult.rows.length === 0) {
+        return res.status(404).json({ ok: false, error: 'Task not found' });
+      }
+
+      const task = taskResult.rows[0];
+
+      // Process quiz if applicable
+      let quizScore: number | null = null;
+      let quizPassed: boolean | null = null;
+
+      if (task.task_type === 'quiz' && quiz_answers && task.quiz_questions) {
+        const questions = typeof task.quiz_questions === 'string'
+          ? JSON.parse(task.quiz_questions)
+          : task.quiz_questions;
+
+        let correct = 0;
+        questions.forEach((q: any, i: number) => {
+          if (quiz_answers[i] === q.correct) correct++;
+        });
+
+        quizScore = Math.round((correct / questions.length) * 100);
+        quizPassed = quizScore >= 70; // 70% passing threshold
+      }
+
+      // Get or create enrollment
+      let enrollmentResult = await pool.query(`
+        SELECT id, points_earned FROM hc_program_enrollments
+        WHERE user_id = $1 AND program_id = $2
+      `, [userId, programId]);
+
+      let enrollmentId: string;
+      let currentPoints: number;
+
+      if (enrollmentResult.rows.length === 0) {
+        // Auto-enroll user
+        const newEnrollment = await pool.query(`
+          INSERT INTO hc_program_enrollments (user_id, program_id, status, current_day, total_tasks)
+          VALUES ($1, $2, 'active', $3, 28)
+          RETURNING id, points_earned
+        `, [userId, programId, task.day_number]);
+
+        enrollmentId = newEnrollment.rows[0].id;
+        currentPoints = 0;
+      } else {
+        enrollmentId = enrollmentResult.rows[0].id;
+        currentPoints = enrollmentResult.rows[0].points_earned || 0;
+      }
+
+      // Check if already completed
+      const existingCompletion = await pool.query(`
+        SELECT id FROM hc_program_task_responses
+        WHERE enrollment_id = $1 AND task_id = $2 AND completed = true
+      `, [enrollmentId, taskId]);
+
+      if (existingCompletion.rows.length > 0) {
+        return res.json({
+          ok: true,
+          data: {
+            already_completed: true,
+            message: 'Task was already completed',
+            points_awarded: 0,
+            total_points: currentPoints,
+          },
+        });
+      }
+
+      // Record the task completion
+      await pool.query(`
+        INSERT INTO hc_program_task_responses (
+          enrollment_id, task_id, day, completed, response_text,
+          quiz_answers, quiz_score, quiz_passed, time_spent_seconds, completed_at
+        ) VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, NOW())
+        ON CONFLICT (enrollment_id, task_id) DO UPDATE SET
+          completed = true,
+          response_text = COALESCE(EXCLUDED.response_text, hc_program_task_responses.response_text),
+          quiz_answers = COALESCE(EXCLUDED.quiz_answers, hc_program_task_responses.quiz_answers),
+          quiz_score = COALESCE(EXCLUDED.quiz_score, hc_program_task_responses.quiz_score),
+          quiz_passed = COALESCE(EXCLUDED.quiz_passed, hc_program_task_responses.quiz_passed),
+          time_spent_seconds = COALESCE(EXCLUDED.time_spent_seconds, hc_program_task_responses.time_spent_seconds),
+          completed_at = NOW()
+      `, [
+        enrollmentId,
+        taskId,
+        task.day_number,
+        response_text || null,
+        quiz_answers ? JSON.stringify(quiz_answers) : null,
+        quizScore,
+        quizPassed,
+        time_spent_seconds || null,
+      ]);
+
+      // Award points
+      const pointsAwarded = task.points_value || 0;
+      const newTotalPoints = currentPoints + pointsAwarded;
+
+      // Update enrollment stats
+      await pool.query(`
+        UPDATE hc_program_enrollments
+        SET
+          points_earned = $1,
+          tasks_completed = tasks_completed + 1,
+          total_time_spent_minutes = total_time_spent_minutes + $2,
+          updated_at = NOW()
+        WHERE id = $3
+      `, [newTotalPoints, Math.ceil((time_spent_seconds || 0) / 60), enrollmentId]);
+
+      // Check if day is complete
+      const dayTasksResult = await pool.query(`
+        SELECT COUNT(*) as total FROM hc_tasks WHERE program_id = $1 AND day_number = $2
+      `, [programId, task.day_number]);
+
+      const completedTasksResult = await pool.query(`
+        SELECT COUNT(*) as completed FROM hc_program_task_responses
+        WHERE enrollment_id = $1 AND day = $2 AND completed = true
+      `, [enrollmentId, task.day_number]);
+
+      const totalDayTasks = parseInt(dayTasksResult.rows[0].total);
+      const completedDayTasks = parseInt(completedTasksResult.rows[0].completed);
+      const dayComplete = completedDayTasks >= totalDayTasks;
+
+      // Check if program is complete (all 7 days)
+      const allCompletedResult = await pool.query(`
+        SELECT COUNT(DISTINCT day) as days_done FROM hc_program_task_responses
+        WHERE enrollment_id = $1 AND completed = true
+      `, [enrollmentId]);
+
+      // Count days where ALL tasks are complete
+      const programComplete = parseInt(allCompletedResult.rows[0].days_done) >= 7 && dayComplete;
+
+      if (programComplete) {
+        await pool.query(`
+          UPDATE hc_program_enrollments
+          SET status = 'completed', completed_at = NOW()
+          WHERE id = $1
+        `, [enrollmentId]);
+      }
+
+      return res.json({
+        ok: true,
+        data: {
+          task_id: taskId,
+          completed: true,
+          points_awarded: pointsAwarded,
+          total_points: newTotalPoints,
+          quiz_score: quizScore,
+          quiz_passed: quizPassed,
+          day_progress: {
+            day: task.day_number,
+            tasks_completed: completedDayTasks,
+            total_tasks: totalDayTasks,
+            day_complete: dayComplete,
+          },
+          program_complete: programComplete,
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Complete task error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to complete task' });
+    }
+  });
+
+  // ==========================================================================
+  // GET /api/v1/programs/:programId/progress
+  // Get user's progress on a program
+  // ==========================================================================
+  router.get('/:programId/progress', async (req: Request, res: Response) => {
+    try {
+      const { programId } = req.params;
+      const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      // Get enrollment
+      const enrollmentResult = await pool.query(`
+        SELECT * FROM hc_program_enrollments
+        WHERE user_id = $1 AND program_id = $2
+      `, [userId, programId]);
+
+      if (enrollmentResult.rows.length === 0) {
+        return res.json({
+          ok: true,
+          data: {
+            enrolled: false,
+            message: 'User is not enrolled in this program',
+          },
+        });
+      }
+
+      const enrollment = enrollmentResult.rows[0];
+
+      // Get completed tasks
+      const completedTasksResult = await pool.query(`
+        SELECT task_id, day, completed_at, quiz_score, quiz_passed, response_text
+        FROM hc_program_task_responses
+        WHERE enrollment_id = $1 AND completed = true
+        ORDER BY day, completed_at
+      `, [enrollment.id]);
+
+      // Group by day
+      const progressByDay: Record<number, any[]> = {};
+      for (const task of completedTasksResult.rows) {
+        if (!progressByDay[task.day]) {
+          progressByDay[task.day] = [];
+        }
+        progressByDay[task.day].push(task);
+      }
+
+      // Get total tasks per day
+      const totalTasksResult = await pool.query(`
+        SELECT day_number, COUNT(*) as count
+        FROM hc_tasks
+        WHERE program_id = $1
+        GROUP BY day_number
+      `, [programId]);
+
+      const totalTasksByDay: Record<number, number> = {};
+      for (const row of totalTasksResult.rows) {
+        totalTasksByDay[row.day_number] = parseInt(row.count);
+      }
+
+      // Build day progress
+      const days = [];
+      for (let day = 1; day <= 7; day++) {
+        const completed = progressByDay[day] || [];
+        const total = totalTasksByDay[day] || 4;
+        days.push({
+          day,
+          tasks_completed: completed.length,
+          total_tasks: total,
+          is_complete: completed.length >= total,
+          completed_task_ids: completed.map((t: any) => t.task_id),
+        });
+      }
+
+      return res.json({
+        ok: true,
+        data: {
+          enrolled: true,
+          enrollment: {
+            id: enrollment.id,
+            status: enrollment.status,
+            started_at: enrollment.started_at,
+            completed_at: enrollment.completed_at,
+            points_earned: enrollment.points_earned,
+            tasks_completed: enrollment.tasks_completed,
+            streak_days: enrollment.streak_days,
+          },
+          days,
+          overall: {
+            total_tasks: 28,
+            completed_tasks: completedTasksResult.rows.length,
+            completion_percentage: Math.round((completedTasksResult.rows.length / 28) * 100),
+          },
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] Get progress error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to get progress' });
+    }
+  });
+
+  // ==========================================================================
   // GET /api/v1/programs/:programId
   // Get program details
   // ==========================================================================
