@@ -157,7 +157,6 @@ export function createGroceryBudgetRouter(pool: Pool): Router {
         ok: false,
         error: 'Failed to generate meal plan with cart',
         details: error.message || 'Unknown error',
-        has_openai_key: !!process.env.OPENAI_API_KEY,
       });
     }
   });
