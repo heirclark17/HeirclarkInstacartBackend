@@ -3,6 +3,7 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import morgan from "morgan";
 import multer from "multer";
+import { Pool } from "pg";
 
 // Middleware
 import { rateLimitMiddleware } from "./middleware/rateLimiter";
@@ -82,6 +83,14 @@ import { wearablesRouter } from "./routes/wearables";
 // Health data router (synced wearable data)
 import { healthDataRouter } from "./routes/healthData";
 
+// New H1/H2/H3 Product Improvement Routes
+import { createNutritionFoodsRouter } from "./routes/nutritionFoods";
+import { createProgramsRouter } from "./routes/programs";
+import { createGroceryBudgetRouter } from "./routes/groceryBudget";
+import { createBodyScanReportsRouter } from "./routes/bodyScanReports";
+import { createSocialRouter } from "./routes/social";
+import { createImportRouter } from "./routes/import";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -128,6 +137,15 @@ validateStartupEnvironment();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+// Shared database pool for new product improvement routes
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const dbPool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: false }
+    : undefined,
+});
 
 // Multer instance for in-memory file uploads (used for body-scan only here)
 const upload = multer({
@@ -254,6 +272,28 @@ app.use("/api/v1/wearables", wearablesRouter);
 
 // Health data (synced wearable data - activity, sleep, workouts, etc.)
 app.use("/api/v1/health-data", healthDataRouter);
+
+// ======================================================================
+//                   NEW PRODUCT IMPROVEMENT ROUTES (H1/H2/H3)
+// ======================================================================
+
+// Nutrition Graph - verified food database with quality scores
+app.use("/api/v1/nutrition/foods", createNutritionFoodsRouter(dbPool));
+
+// Programs & Behavior Change - onboarding, CBT-based lessons
+app.use("/api/v1/programs", createProgramsRouter(dbPool));
+
+// Grocery Budget - AI meal planning with Instacart cart generation
+app.use("/api/v1/grocery", createGroceryBudgetRouter(dbPool));
+
+// Body Scan Reports - progress photos, AI analysis, recomposition reports
+app.use("/api/v1/body-scan/reports", createBodyScanReportsRouter(dbPool));
+
+// Social Features - friends, challenges, leaderboards
+app.use("/api/v1/social", createSocialRouter(dbPool));
+
+// Data Import - MyFitnessPal, LoseIt, CSV import
+app.use("/api/v1/import", createImportRouter(dbPool));
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)
