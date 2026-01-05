@@ -45,6 +45,7 @@ export function createAdminRouter(pool: Pool): Router {
       const tables = [
         'nutrition_foods',
         'hc_programs',
+        'hc_tasks',
         'hc_program_enrollments',
         'hc_user_profiles',
         'hc_challenges',
@@ -82,6 +83,22 @@ export function createAdminRouter(pool: Pool): Router {
 
     // Run seeding in background
     seedUSDAFoodsBackground(pool, dataType, pages).catch(console.error);
+  });
+
+  // POST /api/v1/admin/seed-onboarding
+  // Seed the 7-day onboarding program
+  router.post('/seed-onboarding', checkAdminAuth, async (req: Request, res: Response) => {
+    try {
+      console.log('[Admin] Starting onboarding program seeding...');
+      const result = await seedOnboardingProgram(pool);
+      return res.json({
+        ok: true,
+        data: result,
+      });
+    } catch (error: any) {
+      console.error('[Admin] Onboarding seed error:', error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
   });
 
   // POST /api/v1/admin/seed-usda-sync (synchronous, for small batches)
@@ -252,6 +269,559 @@ async function seedUSDAFoodsBackground(pool: Pool, dataType: string, maxPages: n
   }
 
   console.log(`[Admin] Background seeding complete: ${totalInserted} foods inserted`);
+}
+
+// ==========================================================================
+// Onboarding Program Seeder
+// ==========================================================================
+async function seedOnboardingProgram(pool: Pool): Promise<{ program_id: string; tasks_created: number }> {
+  // First, check if program already exists
+  const existingProgram = await pool.query(
+    `SELECT id FROM hc_programs WHERE slug = 'nutrition-foundations-7day'`
+  );
+
+  if (existingProgram.rows.length > 0) {
+    // Delete existing tasks and program to reseed
+    await pool.query(`DELETE FROM hc_tasks WHERE program_id = $1`, [existingProgram.rows[0].id]);
+    await pool.query(`DELETE FROM hc_programs WHERE id = $1`, [existingProgram.rows[0].id]);
+    console.log('[Admin] Deleted existing onboarding program for reseed');
+  }
+
+  // Create the program
+  const programResult = await pool.query(`
+    INSERT INTO hc_programs (
+      name, slug, description, category, difficulty_level, duration_days,
+      is_default_onboarding, is_active, target_audience, prerequisites,
+      learning_objectives, methodology, estimated_daily_time_minutes
+    ) VALUES (
+      'Nutrition Foundations: 7-Day Kickstart',
+      'nutrition-foundations-7day',
+      'Master the fundamentals of nutrition tracking in just 7 days. This science-backed program uses cognitive behavioral techniques to build lasting habits around food awareness, protein optimization, and mindful eating.',
+      'onboarding',
+      'beginner',
+      7,
+      true,
+      true,
+      '["new_users", "beginners", "habit_builders"]',
+      '[]',
+      '["Understand macronutrients and their role in body composition", "Build consistent tracking habits using the Habit Loop model", "Learn to identify protein-rich foods and hit daily targets", "Develop mindful eating practices", "Create sustainable meal planning strategies"]',
+      'cbt_based',
+      15
+    ) RETURNING id
+  `);
+
+  const programId = programResult.rows[0].id;
+  let taskOrder = 1;
+
+  // Day 1: Welcome & First Log
+  await insertTask(pool, programId, taskOrder++, 1, 'lesson', 'Welcome to Your Nutrition Journey', `
+# Welcome to Nutrition Foundations
+
+You're about to transform your relationship with food. Over the next 7 days, you'll build habits that elite athletes and nutrition experts use every day.
+
+## Why Tracking Matters
+
+Research shows that people who track their food intake are **2x more likely** to reach their health goals. But here's the secret: it's not about perfection—it's about awareness.
+
+## The Habit Loop
+
+Everything we do follows a simple pattern:
+1. **Cue** - A trigger that initiates the behavior
+2. **Routine** - The behavior itself
+3. **Reward** - The benefit you receive
+
+This week, we'll use this loop to make tracking automatic.
+
+## What You'll Learn
+
+- Day 1-2: Tracking basics & protein power
+- Day 3-4: Understanding calories & building habits
+- Day 5-6: Mindful eating & meal planning
+- Day 7: Putting it all together
+
+Let's begin!
+  `, 10);
+
+  await insertTask(pool, programId, taskOrder++, 1, 'action', 'Log Your First Meal', `
+Time for action! Open the food logger and record what you ate for your most recent meal.
+
+**Don't worry about:**
+- Being perfect
+- Exact portions
+- Missing items
+
+**Do focus on:**
+- Getting something logged
+- Noticing how it feels
+- Completing the action
+
+This is your first step. Every expert was once a beginner.
+  `, 20, 'log_food');
+
+  await insertTask(pool, programId, taskOrder++, 1, 'reflection', 'Notice Your Thoughts', `
+Take a moment to reflect on your first logging experience.
+
+**Consider:**
+- What was easy about logging?
+- What felt challenging?
+- Did any thoughts or feelings come up?
+
+There are no wrong answers. This reflection helps you understand your relationship with food tracking.
+  `, 10, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 1, 'quiz', 'Day 1 Check-In', `
+Let's make sure you've got the basics down.
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'What are the three parts of the Habit Loop?', a: ['Cue, Routine, Reward', 'Start, Middle, End', 'Think, Act, Feel', 'Plan, Do, Review'], correct: 0 },
+    { q: 'What is the main goal of food tracking?', a: ['Counting every calorie perfectly', 'Building awareness of what you eat', 'Restricting food intake', 'Comparing yourself to others'], correct: 1 }
+  ]));
+
+  // Day 2: The Power of Protein
+  await insertTask(pool, programId, taskOrder++, 2, 'lesson', 'The Power of Protein', `
+# Protein: Your Body's Building Block
+
+Today we focus on the most important macronutrient for body composition: **protein**.
+
+## Why Protein Matters
+
+- **Builds & repairs muscle** - Essential for recovery
+- **Keeps you full longer** - Reduces cravings
+- **Burns more calories** - Higher thermic effect
+- **Preserves muscle during fat loss** - Protects your metabolism
+
+## How Much Do You Need?
+
+A good starting target:
+- **0.7-1g per pound** of body weight
+- Or **1.6-2.2g per kg** of body weight
+
+For a 150lb person, that's 105-150g of protein daily.
+
+## Protein-Rich Foods
+
+| Food | Protein |
+|------|---------|
+| Chicken breast (4oz) | 35g |
+| Greek yogurt (1 cup) | 20g |
+| Eggs (2 large) | 12g |
+| Salmon (4oz) | 25g |
+| Tofu (1/2 cup) | 10g |
+| Lentils (1 cup) | 18g |
+
+## Today's Mission
+
+Pay attention to protein in everything you eat. Start building awareness of where your protein comes from.
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 2, 'action', 'Track Protein All Day', `
+Your mission today: Log every meal and snack, paying special attention to protein content.
+
+**Track at least 3 meals/snacks** and aim to identify the protein source in each one.
+
+Use the food search to find accurate protein values. Notice which foods are surprisingly high or low in protein.
+  `, 25, 'log_food_protein');
+
+  await insertTask(pool, programId, taskOrder++, 2, 'reflection', 'Protein Patterns', `
+Review your protein intake from today.
+
+**Reflect on:**
+- How close did you get to your protein target?
+- Which meal had the most protein?
+- What could you add to boost protein tomorrow?
+- Were there any surprises in protein content?
+  `, 10, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 2, 'quiz', 'Protein Knowledge Check', `
+Test your protein knowledge!
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'How much protein should you aim for per pound of body weight?', a: ['0.3-0.5g', '0.7-1g', '1.5-2g', '2.5-3g'], correct: 1 },
+    { q: 'Which has MORE protein?', a: ['1 cup rice', '1 cup Greek yogurt', '1 banana', '1 slice bread'], correct: 1 },
+    { q: 'What is NOT a benefit of adequate protein?', a: ['Builds muscle', 'Increases energy immediately', 'Keeps you full', 'Burns more calories'], correct: 1 }
+  ]));
+
+  // Day 3: Calories & Energy Balance
+  await insertTask(pool, programId, taskOrder++, 3, 'lesson', 'Understanding Calories', `
+# Calories: The Energy Equation
+
+Today we demystify calories—the unit of energy that fuels everything you do.
+
+## The Basic Equation
+
+**Calories In vs Calories Out**
+
+- **Eat more than you burn** → Weight gain
+- **Eat less than you burn** → Weight loss
+- **Eat what you burn** → Weight maintenance
+
+## Your Daily Needs
+
+Your Total Daily Energy Expenditure (TDEE) includes:
+
+1. **BMR (60-70%)** - Calories burned at rest
+2. **Activity (15-30%)** - Exercise and movement
+3. **TEF (10%)** - Digesting food
+
+Most people need **1,800-2,500 calories** daily, depending on size and activity.
+
+## Quality Matters Too
+
+Not all calories are equal for:
+- **Satiety** - Protein and fiber keep you fuller
+- **Energy** - Complex carbs provide steady fuel
+- **Health** - Whole foods provide micronutrients
+
+## The 80/20 Rule
+
+Aim for **80% whole, nutritious foods** and allow **20% flexibility** for foods you enjoy. This sustainable approach beats strict dieting every time.
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 3, 'action', 'Full Day Tracking', `
+Today, log EVERYTHING you eat and drink.
+
+**Include:**
+- All meals
+- Snacks
+- Beverages (yes, that coffee creamer counts!)
+- Cooking oils and condiments
+
+At the end of the day, review your total calories. No judgment—just data.
+  `, 30, 'log_food_calories');
+
+  await insertTask(pool, programId, taskOrder++, 3, 'reflection', 'Calorie Awareness', `
+Look at your full day of tracking.
+
+**Consider:**
+- Were your total calories higher or lower than expected?
+- Which foods contributed the most calories?
+- Were there any "hidden" calories you discovered?
+- How did your energy levels relate to what you ate?
+  `, 10, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 3, 'quiz', 'Energy Balance Quiz', `
+Check your understanding of calories and energy.
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'What makes up the largest portion of daily calorie burn?', a: ['Exercise', 'BMR (resting metabolism)', 'Digesting food', 'Walking'], correct: 1 },
+    { q: 'The 80/20 rule suggests:', a: ['Eat 80% protein', '80% whole foods, 20% flexible', 'Exercise 80 minutes daily', 'Sleep 80% of the night'], correct: 1 }
+  ]));
+
+  // Day 4: Making It Automatic
+  await insertTask(pool, programId, taskOrder++, 4, 'lesson', 'Building Lasting Habits', `
+# Making Tracking Automatic
+
+You've been tracking for 3 days. Now let's make it stick forever.
+
+## The Science of Habit Formation
+
+Research shows habits form through **consistent repetition** in a **stable context**. The key ingredients:
+
+### 1. Same Time, Same Place
+Link tracking to an existing routine:
+- After you finish eating
+- When you sit down at your desk
+- Before you leave the kitchen
+
+### 2. Make It Easy
+- Keep the app on your home screen
+- Use the barcode scanner
+- Save frequent meals
+
+### 3. Start Small
+A 2-minute tracking session beats a skipped day. Progress over perfection.
+
+## Habit Stacking
+
+Attach tracking to something you already do:
+
+> "After I [EXISTING HABIT], I will [LOG MY FOOD]."
+
+Examples:
+- "After I put my fork down, I will log my meal."
+- "After I pour my morning coffee, I will log breakfast."
+
+## The 21-Day Myth
+
+Habits don't form in 21 days. Research shows it takes **66 days on average**. But here's the good news: missing one day doesn't reset your progress. It's about the overall pattern.
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 4, 'action', 'Create Your Habit Stack', `
+Define your personal tracking trigger.
+
+**Your task:**
+1. Choose an existing daily habit (e.g., finishing a meal, morning coffee)
+2. Create your habit stack statement
+3. Write it down or set a phone reminder
+4. Practice it today with every meal
+
+**Format:** "After I _______, I will log my food."
+  `, 20, 'habit_stack');
+
+  await insertTask(pool, programId, taskOrder++, 4, 'reflection', 'Habit Formation', `
+Reflect on building your tracking habit.
+
+**Consider:**
+- What habit trigger did you choose?
+- How did using the trigger feel?
+- What obstacles might get in your way?
+- How will you overcome those obstacles?
+  `, 10, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 4, 'quiz', 'Habit Science Quiz', `
+Test your knowledge of habit formation.
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'How long does it actually take to form a habit on average?', a: ['21 days', '7 days', '66 days', '1 year'], correct: 2 },
+    { q: 'What is habit stacking?', a: ['Doing multiple habits at once', 'Linking a new habit to an existing one', 'Tracking your habits', 'Breaking bad habits'], correct: 1 },
+    { q: 'What should you do if you miss a day of tracking?', a: ['Start over from day 1', 'Give up entirely', 'Continue the next day', 'Track double the next day'], correct: 2 }
+  ]));
+
+  // Day 5: Beyond the Numbers
+  await insertTask(pool, programId, taskOrder++, 5, 'lesson', 'The Mind-Body Connection', `
+# Beyond the Numbers: Mindful Eating
+
+Today we go deeper than macros. Let's explore how you **feel** about food.
+
+## What is Mindful Eating?
+
+Mindful eating means being fully present during meals:
+- Noticing flavors, textures, aromas
+- Recognizing hunger and fullness cues
+- Eating without distraction
+- Understanding emotional vs physical hunger
+
+## The Hunger Scale
+
+Rate your hunger from 1-10:
+
+| Level | Description |
+|-------|-------------|
+| 1-2 | Starving, irritable |
+| 3-4 | Very hungry, ready to eat |
+| 5-6 | Satisfied, comfortable |
+| 7-8 | Full, slightly uncomfortable |
+| 9-10 | Stuffed, very uncomfortable |
+
+**Ideal:** Start eating at 3-4, stop at 6-7.
+
+## Emotional Eating Awareness
+
+We often eat for reasons beyond hunger:
+- Stress
+- Boredom
+- Celebration
+- Habit
+
+This isn't "bad"—it's human. Awareness is the first step.
+
+## Today's Practice
+
+Before each meal, pause for 30 seconds. Take three deep breaths. Ask yourself: "How hungry am I really?"
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 5, 'action', 'Mindful Meal Practice', `
+Choose one meal today to eat mindfully.
+
+**The practice:**
+1. Remove distractions (phone, TV)
+2. Take 3 deep breaths before eating
+3. Rate your hunger (1-10)
+4. Eat slowly, noticing each bite
+5. Pause halfway through—rate fullness
+6. Stop when satisfied (6-7 on scale)
+7. Log the meal AND your hunger/fullness ratings
+  `, 25, 'mindful_meal');
+
+  await insertTask(pool, programId, taskOrder++, 5, 'reflection', 'Mind-Body Insights', `
+Reflect on your mindful eating experience.
+
+**Consider:**
+- What did you notice when eating without distractions?
+- Were you more or less hungry than you thought?
+- Did you notice any emotions around food today?
+- How might mindful eating change your relationship with food?
+  `, 15, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 5, 'quiz', 'Mindful Eating Check', `
+Review what you've learned about mindful eating.
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'What hunger level should you ideally start eating at?', a: ['1-2', '3-4', '7-8', '9-10'], correct: 1 },
+    { q: 'What is emotional eating?', a: ['Eating when sad', 'Eating for reasons beyond physical hunger', 'Eating too much', 'Eating alone'], correct: 1 }
+  ]));
+
+  // Day 6: Set Yourself Up for Success
+  await insertTask(pool, programId, taskOrder++, 6, 'lesson', 'Planning for Success', `
+# Meal Planning: Your Secret Weapon
+
+Planning ahead is how consistent trackers stay consistent. Today you'll learn strategies the pros use.
+
+## Why Planning Works
+
+- **Reduces decision fatigue** - Fewer choices = easier adherence
+- **Improves accuracy** - Log before you eat
+- **Saves money** - Less impulse buying
+- **Hits targets** - Build meals around your goals
+
+## The Pre-Log Strategy
+
+Elite trackers often log meals **before** eating them. This lets you:
+- Adjust portions to hit targets
+- Swap ingredients if needed
+- Make informed decisions
+
+## Building a Template Day
+
+Create a flexible template:
+
+**Breakfast:** ~400 cal, 30g protein
+**Lunch:** ~500 cal, 40g protein
+**Dinner:** ~600 cal, 40g protein
+**Snacks:** ~300 cal, 20g protein
+
+Adjust based on your needs, but having a framework helps.
+
+## The Power of Prep
+
+Sunday prep ideas:
+- Cook protein in bulk
+- Wash and cut vegetables
+- Portion snacks
+- Prepare overnight oats
+
+You don't need to meal prep everything—even small prep helps.
+  `, 15);
+
+  await insertTask(pool, programId, taskOrder++, 6, 'action', 'Plan Tomorrow\'s Meals', `
+Pre-log tomorrow's meals right now.
+
+**Your task:**
+1. Open the food logger
+2. Plan and log breakfast, lunch, dinner, and snacks for tomorrow
+3. Check that you're hitting your protein target
+4. Adjust as needed
+
+Tomorrow, you'll follow this plan and see how it feels to eat with intention.
+  `, 30, 'plan_meals');
+
+  await insertTask(pool, programId, taskOrder++, 6, 'reflection', 'Planning Insights', `
+Reflect on the meal planning process.
+
+**Consider:**
+- How did it feel to plan ahead?
+- Did you discover any gaps (like low protein at breakfast)?
+- What adjustments did you make?
+- How confident do you feel about tomorrow?
+  `, 10, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 6, 'quiz', 'Planning Quiz', `
+Check your meal planning knowledge.
+  `, 15, 'quiz', JSON.stringify([
+    { q: 'What is the "pre-log" strategy?', a: ['Logging yesterday\'s food', 'Logging food before you eat it', 'Logging only breakfast', 'Logging once a week'], correct: 1 },
+    { q: 'What is a benefit of meal planning?', a: ['It\'s more fun', 'Reduces decision fatigue', 'Burns more calories', 'Requires less protein'], correct: 1 }
+  ]));
+
+  // Day 7: Celebration & Next Steps
+  await insertTask(pool, programId, taskOrder++, 7, 'lesson', 'Celebration & Graduation', `
+# Congratulations! You Did It!
+
+You've completed 7 days of nutrition foundations. Take a moment to appreciate what you've accomplished.
+
+## What You've Learned
+
+✅ How to track food accurately
+✅ The importance of protein
+✅ Understanding calories and energy balance
+✅ Building automatic habits
+✅ Mindful eating practices
+✅ Meal planning strategies
+
+## Your New Skills
+
+You now have the tools that elite athletes and nutrition coaches use daily. These aren't just "diet tricks"—they're lifelong skills.
+
+## What's Next?
+
+**Keep the momentum going:**
+
+1. **Continue daily tracking** - Aim for 80% consistency
+2. **Hit your protein target** - Make it a daily priority
+3. **Weekly planning** - Spend 15 minutes on Sundays
+4. **Monthly reflection** - Review your progress
+
+## Remember
+
+Progress isn't linear. Some days you'll nail it, others you won't. What matters is the overall trend. You've built a foundation—now keep building on it.
+
+**You've got this.**
+  `, 20);
+
+  await insertTask(pool, programId, taskOrder++, 7, 'action', 'Log Your Final Day', `
+Complete your 7th day of tracking.
+
+Log all meals and snacks for today. This is your graduation day—show yourself what you've learned!
+  `, 25, 'log_food');
+
+  await insertTask(pool, programId, taskOrder++, 7, 'reflection', 'Your Journey', `
+Final reflection: Look back on your week.
+
+**Consider:**
+- What was your biggest insight this week?
+- Which day or lesson impacted you most?
+- What habit will you definitely continue?
+- What's one thing you want to improve?
+- How do you feel about nutrition tracking now vs. Day 1?
+  `, 20, 'journal');
+
+  await insertTask(pool, programId, taskOrder++, 7, 'quiz', 'Graduation Quiz', `
+Final quiz to cement your knowledge!
+  `, 25, 'quiz', JSON.stringify([
+    { q: 'What is the recommended protein intake per pound of body weight?', a: ['0.2-0.4g', '0.7-1g', '2-3g', '5g'], correct: 1 },
+    { q: 'What are the three parts of the Habit Loop?', a: ['Think, Act, Sleep', 'Cue, Routine, Reward', 'Plan, Execute, Rest', 'Eat, Track, Repeat'], correct: 1 },
+    { q: 'What hunger level should you stop eating at?', a: ['1-2', '3-4', '6-7', '9-10'], correct: 2 },
+    { q: 'How long does habit formation typically take?', a: ['7 days', '21 days', '66 days', '1 year'], correct: 2 },
+    { q: 'What is the 80/20 rule for nutrition?', a: ['80g protein, 20g fat', '80% whole foods, 20% flexible', '80 minutes exercise, 20 rest', '80 calories, 20 carbs'], correct: 1 }
+  ]));
+
+  // Get total tasks
+  const taskCount = await pool.query(
+    `SELECT COUNT(*) FROM hc_tasks WHERE program_id = $1`,
+    [programId]
+  );
+
+  console.log(`[Admin] Onboarding program seeded: ${taskCount.rows[0].count} tasks`);
+
+  return {
+    program_id: programId,
+    tasks_created: parseInt(taskCount.rows[0].count),
+  };
+}
+
+async function insertTask(
+  pool: Pool,
+  programId: string,
+  order: number,
+  day: number,
+  type: string,
+  title: string,
+  content: string,
+  points: number,
+  actionType?: string,
+  quizData?: string
+): Promise<void> {
+  await pool.query(`
+    INSERT INTO hc_tasks (
+      program_id, task_order, day_number, task_type, title, content,
+      points_value, action_type, quiz_questions, estimated_minutes
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, [
+    programId,
+    order,
+    day,
+    type,
+    title,
+    content.trim(),
+    points,
+    actionType || null,
+    quizData || null,
+    type === 'lesson' ? 5 : type === 'action' ? 10 : type === 'reflection' ? 5 : 3
+  ]);
 }
 
 export default createAdminRouter;
