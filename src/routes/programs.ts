@@ -764,6 +764,132 @@ export function createProgramsRouter(pool: Pool): Router {
   });
 
   // ==========================================================================
+  // GET /api/v1/programs/enrollments
+  // List all enrollments for a user
+  // ==========================================================================
+  router.get('/enrollments', async (req: Request, res: Response) => {
+    try {
+      const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
+
+      if (!userId) {
+        return res.status(400).json({ ok: false, error: 'userId required' });
+      }
+
+      // Get all enrollments with program details
+      const enrollmentsResult = await pool.query(`
+        SELECT
+          e.id as enrollment_id,
+          e.status,
+          e.started_at,
+          e.completed_at,
+          e.current_day,
+          e.tasks_completed,
+          e.total_tasks,
+          e.points_earned,
+          e.streak_days,
+          e.longest_streak,
+          e.total_time_spent_minutes,
+          p.id as program_id,
+          p.name as program_name,
+          p.slug as program_slug,
+          p.description as program_description,
+          p.duration_days,
+          p.difficulty,
+          p.category,
+          p.thumbnail_url,
+          p.estimated_daily_minutes
+        FROM hc_program_enrollments e
+        JOIN hc_programs p ON e.program_id = p.id
+        WHERE e.user_id = $1
+        ORDER BY e.started_at DESC
+      `, [userId]);
+
+      // Calculate progress for each enrollment
+      const enrollments = await Promise.all(enrollmentsResult.rows.map(async (row) => {
+        // Get completed tasks by day
+        const completedResult = await pool.query(`
+          SELECT day, COUNT(*) as count
+          FROM hc_program_task_responses
+          WHERE enrollment_id = $1 AND completed = true
+          GROUP BY day
+        `, [row.enrollment_id]);
+
+        const completedByDay: Record<number, number> = {};
+        completedResult.rows.forEach((r: any) => {
+          completedByDay[r.day] = parseInt(r.count);
+        });
+
+        // Calculate completion percentage
+        const completionPercentage = row.total_tasks > 0
+          ? Math.round((row.tasks_completed / row.total_tasks) * 100)
+          : 0;
+
+        // Calculate days completed (days where all 4 tasks are done)
+        const daysCompleted = Object.values(completedByDay).filter(count => count >= 4).length;
+
+        return {
+          enrollment_id: row.enrollment_id,
+          status: row.status,
+          started_at: row.started_at,
+          completed_at: row.completed_at,
+          current_day: row.current_day,
+          tasks_completed: row.tasks_completed,
+          total_tasks: row.total_tasks,
+          completion_percentage: completionPercentage,
+          days_completed: daysCompleted,
+          points_earned: row.points_earned,
+          streak_days: row.streak_days,
+          longest_streak: row.longest_streak,
+          total_time_spent_minutes: row.total_time_spent_minutes,
+          program: {
+            id: row.program_id,
+            name: row.program_name,
+            slug: row.program_slug,
+            description: row.program_description,
+            duration_days: row.duration_days,
+            difficulty: row.difficulty,
+            category: row.category,
+            thumbnail_url: row.thumbnail_url,
+            estimated_daily_minutes: row.estimated_daily_minutes,
+          },
+        };
+      }));
+
+      // Separate by status
+      const active = enrollments.filter(e => e.status === 'active');
+      const completed = enrollments.filter(e => e.status === 'completed');
+      const paused = enrollments.filter(e => e.status === 'paused');
+
+      // Calculate totals
+      const totalPoints = enrollments.reduce((sum, e) => sum + (e.points_earned || 0), 0);
+      const totalTasksCompleted = enrollments.reduce((sum, e) => sum + (e.tasks_completed || 0), 0);
+      const programsCompleted = completed.length;
+
+      return res.json({
+        ok: true,
+        data: {
+          enrollments,
+          active,
+          completed,
+          paused,
+          summary: {
+            total_enrollments: enrollments.length,
+            active_count: active.length,
+            completed_count: completed.length,
+            paused_count: paused.length,
+            total_points: totalPoints,
+            total_tasks_completed: totalTasksCompleted,
+            programs_completed: programsCompleted,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('[Programs] List enrollments error:', error);
+      return res.status(500).json({ ok: false, error: 'Failed to list enrollments' });
+    }
+  });
+
+  // ==========================================================================
   // POST /api/v1/programs/enroll
   // Enroll user in a program (by program_id or slug)
   // ==========================================================================
