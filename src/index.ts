@@ -279,7 +279,7 @@ app.use("/api/v1/health-data", healthDataRouter);
 // ======================================================================
 
 // Nutrition Graph - verified food database with quality scores
-app.use("/api/v1/nutrition/foods", createNutritionFoodsRouter(dbPool));
+app.use("/api/v1/nutrition", createNutritionFoodsRouter(dbPool));
 
 // Programs & Behavior Change - onboarding, CBT-based lessons
 app.use("/api/v1/programs", createProgramsRouter(dbPool));
