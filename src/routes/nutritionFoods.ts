@@ -63,11 +63,12 @@ export function createNutritionFoodsRouter(pool: Pool): Router {
       };
 
       return res.json(response);
-    } catch (error) {
+    } catch (error: any) {
       console.error('[NutritionFoods] Search error:', error);
       return res.status(500).json({
         ok: false,
         error: 'Search failed',
+        details: error.message || 'Unknown error',
       });
     }
   });
