@@ -124,26 +124,10 @@ export function createAdminRouter(pool: Pool): Router {
         CREATE INDEX IF NOT EXISTS idx_tasks_day ON hc_tasks(program_id, day_number);
       `);
 
-      // Add missing columns to hc_program_task_responses
+      // Ensure hc_program_task_responses has all needed columns
+      // (Most should exist from original migration, but ensure points_awarded exists)
       await pool.query(`
-        ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS quiz_answers JSONB;
-        ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS quiz_score INTEGER;
-        ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS quiz_passed BOOLEAN;
-        ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
-      `);
-
-      // Add unique constraint if not exists
-      await pool.query(`
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'hc_program_task_responses_enrollment_task_unique'
-          ) THEN
-            ALTER TABLE hc_program_task_responses
-            ADD CONSTRAINT hc_program_task_responses_enrollment_task_unique
-            UNIQUE (enrollment_id, task_id);
-          END IF;
-        END $$;
+        ALTER TABLE hc_program_task_responses ADD COLUMN IF NOT EXISTS points_awarded INTEGER DEFAULT 0;
       `);
 
       console.log('[Admin] Programs migration complete');

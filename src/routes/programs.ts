@@ -983,28 +983,34 @@ export function createProgramsRouter(pool: Pool): Router {
       }
 
       // Record the task completion
+      // Build response_data JSON
+      const responseData = {
+        text: response_text || null,
+        quiz_answers: quiz_answers || null,
+      };
+
       await pool.query(`
         INSERT INTO hc_program_task_responses (
-          enrollment_id, task_id, day, completed, response_text,
-          quiz_answers, quiz_score, quiz_passed, time_spent_seconds, completed_at
-        ) VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, NOW())
+          enrollment_id, task_id, day, completed,
+          response_data, quiz_score, quiz_passed, time_spent_seconds, completed_at, points_awarded
+        ) VALUES ($1, $2, $3, true, $4, $5, $6, $7, NOW(), $8)
         ON CONFLICT (enrollment_id, task_id) DO UPDATE SET
           completed = true,
-          response_text = COALESCE(EXCLUDED.response_text, hc_program_task_responses.response_text),
-          quiz_answers = COALESCE(EXCLUDED.quiz_answers, hc_program_task_responses.quiz_answers),
+          response_data = COALESCE(EXCLUDED.response_data, hc_program_task_responses.response_data),
           quiz_score = COALESCE(EXCLUDED.quiz_score, hc_program_task_responses.quiz_score),
           quiz_passed = COALESCE(EXCLUDED.quiz_passed, hc_program_task_responses.quiz_passed),
           time_spent_seconds = COALESCE(EXCLUDED.time_spent_seconds, hc_program_task_responses.time_spent_seconds),
+          points_awarded = COALESCE(EXCLUDED.points_awarded, hc_program_task_responses.points_awarded),
           completed_at = NOW()
       `, [
         enrollmentId,
         taskId,
         task.day_number,
-        response_text || null,
-        quiz_answers ? JSON.stringify(quiz_answers) : null,
+        JSON.stringify(responseData),
         quizScore,
         quizPassed,
         time_spent_seconds || null,
+        task.points_value || 0,
       ]);
 
       // Award points
