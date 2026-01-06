@@ -872,23 +872,36 @@ mealPlanRouter.post('/single-meal', recipeRateLimit, async (req: Request, res: R
   // Get image for the meal
   const imageUrl = getFoodImage(selectedMeal, type);
 
-  // If OpenAI is available, generate detailed recipe with accurate macros
+  // If OpenAI is available, generate detailed recipe with goal-matching macros
   if (OPENAI_API_KEY) {
     try {
-      const prompt = `Generate a recipe for "${selectedMeal}" targeting approximately ${calories} calories.
+      // Use provided macros as targets, or calculate defaults
+      const targetProtein = mealMacros.protein;
+      const targetCarbs = mealMacros.carbs;
+      const targetFat = mealMacros.fat;
+
+      const prompt = `Create a recipe for "${selectedMeal}" that MUST hit these exact nutrition targets:
+- Calories: ${calories}
+- Protein: ${targetProtein}g
+- Carbs: ${targetCarbs}g
+- Fat: ${targetFat}g
+
+Adjust portion sizes and ingredient quantities to hit these targets. Scale up protein sources if needed.
+
 Return ONLY valid JSON:
 {
-  "calories": <actual calories for this dish>,
-  "protein": <grams of protein>,
-  "carbs": <grams of carbs>,
-  "fat": <grams of fat>,
+  "calories": ${calories},
+  "protein": ${targetProtein},
+  "carbs": ${targetCarbs},
+  "fat": ${targetFat},
   "ingredients": [{"name": "ingredient", "quantity": 1, "unit": "cup"}],
   "instructions": ["Step 1", "Step 2"],
   "prepMinutes": 10,
   "cookMinutes": 15,
-  "description": "Brief appetizing description"
+  "description": "Brief appetizing description",
+  "servingSize": "portion description"
 }
-Calculate realistic macros based on the actual ingredients. Use 5-8 common ingredients.${dietaryRestrictions?.length ? ` Restrictions: ${dietaryRestrictions.join(', ')}` : ''}`;
+Use 5-8 common ingredients with quantities scaled to match the targets.${dietaryRestrictions?.length ? ` Restrictions: ${dietaryRestrictions.join(', ')}` : ''}`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout for speed
@@ -923,12 +936,12 @@ Calculate realistic macros based on the actual ingredients. Use 5-8 common ingre
 
         const recipeData = JSON.parse(content.trim());
 
-        // Use AI-generated macros if available, otherwise fall back to calculated
-        const dishCalories = recipeData.calories || calories;
+        // Use target macros (AI was instructed to match these)
+        const dishCalories = calories;
         const dishMacros = {
-          protein: recipeData.protein || mealMacros.protein,
-          carbs: recipeData.carbs || mealMacros.carbs,
-          fat: recipeData.fat || mealMacros.fat,
+          protein: targetProtein,
+          carbs: targetCarbs,
+          fat: targetFat,
         };
 
         return sendSuccess(res, {
@@ -940,6 +953,7 @@ Calculate realistic macros based on the actual ingredients. Use 5-8 common ingre
             calories: dishCalories,
             macros: dishMacros,
             servings: 1,
+            servingSize: recipeData.servingSize || null,
             imageUrl,
             recipe: {
               ingredients: recipeData.ingredients || [],
