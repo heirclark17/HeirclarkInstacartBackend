@@ -872,19 +872,23 @@ mealPlanRouter.post('/single-meal', recipeRateLimit, async (req: Request, res: R
   // Get image for the meal
   const imageUrl = getFoodImage(selectedMeal, type);
 
-  // If OpenAI is available, generate detailed recipe
+  // If OpenAI is available, generate detailed recipe with accurate macros
   if (OPENAI_API_KEY) {
     try {
-      const prompt = `Generate a recipe for "${selectedMeal}" targeting ${calories} calories.
+      const prompt = `Generate a recipe for "${selectedMeal}" targeting approximately ${calories} calories.
 Return ONLY valid JSON:
 {
+  "calories": <actual calories for this dish>,
+  "protein": <grams of protein>,
+  "carbs": <grams of carbs>,
+  "fat": <grams of fat>,
   "ingredients": [{"name": "ingredient", "quantity": 1, "unit": "cup"}],
   "instructions": ["Step 1", "Step 2"],
   "prepMinutes": 10,
   "cookMinutes": 15,
   "description": "Brief appetizing description"
 }
-Use 5-8 common ingredients. Keep instructions clear.${dietaryRestrictions?.length ? ` Restrictions: ${dietaryRestrictions.join(', ')}` : ''}`;
+Calculate realistic macros based on the actual ingredients. Use 5-8 common ingredients.${dietaryRestrictions?.length ? ` Restrictions: ${dietaryRestrictions.join(', ')}` : ''}`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout for speed
@@ -919,14 +923,22 @@ Use 5-8 common ingredients. Keep instructions clear.${dietaryRestrictions?.lengt
 
         const recipeData = JSON.parse(content.trim());
 
+        // Use AI-generated macros if available, otherwise fall back to calculated
+        const dishCalories = recipeData.calories || calories;
+        const dishMacros = {
+          protein: recipeData.protein || mealMacros.protein,
+          carbs: recipeData.carbs || mealMacros.carbs,
+          fat: recipeData.fat || mealMacros.fat,
+        };
+
         return sendSuccess(res, {
           meal: {
             mealType: type.charAt(0).toUpperCase() + type.slice(1),
             dishName: selectedMeal,
             name: selectedMeal,
             description: recipeData.description || `Delicious ${selectedMeal}`,
-            calories,
-            macros: mealMacros,
+            calories: dishCalories,
+            macros: dishMacros,
             servings: 1,
             imageUrl,
             recipe: {
