@@ -780,6 +780,185 @@ function generateGenericRecipe(dishName: string, calories?: number, macros?: any
   };
 }
 
+// ============================================================
+// SINGLE MEAL REFRESH ENDPOINT
+// ============================================================
+
+// Curated meal options for fast selection (no AI needed for meal name)
+const MEAL_OPTIONS: Record<string, string[]> = {
+  breakfast: [
+    'Greek Yogurt Parfait with Berries',
+    'Avocado Toast with Poached Eggs',
+    'Oatmeal with Banana and Almond Butter',
+    'Spinach and Feta Omelette',
+    'Protein Smoothie Bowl',
+    'Whole Grain Pancakes with Fresh Fruit',
+    'Egg White Scramble with Vegetables',
+    'Chia Seed Pudding with Mango',
+    'Turkey Sausage Breakfast Bowl',
+    'Cottage Cheese with Pineapple',
+    'Veggie Egg Scramble',
+    'Overnight Oats with Berries',
+    'Breakfast Burrito with Eggs',
+    'Smoked Salmon Bagel',
+    'Acai Bowl with Granola',
+  ],
+  lunch: [
+    'Grilled Chicken Caesar Salad',
+    'Quinoa Buddha Bowl',
+    'Turkey and Avocado Wrap',
+    'Mediterranean Chickpea Salad',
+    'Asian Chicken Lettuce Wraps',
+    'Salmon Poke Bowl',
+    'Black Bean and Corn Salad',
+    'Grilled Shrimp Tacos',
+    'Caprese Chicken Sandwich',
+    'Thai Peanut Noodle Bowl',
+    'Tuna Salad on Greens',
+    'Greek Salad with Grilled Chicken',
+    'Turkey Club Wrap',
+    'Veggie Stir-Fry Bowl',
+    'Southwest Chicken Salad',
+  ],
+  dinner: [
+    'Grilled Salmon with Roasted Vegetables',
+    'Chicken Stir-Fry with Brown Rice',
+    'Lean Beef with Sweet Potato',
+    'Baked Cod with Quinoa Pilaf',
+    'Turkey Meatballs with Zucchini Noodles',
+    'Herb-Crusted Pork Tenderloin',
+    'Shrimp and Vegetable Curry',
+    'Grilled Chicken with Mediterranean Salad',
+    'Tofu and Vegetable Stir-Fry',
+    'Lemon Herb Tilapia with Asparagus',
+    'Baked Salmon with Vegetables',
+    'Chicken Breast with Green Beans',
+    'Beef Stir-Fry with Broccoli',
+    'Garlic Butter Shrimp with Rice',
+    'Stuffed Bell Peppers',
+  ],
+};
+
+/**
+ * POST /api/v1/ai/single-meal
+ * Fast endpoint to generate a single meal replacement
+ * Much faster than calling meal-plan-7day for a single meal refresh
+ */
+mealPlanRouter.post('/single-meal', recipeRateLimit, async (req: Request, res: Response) => {
+  const { mealType, targetCalories, excludeMeals, dietaryRestrictions, macros } = req.body;
+
+  const type = (mealType || 'lunch').toLowerCase();
+  const calories = targetCalories || 500;
+  const excludeList = (excludeMeals || []).map((m: string) => m.toLowerCase());
+
+  // Get available meals, excluding any the user doesn't want
+  const availableMeals = (MEAL_OPTIONS[type] || MEAL_OPTIONS.lunch)
+    .filter(meal => !excludeList.some((ex: string) => meal.toLowerCase().includes(ex)));
+
+  if (availableMeals.length === 0) {
+    return sendError(res, 'No available meals for this type', 400);
+  }
+
+  // Pick a random meal
+  const selectedMeal = availableMeals[Math.floor(Math.random() * availableMeals.length)];
+
+  // Calculate macros based on calories (balanced distribution)
+  const mealMacros = macros || {
+    protein: Math.round(calories * 0.3 / 4), // 30% protein (4 cal/g)
+    carbs: Math.round(calories * 0.4 / 4),   // 40% carbs (4 cal/g)
+    fat: Math.round(calories * 0.3 / 9),     // 30% fat (9 cal/g)
+  };
+
+  // Get image for the meal
+  const imageUrl = getFoodImage(selectedMeal, type);
+
+  // If OpenAI is available, generate detailed recipe
+  if (OPENAI_API_KEY) {
+    try {
+      const prompt = `Generate a recipe for "${selectedMeal}" targeting ${calories} calories.
+Return ONLY valid JSON:
+{
+  "ingredients": [{"name": "ingredient", "quantity": 1, "unit": "cup"}],
+  "instructions": ["Step 1", "Step 2"],
+  "prepMinutes": 10,
+  "cookMinutes": 15,
+  "description": "Brief appetizing description"
+}
+Use 5-8 common ingredients. Keep instructions clear.${dietaryRestrictions?.length ? ` Restrictions: ${dietaryRestrictions.join(', ')}` : ''}`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout for speed
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          messages: [
+            { role: 'system', content: 'Chef creating quick, healthy recipes. Return only JSON.' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.6,
+          max_tokens: 800,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        let content = data.choices?.[0]?.message?.content || '';
+
+        // Clean markdown
+        if (content.startsWith('```')) {
+          content = content.replace(/```json?\n?/g, '').replace(/```$/g, '');
+        }
+
+        const recipeData = JSON.parse(content.trim());
+
+        return sendSuccess(res, {
+          meal: {
+            mealType: type.charAt(0).toUpperCase() + type.slice(1),
+            dishName: selectedMeal,
+            name: selectedMeal,
+            description: recipeData.description || `Delicious ${selectedMeal}`,
+            calories,
+            macros: mealMacros,
+            servings: 1,
+            imageUrl,
+            recipe: {
+              ingredients: recipeData.ingredients || [],
+              instructions: recipeData.instructions || [],
+              prepMinutes: recipeData.prepMinutes || 10,
+              cookMinutes: recipeData.cookMinutes || 15,
+            },
+          },
+        });
+      }
+    } catch (err: any) {
+      console.warn('[mealPlan] AI recipe failed, using generic:', err.message);
+    }
+  }
+
+  // Fallback: return meal without detailed recipe
+  return sendSuccess(res, {
+    meal: {
+      mealType: type.charAt(0).toUpperCase() + type.slice(1),
+      dishName: selectedMeal,
+      name: selectedMeal,
+      description: `Delicious ${selectedMeal}`,
+      calories,
+      macros: mealMacros,
+      servings: 1,
+      imageUrl,
+      recipe: generateGenericRecipe(selectedMeal, calories, mealMacros),
+    },
+  });
+});
+
 // Ensure table exists on module load
 async function ensureMealPlanTable(): Promise<void> {
   try {
