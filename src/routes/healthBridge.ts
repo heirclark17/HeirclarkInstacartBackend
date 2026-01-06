@@ -279,6 +279,7 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
     // Determine the actual source label
     const sourceLabel = source === "heirclark-ios-app" ? "ios-app" : source;
 
+    // Update latest snapshot
     await client.query(
       `
       INSERT INTO hc_health_latest (
@@ -309,6 +310,41 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
       ]
     );
 
+    // Also save to history table for calendar view (daily snapshots)
+    const dateStr = ts.toISOString().split('T')[0]; // YYYY-MM-DD
+    const distanceMeters = steps ? Math.round(steps * 0.762) : null; // Estimate distance
+
+    await client.query(
+      `
+      INSERT INTO hc_health_history (
+        shopify_customer_id, date, steps, active_calories, resting_energy,
+        distance_meters, latest_heart_rate_bpm, workouts_today, source, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      ON CONFLICT (shopify_customer_id, date)
+      DO UPDATE SET
+        steps = COALESCE(EXCLUDED.steps, hc_health_history.steps),
+        active_calories = COALESCE(EXCLUDED.active_calories, hc_health_history.active_calories),
+        resting_energy = COALESCE(EXCLUDED.resting_energy, hc_health_history.resting_energy),
+        distance_meters = COALESCE(EXCLUDED.distance_meters, hc_health_history.distance_meters),
+        latest_heart_rate_bpm = COALESCE(EXCLUDED.latest_heart_rate_bpm, hc_health_history.latest_heart_rate_bpm),
+        workouts_today = COALESCE(EXCLUDED.workouts_today, hc_health_history.workouts_today),
+        source = EXCLUDED.source,
+        updated_at = NOW()
+      `,
+      [
+        shopifyCustomerId,
+        dateStr,
+        steps,
+        activeCalories,
+        restingEnergy,
+        distanceMeters,
+        latestHeartRateBpm,
+        workoutsToday,
+        sourceLabel,
+      ]
+    );
+
     await client.query("COMMIT");
 
     console.log(`[healthBridge] Ingest success for ${shopifyCustomerId} via ${sourceLabel}:`, {
@@ -328,6 +364,63 @@ healthBridgeRouter.post("/ingest", async (req: Request, res: Response) => {
 /* ======================================================================
    METRICS + DEVICES
    ====================================================================== */
+
+/* ======================================================================
+   HISTORY - Daily snapshots for calendar view
+   ====================================================================== */
+
+healthBridgeRouter.get("/history", async (req: Request, res: Response) => {
+  const shopifyCustomerId = normStr(req.query?.shopifyCustomerId);
+  const startDate = normStr(req.query?.startDate);
+  const endDate = normStr(req.query?.endDate);
+
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+  }
+
+  try {
+    let query = `
+      SELECT date, steps, active_calories, resting_energy, distance_meters,
+             latest_heart_rate_bpm, workouts_today, source, updated_at
+      FROM hc_health_history
+      WHERE shopify_customer_id = $1
+    `;
+    const params: any[] = [shopifyCustomerId];
+
+    if (startDate) {
+      params.push(startDate);
+      query += ` AND date >= $${params.length}`;
+    }
+    if (endDate) {
+      params.push(endDate);
+      query += ` AND date <= $${params.length}`;
+    }
+
+    query += ` ORDER BY date DESC LIMIT 90`; // Max 90 days
+
+    const result = await pool.query(query, params);
+
+    const history: Record<string, any> = {};
+    for (const row of result.rows) {
+      const dateStr = row.date.toISOString().split('T')[0];
+      history[dateStr] = {
+        steps: row.steps || 0,
+        activeCalories: row.active_calories || 0,
+        restingEnergy: row.resting_energy || 0,
+        distanceMeters: row.distance_meters || 0,
+        latestHeartRateBpm: row.latest_heart_rate_bpm,
+        workoutsToday: row.workouts_today || 0,
+        source: row.source,
+        updatedAt: row.updated_at,
+      };
+    }
+
+    return res.json({ ok: true, history });
+  } catch (err) {
+    console.error("[healthBridge] history failed:", err);
+    return res.status(500).json({ ok: false, error: "history failed" });
+  }
+});
 
 healthBridgeRouter.get("/metrics", async (req: Request, res: Response) => {
   const shopifyCustomerId = normStr(req.query?.shopifyCustomerId);
@@ -450,3 +543,38 @@ healthBridgeRouter.delete("/device", async (req: Request, res: Response) => {
     return res.status(500).json({ ok: false, error: "delete device failed" });
   }
 });
+
+/* ======================================================================
+   TABLE INITIALIZATION
+   ====================================================================== */
+
+async function ensureHistoryTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS hc_health_history (
+        id SERIAL PRIMARY KEY,
+        shopify_customer_id VARCHAR(255) NOT NULL,
+        date DATE NOT NULL,
+        steps INTEGER,
+        active_calories INTEGER,
+        resting_energy INTEGER,
+        distance_meters INTEGER,
+        latest_heart_rate_bpm INTEGER,
+        workouts_today INTEGER,
+        source VARCHAR(50),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(shopify_customer_id, date)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_health_history_customer_date
+      ON hc_health_history(shopify_customer_id, date DESC)
+    `);
+    console.log("[healthBridge] hc_health_history table ensured");
+  } catch (err) {
+    console.error("[healthBridge] Failed to create history table:", err);
+  }
+}
+
+// Initialize table on module load
+ensureHistoryTable();
