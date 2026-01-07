@@ -4,6 +4,7 @@ import cors from "cors";
 import morgan from "morgan";
 import multer from "multer";
 import { Pool } from "pg";
+import { runMigrations } from "./db/runMigrations";
 
 // Middleware
 import { rateLimitMiddleware } from "./middleware/rateLimiter";
@@ -157,6 +158,11 @@ const dbPool = new Pool({
   ssl: process.env.NODE_ENV === "production"
     ? { rejectUnauthorized: false }
     : undefined,
+});
+
+// Run database migrations on startup
+runMigrations(dbPool).catch((err) => {
+  console.error("[Startup] Migration error:", err);
 });
 
 // Multer instance for in-memory file uploads (used for body-scan only here)
