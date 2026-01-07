@@ -17,17 +17,39 @@ export const restaurantRouter = Router();
 /**
  * Get menu items from database
  */
-async function getMenuFromDatabase(restaurantId: string): Promise<any[]> {
+async function getMenuFromDatabase(restaurantId: string, dietaryRestrictions?: string[]): Promise<any[]> {
   try {
-    const result = await pool.query(
-      `SELECT
+    let query = `SELECT
         id, name, category, calories, protein, carbs, fat,
-        customizable, customization_tips, source, confidence_score
+        price_cents, is_vegetarian, is_vegan, is_gluten_free, is_dairy_free, is_keto_friendly,
+        allergens, dietary_flags, customizable, customization_tips, source, confidence_score
        FROM restaurant_menu_items
-       WHERE restaurant_id = $1
-       ORDER BY recommendation_count DESC, calories ASC`,
-      [restaurantId]
-    );
+       WHERE restaurant_id = $1`;
+
+    const params: any[] = [restaurantId];
+
+    // Add dietary restriction filters
+    if (dietaryRestrictions && dietaryRestrictions.length > 0) {
+      if (dietaryRestrictions.includes('vegetarian')) {
+        query += ' AND is_vegetarian = true';
+      }
+      if (dietaryRestrictions.includes('vegan')) {
+        query += ' AND is_vegan = true';
+      }
+      if (dietaryRestrictions.includes('gluten_free') || dietaryRestrictions.includes('gluten-free')) {
+        query += ' AND is_gluten_free = true';
+      }
+      if (dietaryRestrictions.includes('dairy_free') || dietaryRestrictions.includes('dairy-free')) {
+        query += ' AND is_dairy_free = true';
+      }
+      if (dietaryRestrictions.includes('keto') || dietaryRestrictions.includes('keto_friendly')) {
+        query += ' AND is_keto_friendly = true';
+      }
+    }
+
+    query += ' ORDER BY recommendation_count DESC, calories ASC';
+
+    const result = await pool.query(query, params);
     return result.rows;
   } catch (error: any) {
     console.error('[restaurant] Database query error:', error.message);
@@ -44,11 +66,20 @@ async function cacheMenuItems(restaurantId: string, restaurantName: string, item
       await pool.query(
         `INSERT INTO restaurant_menu_items
          (restaurant_id, restaurant_name, name, category, calories, protein, carbs, fat,
-          customizable, customization_tips, source, confidence_score)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ai', $11)
+          price_cents, is_vegetarian, is_vegan, is_gluten_free, is_dairy_free, is_keto_friendly,
+          allergens, dietary_flags, customizable, customization_tips, source, confidence_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'ai', $19)
          ON CONFLICT (restaurant_id, name) DO UPDATE
          SET recommendation_count = restaurant_menu_items.recommendation_count + 1,
-             last_recommended_at = NOW()`,
+             last_recommended_at = NOW(),
+             price_cents = COALESCE(EXCLUDED.price_cents, restaurant_menu_items.price_cents),
+             is_vegetarian = COALESCE(EXCLUDED.is_vegetarian, restaurant_menu_items.is_vegetarian),
+             is_vegan = COALESCE(EXCLUDED.is_vegan, restaurant_menu_items.is_vegan),
+             is_gluten_free = COALESCE(EXCLUDED.is_gluten_free, restaurant_menu_items.is_gluten_free),
+             is_dairy_free = COALESCE(EXCLUDED.is_dairy_free, restaurant_menu_items.is_dairy_free),
+             is_keto_friendly = COALESCE(EXCLUDED.is_keto_friendly, restaurant_menu_items.is_keto_friendly),
+             allergens = COALESCE(EXCLUDED.allergens, restaurant_menu_items.allergens),
+             dietary_flags = COALESCE(EXCLUDED.dietary_flags, restaurant_menu_items.dietary_flags)`,
         [
           restaurantId,
           restaurantName,
@@ -58,6 +89,14 @@ async function cacheMenuItems(restaurantId: string, restaurantName: string, item
           item.protein,
           item.carbs,
           item.fat,
+          item.price_cents || 0,
+          item.is_vegetarian || false,
+          item.is_vegan || false,
+          item.is_gluten_free || false,
+          item.is_dairy_free || false,
+          item.is_keto_friendly || false,
+          JSON.stringify(item.allergens || []),
+          JSON.stringify(item.dietary_flags || []),
           item.customizable || false,
           item.customization_tips || null,
           item.fit_score || 75
@@ -149,20 +188,26 @@ async function generateRecommendationsWithAI(
   restaurant: string,
   maxCalories: number,
   remainingBudget: any,
-  priorities?: string[]
+  priorities?: string[],
+  dietaryRestrictions?: string[]
 ): Promise<any[]> {
   try {
+    const dietaryText = dietaryRestrictions && dietaryRestrictions.length > 0
+      ? `\n- Dietary restrictions: ${dietaryRestrictions.join(', ')}`
+      : '';
+
     const prompt = `You are a nutrition expert helping someone choose healthy meals at ${restaurant}.
 
 User's constraints:
 - Max calories: ${maxCalories}
 - Remaining daily protein goal: ${remainingBudget.protein}g
-- Priorities: ${priorities?.join(', ') || 'balanced nutrition'}
+- Priorities: ${priorities?.join(', ') || 'balanced nutrition'}${dietaryText}
 
 Generate 3 specific menu item recommendations from ${restaurant}'s actual menu that:
 1. Stay within the calorie budget
 2. Maximize protein content
-3. Are realistic items that ${restaurant} actually serves
+3. Respect dietary restrictions (${dietaryRestrictions?.length ? dietaryRestrictions.join(', ') : 'none'})
+4. Are realistic items that ${restaurant} actually serves
 
 For each recommendation, provide:
 - Item name (real menu item from ${restaurant})
@@ -171,6 +216,9 @@ For each recommendation, provide:
 - Estimated protein (g)
 - Estimated carbs (g)
 - Estimated fat (g)
+- Estimated price in cents (e.g., 995 for $9.95)
+- Dietary flags (is_vegetarian, is_vegan, is_gluten_free, is_dairy_free, is_keto_friendly)
+- Allergens (array of allergens: ["gluten", "dairy", "nuts", "soy", "eggs", "shellfish", "fish"])
 - Customizable (can the item be modified?)
 - Customization tips (if customizable: specific modifications to make it better)
 - Fit score (0-100 based on how well it matches their goals)
@@ -195,6 +243,13 @@ Return as JSON array:
     "protein": number,
     "carbs": number,
     "fat": number,
+    "price_cents": number,
+    "is_vegetarian": boolean,
+    "is_vegan": boolean,
+    "is_gluten_free": boolean,
+    "is_dairy_free": boolean,
+    "is_keto_friendly": boolean,
+    "allergens": ["allergen1", "allergen2"],
     "customizable": boolean,
     "customization_tips": "Specific tips",
     "fit_score": number,
@@ -248,8 +303,33 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
     // Normalize restaurant name
     const normalizedName = restaurant.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
 
+    // Fetch user dietary preferences
+    let dietaryRestrictions: string[] = [];
+    try {
+      const prefsResult = await pool.query(
+        `SELECT is_vegetarian, is_vegan, is_gluten_free, is_dairy_free, is_keto,
+                is_paleo, is_halal, is_kosher, allergens, disliked_foods
+         FROM user_dietary_preferences WHERE user_id = $1`,
+        [shopifyCustomerId]
+      );
+
+      if (prefsResult.rows.length > 0) {
+        const prefs = prefsResult.rows[0];
+        if (prefs.is_vegetarian) dietaryRestrictions.push('vegetarian');
+        if (prefs.is_vegan) dietaryRestrictions.push('vegan');
+        if (prefs.is_gluten_free) dietaryRestrictions.push('gluten_free');
+        if (prefs.is_dairy_free) dietaryRestrictions.push('dairy_free');
+        if (prefs.is_keto) dietaryRestrictions.push('keto');
+        if (prefs.is_paleo) dietaryRestrictions.push('paleo');
+        if (prefs.is_halal) dietaryRestrictions.push('halal');
+        if (prefs.is_kosher) dietaryRestrictions.push('kosher');
+      }
+    } catch (error: any) {
+      console.log('[restaurant] No dietary preferences found for user, continuing without restrictions');
+    }
+
     // Try database first, then hardcoded fallback
-    let menu = await getMenuFromDatabase(normalizedName);
+    let menu = await getMenuFromDatabase(normalizedName, dietaryRestrictions);
     if (menu.length === 0) {
       menu = RESTAURANT_MENUS[normalizedName] || [];
     }
@@ -288,7 +368,8 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
         restaurant,
         effectiveMaxCalories,
         remainingBudget,
-        priorities
+        priorities,
+        dietaryRestrictions
       );
 
       // Cache the AI-generated items for future use
@@ -325,6 +406,19 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
           protein: item.protein,
           carbs: item.carbs,
           fat: item.fat
+        },
+        price: item.price_cents ? {
+          cents: item.price_cents,
+          formatted: `$${(item.price_cents / 100).toFixed(2)}`,
+          protein_per_dollar: item.price_cents > 0 ? (item.protein / (item.price_cents / 100)).toFixed(2) : null
+        } : null,
+        dietary_info: {
+          is_vegetarian: item.is_vegetarian || false,
+          is_vegan: item.is_vegan || false,
+          is_gluten_free: item.is_gluten_free || false,
+          is_dairy_free: item.is_dairy_free || false,
+          is_keto_friendly: item.is_keto_friendly || false,
+          allergens: item.allergens || []
         },
         customization: item.customizable ? {
           build: item.customization_tips?.includes(';')
@@ -399,6 +493,19 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
         protein: item.protein,
         carbs: item.carbs,
         fat: item.fat
+      },
+      price: item.price_cents ? {
+        cents: item.price_cents,
+        formatted: `$${(item.price_cents / 100).toFixed(2)}`,
+        protein_per_dollar: item.price_cents > 0 ? (item.protein / (item.price_cents / 100)).toFixed(2) : null
+      } : null,
+      dietary_info: {
+        is_vegetarian: item.is_vegetarian || false,
+        is_vegan: item.is_vegan || false,
+        is_gluten_free: item.is_gluten_free || false,
+        is_dairy_free: item.is_dairy_free || false,
+        is_keto_friendly: item.is_keto_friendly || false,
+        allergens: item.allergens || []
       },
       customization: item.customizable ? {
         build: ['Add extra protein if available', 'Load up on vegetables'],
@@ -524,6 +631,797 @@ restaurantRouter.post('/estimate-item', async (req: Request, res: Response) => {
 
   } catch (err: any) {
     console.error('[restaurant] estimate-item error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/user/dietary-preferences
+ * Get user's dietary preferences
+ */
+restaurantRouter.get('/user/dietary-preferences/:shopifyCustomerId', async (req: Request, res: Response) => {
+  try {
+    const { shopifyCustomerId } = req.params;
+
+    if (!shopifyCustomerId) {
+      return res.status(400).json({ ok: false, error: 'Missing shopifyCustomerId' });
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM user_dietary_preferences WHERE user_id = $1`,
+      [shopifyCustomerId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        ok: true,
+        preferences: null,
+        message: 'No dietary preferences set'
+      });
+    }
+
+    res.json({
+      ok: true,
+      preferences: result.rows[0]
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get dietary preferences error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/user/dietary-preferences
+ * Set or update user's dietary preferences
+ */
+restaurantRouter.post('/user/dietary-preferences', async (req: Request, res: Response) => {
+  try {
+    const {
+      shopifyCustomerId,
+      is_vegetarian,
+      is_vegan,
+      is_gluten_free,
+      is_dairy_free,
+      is_keto,
+      is_paleo,
+      is_halal,
+      is_kosher,
+      allergens,
+      disliked_foods,
+      max_meal_budget_cents,
+      prefer_value_options
+    } = req.body;
+
+    if (!shopifyCustomerId) {
+      return res.status(400).json({ ok: false, error: 'Missing shopifyCustomerId' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO user_dietary_preferences
+       (user_id, is_vegetarian, is_vegan, is_gluten_free, is_dairy_free, is_keto,
+        is_paleo, is_halal, is_kosher, allergens, disliked_foods,
+        max_meal_budget_cents, prefer_value_options)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (user_id) DO UPDATE
+       SET is_vegetarian = EXCLUDED.is_vegetarian,
+           is_vegan = EXCLUDED.is_vegan,
+           is_gluten_free = EXCLUDED.is_gluten_free,
+           is_dairy_free = EXCLUDED.is_dairy_free,
+           is_keto = EXCLUDED.is_keto,
+           is_paleo = EXCLUDED.is_paleo,
+           is_halal = EXCLUDED.is_halal,
+           is_kosher = EXCLUDED.is_kosher,
+           allergens = EXCLUDED.allergens,
+           disliked_foods = EXCLUDED.disliked_foods,
+           max_meal_budget_cents = EXCLUDED.max_meal_budget_cents,
+           prefer_value_options = EXCLUDED.prefer_value_options,
+           updated_at = NOW()
+       RETURNING *`,
+      [
+        shopifyCustomerId,
+        is_vegetarian || false,
+        is_vegan || false,
+        is_gluten_free || false,
+        is_dairy_free || false,
+        is_keto || false,
+        is_paleo || false,
+        is_halal || false,
+        is_kosher || false,
+        JSON.stringify(allergens || []),
+        JSON.stringify(disliked_foods || []),
+        max_meal_budget_cents || null,
+        prefer_value_options || false
+      ]
+    );
+
+    res.json({
+      ok: true,
+      preferences: result.rows[0],
+      message: 'Dietary preferences saved successfully'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] save dietary preferences error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/rate
+ * Rate a restaurant menu item
+ */
+restaurantRouter.post('/rate', async (req: Request, res: Response) => {
+  try {
+    const {
+      shopifyCustomerId,
+      menuItemId,
+      restaurantId,
+      rating,
+      review_text,
+      calories_accurate,
+      protein_accurate,
+      taste_rating,
+      value_rating,
+      verified_order
+    } = req.body;
+
+    if (!shopifyCustomerId || !menuItemId || !restaurantId || !rating) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required fields: shopifyCustomerId, menuItemId, restaurantId, rating'
+      });
+    }
+
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ ok: false, error: 'Rating must be between 1 and 5' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO restaurant_item_ratings
+       (user_id, menu_item_id, restaurant_id, rating, review_text,
+        calories_accurate, protein_accurate, taste_rating, value_rating, verified_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (user_id, menu_item_id) DO UPDATE
+       SET rating = EXCLUDED.rating,
+           review_text = EXCLUDED.review_text,
+           calories_accurate = EXCLUDED.calories_accurate,
+           protein_accurate = EXCLUDED.protein_accurate,
+           taste_rating = EXCLUDED.taste_rating,
+           value_rating = EXCLUDED.value_rating,
+           verified_order = EXCLUDED.verified_order,
+           updated_at = NOW()
+       RETURNING *`,
+      [
+        shopifyCustomerId,
+        menuItemId,
+        restaurantId,
+        rating,
+        review_text || null,
+        calories_accurate || null,
+        protein_accurate || null,
+        taste_rating || null,
+        value_rating || null,
+        verified_order || false
+      ]
+    );
+
+    res.json({
+      ok: true,
+      rating: result.rows[0],
+      message: 'Rating submitted successfully'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] rate item error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/ratings/:menuItemId
+ * Get ratings for a menu item
+ */
+restaurantRouter.get('/ratings/:menuItemId', async (req: Request, res: Response) => {
+  try {
+    const { menuItemId } = req.params;
+
+    const result = await pool.query(
+      `SELECT
+        r.*,
+        COUNT(*) OVER() as total_ratings,
+        AVG(rating) OVER() as avg_rating
+       FROM restaurant_item_ratings r
+       WHERE menu_item_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [menuItemId]
+    );
+
+    res.json({
+      ok: true,
+      ratings: result.rows,
+      summary: result.rows.length > 0 ? {
+        total_ratings: result.rows[0].total_ratings,
+        avg_rating: parseFloat(result.rows[0].avg_rating).toFixed(1)
+      } : { total_ratings: 0, avg_rating: 0 }
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get ratings error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/favorite
+ * Add item to user's favorites
+ */
+restaurantRouter.post('/favorite', async (req: Request, res: Response) => {
+  try {
+    const {
+      shopifyCustomerId,
+      restaurantId,
+      menuItemId,
+      orderName,
+      customizations
+    } = req.body;
+
+    if (!shopifyCustomerId || !restaurantId || !menuItemId) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required fields: shopifyCustomerId, restaurantId, menuItemId'
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO user_favorite_orders
+       (user_id, restaurant_id, menu_item_id, order_name, customizations, times_ordered, last_ordered_at)
+       VALUES ($1, $2, $3, $4, $5, 1, NOW())
+       ON CONFLICT (user_id, restaurant_id, menu_item_id)
+       DO UPDATE SET
+         times_ordered = user_favorite_orders.times_ordered + 1,
+         last_ordered_at = NOW(),
+         customizations = COALESCE(EXCLUDED.customizations, user_favorite_orders.customizations)
+       RETURNING *`,
+      [shopifyCustomerId, restaurantId, menuItemId, orderName || null, customizations || null]
+    );
+
+    res.json({
+      ok: true,
+      favorite: result.rows[0],
+      message: 'Added to favorites'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] add favorite error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/favorites/:shopifyCustomerId
+ * Get user's favorite orders
+ */
+restaurantRouter.get('/favorites/:shopifyCustomerId', async (req: Request, res: Response) => {
+  try {
+    const { shopifyCustomerId } = req.params;
+    const { restaurantId } = req.query;
+
+    let query = `
+      SELECT f.*, m.name, m.category, m.calories, m.protein, m.carbs, m.fat
+      FROM user_favorite_orders f
+      LEFT JOIN restaurant_menu_items m ON f.menu_item_id = m.id
+      WHERE f.user_id = $1
+    `;
+    const params: any[] = [shopifyCustomerId];
+
+    if (restaurantId) {
+      query += ' AND f.restaurant_id = $2';
+      params.push(restaurantId);
+    }
+
+    query += ' ORDER BY f.last_ordered_at DESC';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      ok: true,
+      favorites: result.rows
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get favorites error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/locations
+ * Add or update a restaurant location
+ */
+restaurantRouter.post('/locations', async (req: Request, res: Response) => {
+  try {
+    const {
+      restaurantId,
+      restaurantName,
+      placeId,
+      address,
+      city,
+      state,
+      zipCode,
+      country,
+      latitude,
+      longitude,
+      phone,
+      website,
+      isChainLocation,
+      chainName,
+      rating,
+      totalRatings,
+      hours
+    } = req.body;
+
+    if (!restaurantId || !restaurantName || !latitude || !longitude) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required fields: restaurantId, restaurantName, latitude, longitude'
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO restaurant_locations
+       (restaurant_id, restaurant_name, place_id, address, city, state, zip_code, country,
+        latitude, longitude, phone, website, is_chain_location, chain_name, rating, total_ratings, hours)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       ON CONFLICT (place_id) DO UPDATE
+       SET restaurant_name = EXCLUDED.restaurant_name,
+           address = EXCLUDED.address,
+           city = EXCLUDED.city,
+           state = EXCLUDED.state,
+           zip_code = EXCLUDED.zip_code,
+           phone = EXCLUDED.phone,
+           website = EXCLUDED.website,
+           rating = EXCLUDED.rating,
+           total_ratings = EXCLUDED.total_ratings,
+           hours = EXCLUDED.hours,
+           updated_at = NOW()
+       RETURNING *`,
+      [
+        restaurantId, restaurantName, placeId || null, address || null, city || null,
+        state || null, zipCode || null, country || 'USA', latitude, longitude,
+        phone || null, website || null, isChainLocation || false, chainName || null,
+        rating || null, totalRatings || 0, JSON.stringify(hours || {})
+      ]
+    );
+
+    res.json({
+      ok: true,
+      location: result.rows[0],
+      message: 'Location saved successfully'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] save location error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/nearby
+ * Find nearby restaurants based on coordinates
+ */
+restaurantRouter.get('/nearby', async (req: Request, res: Response) => {
+  try {
+    const { latitude, longitude, radius_miles } = req.query;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required parameters: latitude, longitude'
+      });
+    }
+
+    const radiusMiles = radius_miles ? parseFloat(radius_miles as string) : 5;
+    const lat = parseFloat(latitude as string);
+    const lng = parseFloat(longitude as string);
+
+    // Use earth distance function for spatial queries
+    const result = await pool.query(
+      `SELECT *,
+        earth_distance(
+          ll_to_earth(latitude::float8, longitude::float8),
+          ll_to_earth($1, $2)
+        ) * 0.000621371 as distance_miles
+       FROM restaurant_locations
+       WHERE earth_box(ll_to_earth($1, $2), $3 * 1609.34) @> ll_to_earth(latitude::float8, longitude::float8)
+       ORDER BY distance_miles ASC
+       LIMIT 50`,
+      [lat, lng, radiusMiles]
+    );
+
+    res.json({
+      ok: true,
+      locations: result.rows,
+      search_center: { latitude: lat, longitude: lng },
+      radius_miles: radiusMiles
+    });
+  } catch (err: any) {
+    console.error('[restaurant] nearby search error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/location/:placeId
+ * Get location details by place ID
+ */
+restaurantRouter.get('/location/:placeId', async (req: Request, res: Response) => {
+  try {
+    const { placeId } = req.params;
+
+    const result = await pool.query(
+      `SELECT * FROM restaurant_locations WHERE place_id = $1`,
+      [placeId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Location not found'
+      });
+    }
+
+    res.json({
+      ok: true,
+      location: result.rows[0]
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get location error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/locations/search
+ * Search restaurants by city/state
+ */
+restaurantRouter.get('/locations/search', async (req: Request, res: Response) => {
+  try {
+    const { city, state, restaurantName } = req.query;
+
+    if (!city && !state && !restaurantName) {
+      return res.status(400).json({
+        ok: false,
+        error: 'At least one search parameter required: city, state, or restaurantName'
+      });
+    }
+
+    let query = 'SELECT * FROM restaurant_locations WHERE 1=1';
+    const params: any[] = [];
+    let paramCount = 0;
+
+    if (city) {
+      paramCount++;
+      query += ` AND LOWER(city) = LOWER($${paramCount})`;
+      params.push(city);
+    }
+
+    if (state) {
+      paramCount++;
+      query += ` AND LOWER(state) = LOWER($${paramCount})`;
+      params.push(state);
+    }
+
+    if (restaurantName) {
+      paramCount++;
+      query += ` AND LOWER(restaurant_name) LIKE LOWER($${paramCount})`;
+      params.push(`%${restaurantName}%`);
+    }
+
+    query += ' ORDER BY restaurant_name, city LIMIT 100';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      ok: true,
+      locations: result.rows,
+      total: result.rows.length
+    });
+  } catch (err: any) {
+    console.error('[restaurant] location search error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/analyze-photo
+ * Analyze a menu photo using AI vision
+ */
+restaurantRouter.post('/analyze-photo', async (req: Request, res: Response) => {
+  try {
+    const { shopifyCustomerId, restaurantId, restaurantName, photoUrl } = req.body;
+
+    if (!shopifyCustomerId || !photoUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required fields: shopifyCustomerId, photoUrl'
+      });
+    }
+
+    // Save the photo record immediately
+    const photoRecord = await pool.query(
+      `INSERT INTO menu_photo_uploads
+       (user_id, restaurant_id, restaurant_name, photo_url, ai_analyzed)
+       VALUES ($1, $2, $3, $4, false)
+       RETURNING *`,
+      [shopifyCustomerId, restaurantId || null, restaurantName || null, photoUrl]
+    );
+
+    const photoId = photoRecord.rows[0].id;
+
+    // Analyze the photo with OpenAI Vision
+    try {
+      const visionCompletion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a nutrition expert analyzing restaurant menu photos. Extract all visible menu items with their nutritional information.`
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Analyze this menu photo and extract all visible menu items. For each item, provide:
+- Item name
+- Category (appetizer, entree, sandwich, salad, etc.)
+- Estimated calories
+- Estimated protein (g)
+- Estimated carbs (g)
+- Estimated fat (g)
+- Price (if visible)
+- Dietary flags (vegetarian, vegan, gluten-free, dairy-free)
+- Brief description
+
+Return as JSON array with confidence score (0-100) for each item:
+{
+  "items": [
+    {
+      "name": "Item Name",
+      "category": "category",
+      "calories": number,
+      "protein": number,
+      "carbs": number,
+      "fat": number,
+      "price_cents": number or null,
+      "is_vegetarian": boolean,
+      "is_vegan": boolean,
+      "is_gluten_free": boolean,
+      "is_dairy_free": boolean,
+      "description": "brief description",
+      "confidence": number (0-100)
+    }
+  ],
+  "restaurant_detected": "restaurant name if visible",
+  "overall_confidence": number (0-100)
+}`
+              },
+              {
+                type: 'image_url',
+                image_url: { url: photoUrl }
+              }
+            ]
+          }
+        ],
+        max_tokens: 2000
+      });
+
+      const visionContent = visionCompletion.choices[0]?.message?.content || '{}';
+      const jsonMatch = visionContent.match(/\{[\s\S]*\}/);
+      const analysisResult = JSON.parse(jsonMatch ? jsonMatch[0] : visionContent);
+
+      // Update the photo record with AI analysis
+      await pool.query(
+        `UPDATE menu_photo_uploads
+         SET ai_analyzed = true,
+             detected_items = $1,
+             confidence_score = $2
+         WHERE id = $3`,
+        [
+          JSON.stringify(analysisResult.items || []),
+          analysisResult.overall_confidence || 0,
+          photoId
+        ]
+      );
+
+      res.json({
+        ok: true,
+        photo_id: photoId,
+        analysis: analysisResult,
+        message: `Detected ${analysisResult.items?.length || 0} menu items`
+      });
+    } catch (aiError: any) {
+      console.error('[restaurant] AI vision analysis error:', aiError.message);
+
+      // Mark photo as analyzed but with error
+      await pool.query(
+        `UPDATE menu_photo_uploads
+         SET ai_analyzed = true,
+             confidence_score = 0
+         WHERE id = $1`,
+        [photoId]
+      );
+
+      res.json({
+        ok: false,
+        photo_id: photoId,
+        error: 'Failed to analyze photo with AI',
+        details: aiError.message
+      });
+    }
+  } catch (err: any) {
+    console.error('[restaurant] analyze-photo error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/photos/:shopifyCustomerId
+ * Get user's uploaded menu photos
+ */
+restaurantRouter.get('/photos/:shopifyCustomerId', async (req: Request, res: Response) => {
+  try {
+    const { shopifyCustomerId } = req.params;
+    const { restaurantId } = req.query;
+
+    let query = `SELECT * FROM menu_photo_uploads WHERE user_id = $1`;
+    const params: any[] = [shopifyCustomerId];
+
+    if (restaurantId) {
+      query += ' AND restaurant_id = $2';
+      params.push(restaurantId);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT 50';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      ok: true,
+      photos: result.rows
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get photos error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/photo/:photoId/confirm
+ * User confirms or corrects AI analysis
+ */
+restaurantRouter.post('/photo/:photoId/confirm', async (req: Request, res: Response) => {
+  try {
+    const { photoId } = req.params;
+    const { corrections } = req.body;
+
+    const result = await pool.query(
+      `UPDATE menu_photo_uploads
+       SET user_confirmed = true,
+           user_corrections = $1
+       WHERE id = $2
+       RETURNING *`,
+      [JSON.stringify(corrections || {}), photoId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Photo not found' });
+    }
+
+    res.json({
+      ok: true,
+      photo: result.rows[0],
+      message: 'Photo analysis confirmed'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] confirm photo error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/restaurant/share
+ * Share restaurant recommendations
+ */
+restaurantRouter.post('/share', async (req: Request, res: Response) => {
+  try {
+    const {
+      shopifyCustomerId,
+      restaurantId,
+      restaurantName,
+      menuItemIds,
+      title,
+      description,
+      photoUrl,
+      visibility
+    } = req.body;
+
+    if (!shopifyCustomerId || !restaurantId || !restaurantName) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required fields: shopifyCustomerId, restaurantId, restaurantName'
+      });
+    }
+
+    // Generate a unique share ID
+    const shareId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const result = await pool.query(
+      `INSERT INTO shared_recommendations
+       (share_id, user_id, restaurant_id, restaurant_name, menu_item_ids, title, description, photo_url, visibility)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        shareId,
+        shopifyCustomerId,
+        restaurantId,
+        restaurantName,
+        menuItemIds || [],
+        title || null,
+        description || null,
+        photoUrl || null,
+        visibility || 'public'
+      ]
+    );
+
+    res.json({
+      ok: true,
+      share: result.rows[0],
+      share_url: `${process.env.FRONTEND_URL || 'https://heirclark.com'}/shared/${shareId}`,
+      message: 'Recommendation shared successfully'
+    });
+  } catch (err: any) {
+    console.error('[restaurant] share error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/restaurant/shared/:shareId
+ * Get shared recommendation details
+ */
+restaurantRouter.get('/shared/:shareId', async (req: Request, res: Response) => {
+  try {
+    const { shareId } = req.params;
+
+    const result = await pool.query(
+      `UPDATE shared_recommendations
+       SET view_count = view_count + 1
+       WHERE share_id = $1
+       RETURNING *`,
+      [shareId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Shared recommendation not found' });
+    }
+
+    const share = result.rows[0];
+
+    // Fetch menu item details if menu_item_ids exist
+    let menuItems = [];
+    if (share.menu_item_ids && share.menu_item_ids.length > 0) {
+      const itemsResult = await pool.query(
+        `SELECT * FROM restaurant_menu_items WHERE id = ANY($1)`,
+        [share.menu_item_ids]
+      );
+      menuItems = itemsResult.rows;
+    }
+
+    res.json({
+      ok: true,
+      share: {
+        ...share,
+        menu_items: menuItems
+      }
+    });
+  } catch (err: any) {
+    console.error('[restaurant] get shared error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
