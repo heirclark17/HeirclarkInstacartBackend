@@ -14,7 +14,63 @@ const openai = new OpenAI({
 
 export const restaurantRouter = Router();
 
-// Restaurant menu database (sample data - would be expanded)
+/**
+ * Get menu items from database
+ */
+async function getMenuFromDatabase(restaurantId: string): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT
+        id, name, category, calories, protein, carbs, fat,
+        customizable, customization_tips, source, confidence_score
+       FROM restaurant_menu_items
+       WHERE restaurant_id = $1
+       ORDER BY recommendation_count DESC, calories ASC`,
+      [restaurantId]
+    );
+    return result.rows;
+  } catch (error: any) {
+    console.error('[restaurant] Database query error:', error.message);
+    return [];
+  }
+}
+
+/**
+ * Save AI-generated menu items to database for future use
+ */
+async function cacheMenuItems(restaurantId: string, restaurantName: string, items: any[]): Promise<void> {
+  try {
+    for (const item of items) {
+      await pool.query(
+        `INSERT INTO restaurant_menu_items
+         (restaurant_id, restaurant_name, name, category, calories, protein, carbs, fat,
+          customizable, customization_tips, source, confidence_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ai', $11)
+         ON CONFLICT (restaurant_id, name) DO UPDATE
+         SET recommendation_count = restaurant_menu_items.recommendation_count + 1,
+             last_recommended_at = NOW()`,
+        [
+          restaurantId,
+          restaurantName,
+          item.name,
+          item.category,
+          item.calories,
+          item.protein,
+          item.carbs,
+          item.fat,
+          item.customizable || false,
+          item.customization_tips || null,
+          item.fit_score || 75
+        ]
+      );
+    }
+    console.log(`[restaurant] Cached ${items.length} items for ${restaurantName}`);
+  } catch (error: any) {
+    console.error('[restaurant] Cache error:', error.message);
+  }
+}
+
+// Legacy hardcoded menus (fallback only - database is primary source)
 const RESTAURANT_MENUS: Record<string, any[]> = {
   'chipotle': [
     { name: 'Chicken Burrito Bowl', category: 'bowls', calories: 665, protein: 53, carbs: 55, fat: 24, customizable: true },
@@ -179,7 +235,12 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
 
     // Normalize restaurant name
     const normalizedName = restaurant.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
-    const menu = RESTAURANT_MENUS[normalizedName];
+
+    // Try database first, then hardcoded fallback
+    let menu = await getMenuFromDatabase(normalizedName);
+    if (menu.length === 0) {
+      menu = RESTAURANT_MENUS[normalizedName] || [];
+    }
 
     // Get user's remaining budget for the day
     const goalsResult = await pool.query(
@@ -207,7 +268,7 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
 
     const effectiveMaxCalories = maxCalories || remainingBudget.calories;
 
-    if (!menu) {
+    if (!menu || menu.length === 0) {
       // Unknown restaurant - use OpenAI to generate recommendations
       console.log(`[restaurant] Generating AI recommendations for ${restaurant}`);
 
@@ -217,6 +278,11 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
         remainingBudget,
         priorities
       );
+
+      // Cache the AI-generated items for future use
+      if (aiItems.length > 0) {
+        await cacheMenuItems(normalizedName, restaurant, aiItems);
+      }
 
       if (aiItems.length === 0) {
         // AI generation failed - provide general guidance

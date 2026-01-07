@@ -1,0 +1,196 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MealPersonalizer Input Schema",
+  "description": "Schema for meal plan generation inputs",
+  "type": "object",
+  "definitions": {
+    "user_goal": {
+      "type": "object",
+      "description": "User's nutrition and fitness goals",
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "Unique user identifier (Shopify customer ID)"
+        },
+        "goal_type": {
+          "type": "string",
+          "enum": ["cut", "bulk", "maintain", "recomp"],
+          "description": "Primary fitness goal"
+        },
+        "daily_calories": {
+          "type": "number",
+          "minimum": 1200,
+          "maximum": 5000,
+          "description": "Target daily calorie intake"
+        },
+        "protein_g": {
+          "type": "number",
+          "minimum": 50,
+          "maximum": 400,
+          "description": "Target daily protein in grams"
+        },
+        "carbs_g": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Target daily carbohydrates in grams"
+        },
+        "fat_g": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 300,
+          "description": "Target daily fat in grams"
+        },
+        "weight_kg": {
+          "type": "number",
+          "description": "Current body weight in kg"
+        },
+        "target_weight_kg": {
+          "type": "number",
+          "description": "Target body weight in kg"
+        },
+        "activity_level": {
+          "type": "string",
+          "enum": ["sedentary", "light", "moderate", "active", "very_active"],
+          "description": "General activity level"
+        }
+      },
+      "required": ["user_id", "goal_type", "daily_calories"]
+    },
+    "nutrition_preference": {
+      "type": "object",
+      "description": "Dietary preferences and restrictions",
+      "properties": {
+        "diet_type": {
+          "type": "string",
+          "enum": ["standard", "vegetarian", "vegan", "pescatarian", "keto", "paleo", "mediterranean"],
+          "default": "standard"
+        },
+        "allergies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["gluten", "dairy", "nuts", "peanuts", "soy", "eggs", "fish", "shellfish", "sesame"]
+          },
+          "description": "Food allergies to avoid"
+        },
+        "dislikes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Foods user dislikes (will be excluded)"
+        },
+        "favorites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Favorite foods to include more often"
+        },
+        "cooking_skill": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "default": "intermediate"
+        },
+        "max_prep_time_min": {
+          "type": "number",
+          "default": 30,
+          "description": "Maximum prep time per meal in minutes"
+        },
+        "meal_prep_friendly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Prefer meals that can be prepped in advance"
+        },
+        "budget": {
+          "type": "string",
+          "enum": ["budget", "moderate", "premium"],
+          "default": "moderate"
+        }
+      }
+    },
+    "workout_history": {
+      "type": "object",
+      "description": "Workout schedule and history from FitnessCoach MCP",
+      "properties": {
+        "weekly_schedule": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "day": {
+                "type": "string",
+                "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+              },
+              "workout_type": {
+                "type": "string",
+                "enum": ["rest", "cardio_light", "cardio_moderate", "cardio_intense", "strength_upper", "strength_lower", "strength_full", "hiit", "yoga", "sports"]
+              },
+              "duration_min": {
+                "type": "number"
+              },
+              "estimated_calories_burned": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "steps_goal": {
+          "type": "number",
+          "default": 10000
+        },
+        "recent_workouts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string",
+                "format": "date"
+              },
+              "type": {
+                "type": "string"
+              },
+              "duration_min": {
+                "type": "number"
+              },
+              "calories_burned": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "user_goal": {
+      "$ref": "#/definitions/user_goal"
+    },
+    "nutrition_preference": {
+      "$ref": "#/definitions/nutrition_preference"
+    },
+    "workout_history": {
+      "$ref": "#/definitions/workout_history"
+    },
+    "week_start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date for the meal plan week"
+    },
+    "include_instacart": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether to generate Instacart shopping list"
+    },
+    "servings_per_meal": {
+      "type": "number",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 8,
+      "description": "Number of servings per meal (for meal prep)"
+    }
+  },
+  "required": ["user_goal"]
+}

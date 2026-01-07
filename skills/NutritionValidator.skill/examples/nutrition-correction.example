@@ -1,0 +1,194 @@
+# NutritionValidator Examples
+
+## Example 1: Correct Nutrition Data
+**Input:**
+```json
+{
+  "food_name": "chicken breast, grilled",
+  "calories": 165,
+  "protein_g": 31,
+  "carbs_g": 0,
+  "fat_g": 3.6,
+  "serving_size": "100g"
+}
+```
+
+**Output:**
+```json
+{
+  "validated": true,
+  "input": {
+    "food_name": "chicken breast, grilled",
+    "calories": 165,
+    "protein_g": 31,
+    "carbs_g": 0,
+    "fat_g": 3.6,
+    "serving_size": "100g"
+  },
+  "usda_data": {
+    "food_name": "Chicken, broiler or fryers, breast, skinless, boneless, meat only, cooked, grilled",
+    "fdc_id": "171534",
+    "calories": 165,
+    "protein_g": 31.02,
+    "carbs_g": 0,
+    "fat_g": 3.57,
+    "serving_size_g": 100
+  },
+  "discrepancies": [],
+  "corrections": null,
+  "confidence": 98,
+  "recommendation": "Nutrition data verified. Values match USDA SR Legacy database within acceptable range."
+}
+```
+
+---
+
+## Example 2: Incorrect Nutrition Data (Needs Correction)
+**Input:**
+```json
+{
+  "food_name": "banana",
+  "calories": 150,
+  "protein_g": 2,
+  "carbs_g": 30,
+  "fat_g": 1,
+  "serving_size": "1 medium"
+}
+```
+
+**Output:**
+```json
+{
+  "validated": false,
+  "input": {
+    "food_name": "banana",
+    "calories": 150,
+    "protein_g": 2,
+    "carbs_g": 30,
+    "fat_g": 1,
+    "serving_size": "1 medium"
+  },
+  "usda_data": {
+    "food_name": "Bananas, raw",
+    "fdc_id": "173944",
+    "calories": 105,
+    "protein_g": 1.29,
+    "carbs_g": 26.95,
+    "fat_g": 0.39,
+    "serving_size_g": 118
+  },
+  "discrepancies": [
+    {
+      "field": "calories",
+      "input_value": 150,
+      "usda_value": 105,
+      "difference_percent": 42.9
+    },
+    {
+      "field": "fat_g",
+      "input_value": 1,
+      "usda_value": 0.39,
+      "difference_percent": 156.4
+    }
+  ],
+  "corrections": {
+    "calories": 105,
+    "protein_g": 1.3,
+    "carbs_g": 27,
+    "fat_g": 0.4
+  },
+  "confidence": 95,
+  "recommendation": "Significant discrepancies found. Calories overestimated by 43%. Recommend using USDA values for 1 medium banana (118g)."
+}
+```
+
+---
+
+## Example 3: Food Not Found - Suggestions Provided
+**Input:**
+```json
+{
+  "food_name": "keto protein shake homemade",
+  "calories": 250,
+  "protein_g": 30,
+  "carbs_g": 5,
+  "fat_g": 12,
+  "serving_size": "1 serving"
+}
+```
+
+**Output:**
+```json
+{
+  "validated": null,
+  "input": {
+    "food_name": "keto protein shake homemade",
+    "calories": 250,
+    "protein_g": 30,
+    "carbs_g": 5,
+    "fat_g": 12,
+    "serving_size": "1 serving"
+  },
+  "usda_data": null,
+  "discrepancies": [],
+  "corrections": null,
+  "confidence": 0,
+  "similar_foods": [
+    {
+      "food_name": "Protein supplement, whey based powder",
+      "fdc_id": "173178",
+      "match_score": 65
+    },
+    {
+      "food_name": "Milk, lowfat, fluid, 1% milkfat, protein fortified",
+      "fdc_id": "173442",
+      "match_score": 45
+    }
+  ],
+  "recommendation": "Exact match not found in USDA database. This appears to be a custom/homemade item. Consider logging individual ingredients for accurate tracking: protein powder, milk/cream, oil, etc."
+}
+```
+
+---
+
+## Example 4: Branded Product Lookup
+**Input:**
+```json
+{
+  "food_name": "Quest Protein Bar Chocolate Chip Cookie Dough",
+  "calories": 200,
+  "protein_g": 21,
+  "carbs_g": 22,
+  "fat_g": 8,
+  "serving_size": "1 bar (60g)"
+}
+```
+
+**Output:**
+```json
+{
+  "validated": true,
+  "input": {
+    "food_name": "Quest Protein Bar Chocolate Chip Cookie Dough",
+    "calories": 200,
+    "protein_g": 21,
+    "carbs_g": 22,
+    "fat_g": 8,
+    "serving_size": "1 bar (60g)"
+  },
+  "usda_data": {
+    "food_name": "QUEST, PROTEIN BAR, CHOCOLATE CHIP COOKIE DOUGH",
+    "fdc_id": "564738",
+    "calories": 200,
+    "protein_g": 21,
+    "carbs_g": 22,
+    "fat_g": 8,
+    "serving_size_g": 60,
+    "data_type": "Branded"
+  },
+  "discrepancies": [],
+  "corrections": null,
+  "confidence": 100,
+  "recommendation": "Exact match found in USDA Branded database. All values verified."
+}
+```

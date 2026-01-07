@@ -1,0 +1,123 @@
+{
+  "name": "NutritionValidator",
+  "version": "1.0.0",
+  "description": "Validates nutrition data against USDA database via OpenNutrition MCP",
+  "mcp_servers": [
+    {
+      "name": "nutrition",
+      "package": "@anthropic/open-nutrition-mcp",
+      "required": true,
+      "capabilities": [
+        "food_search",
+        "nutrition_lookup",
+        "serving_conversion"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "validate_nutrition",
+      "description": "Validate food nutrition data against USDA database",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "food_name": {
+            "type": "string",
+            "description": "Name of the food item to validate"
+          },
+          "calories": {
+            "type": "number",
+            "description": "Calorie value to validate"
+          },
+          "protein_g": {
+            "type": "number",
+            "description": "Protein in grams to validate"
+          },
+          "carbs_g": {
+            "type": "number",
+            "description": "Carbohydrates in grams to validate"
+          },
+          "fat_g": {
+            "type": "number",
+            "description": "Fat in grams to validate"
+          },
+          "serving_size": {
+            "type": "string",
+            "description": "Serving size description (e.g., '100g', '1 cup', '1 medium')"
+          }
+        },
+        "required": ["food_name", "calories"]
+      }
+    },
+    {
+      "name": "search_usda_food",
+      "description": "Search USDA database for food items",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Food search query"
+          },
+          "data_type": {
+            "type": "string",
+            "enum": ["SR Legacy", "Branded", "Survey (FNDDS)", "Foundation"],
+            "description": "USDA database type to search"
+          },
+          "limit": {
+            "type": "number",
+            "default": 5,
+            "description": "Maximum number of results"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "get_nutrition_by_fdc_id",
+      "description": "Get detailed nutrition data by USDA FDC ID",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "fdc_id": {
+            "type": "string",
+            "description": "USDA FoodData Central ID"
+          }
+        },
+        "required": ["fdc_id"]
+      }
+    },
+    {
+      "name": "convert_serving_size",
+      "description": "Convert between serving size units",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "food_name": {
+            "type": "string",
+            "description": "Name of the food for density lookup"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Amount in source unit"
+          },
+          "from_unit": {
+            "type": "string",
+            "description": "Source unit (g, oz, cup, tbsp, etc.)"
+          },
+          "to_unit": {
+            "type": "string",
+            "description": "Target unit"
+          }
+        },
+        "required": ["food_name", "amount", "from_unit", "to_unit"]
+      }
+    }
+  ],
+  "settings": {
+    "discrepancy_threshold_percent": 10,
+    "default_serving_size_g": 100,
+    "prefer_sr_legacy": true,
+    "cache_ttl_hours": 24
+  }
+}

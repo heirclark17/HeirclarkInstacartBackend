@@ -1,0 +1,147 @@
+{
+  "name": "SmartGrocery",
+  "version": "1.0.0",
+  "description": "Intelligent grocery list generation based on nutrition gap analysis",
+  "integrations": {
+    "instacart": {
+      "type": "api",
+      "base_url": "https://connect.instacart.com/v2",
+      "auth_type": "oauth2",
+      "required_scopes": ["cart:write", "products:read", "stores:read"],
+      "endpoints": {
+        "search_products": {
+          "method": "GET",
+          "path": "/products/search",
+          "params": ["query", "store_id", "limit"],
+          "description": "Search for products by name"
+        },
+        "get_product": {
+          "method": "GET",
+          "path": "/products/{product_id}",
+          "description": "Get product details including price and availability"
+        },
+        "create_cart": {
+          "method": "POST",
+          "path": "/carts",
+          "body": ["store_id", "items"],
+          "description": "Create a new shopping cart"
+        },
+        "add_to_cart": {
+          "method": "POST",
+          "path": "/carts/{cart_id}/items",
+          "body": ["product_id", "quantity"],
+          "description": "Add item to existing cart"
+        },
+        "get_cart_link": {
+          "method": "GET",
+          "path": "/carts/{cart_id}/checkout_url",
+          "description": "Get shareable checkout URL"
+        },
+        "list_stores": {
+          "method": "GET",
+          "path": "/stores",
+          "params": ["zip_code", "latitude", "longitude"],
+          "description": "List available stores by location"
+        }
+      },
+      "rate_limits": {
+        "requests_per_minute": 60,
+        "requests_per_day": 10000
+      },
+      "error_handling": {
+        "retry_codes": [429, 500, 502, 503],
+        "max_retries": 3,
+        "backoff_ms": 1000
+      }
+    },
+    "mcp_servers": [
+      {
+        "name": "nutrition",
+        "package": "@anthropic/open-nutrition-mcp",
+        "required": true,
+        "capabilities": [
+          "food_search",
+          "nutrition_lookup",
+          "serving_conversion",
+          "nutrient_ranking"
+        ],
+        "usage": {
+          "food_search": "Find foods high in specific nutrients to fill gaps",
+          "nutrition_lookup": "Get accurate macro data for suggested foods",
+          "serving_conversion": "Convert between package sizes and serving sizes",
+          "nutrient_ranking": "Rank foods by protein-per-dollar, etc."
+        }
+      }
+    ],
+    "database": {
+      "type": "postgresql",
+      "queries": {
+        "get_user_meals": {
+          "sql": "SELECT m.*, mi.* FROM meals m JOIN meal_ingredients mi ON m.id = mi.meal_id WHERE m.user_id = $1 AND m.logged_at >= $2 ORDER BY m.logged_at DESC",
+          "params": ["user_id", "start_date"],
+          "description": "Get user's logged meals for analysis period"
+        },
+        "get_user_goals": {
+          "sql": "SELECT * FROM user_goals WHERE user_id = $1 AND active = true",
+          "params": ["user_id"],
+          "description": "Get user's current nutrition goals"
+        },
+        "get_user_preferences": {
+          "sql": "SELECT * FROM user_preferences WHERE user_id = $1",
+          "params": ["user_id"],
+          "description": "Get dietary preferences and restrictions"
+        },
+        "get_purchase_history": {
+          "sql": "SELECT food_name, COUNT(*) as frequency FROM grocery_purchases WHERE user_id = $1 GROUP BY food_name ORDER BY frequency DESC LIMIT 50",
+          "params": ["user_id"],
+          "description": "Get frequently purchased items"
+        },
+        "save_grocery_list": {
+          "sql": "INSERT INTO grocery_lists (user_id, items, instacart_link, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id",
+          "params": ["user_id", "items_json", "instacart_link"],
+          "description": "Save generated grocery list"
+        }
+      }
+    }
+  },
+  "config": {
+    "default_store": "heb",
+    "supported_stores": ["heb", "kroger", "walmart", "costco", "whole_foods", "target"],
+    "price_tiers": {
+      "budget": {
+        "max_per_item": 5.00,
+        "prefer_store_brand": true,
+        "prefer_frozen": true
+      },
+      "moderate": {
+        "max_per_item": 15.00,
+        "prefer_store_brand": false,
+        "prefer_frozen": false
+      },
+      "premium": {
+        "max_per_item": null,
+        "prefer_organic": true,
+        "prefer_fresh": true
+      }
+    },
+    "gap_thresholds": {
+      "critical_percent": 20,
+      "moderate_percent": 10,
+      "minor_percent": 5
+    },
+    "suggestion_limits": {
+      "max_items": 20,
+      "max_per_category": 5
+    }
+  },
+  "webhooks": {
+    "on_list_generated": {
+      "url": "/api/webhooks/grocery-list",
+      "events": ["list_created", "list_updated"]
+    },
+    "on_purchase_completed": {
+      "url": "/api/webhooks/purchase-complete",
+      "events": ["instacart_order_placed"]
+    }
+  }
+}
