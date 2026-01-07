@@ -165,16 +165,28 @@ Generate 3 specific menu item recommendations from ${restaurant}'s actual menu t
 3. Are realistic items that ${restaurant} actually serves
 
 For each recommendation, provide:
-- Item name (real menu item)
-- Category (e.g., bowls, sandwiches, salads, entrees)
+- Item name (real menu item from ${restaurant})
+- Category (e.g., bowls, sandwiches, salads, entrees, burgers, etc.)
 - Estimated calories
 - Estimated protein (g)
 - Estimated carbs (g)
 - Estimated fat (g)
-- Customization tips (if applicable)
-- Fit score (0-100, higher is better for their goals)
+- Customizable (can the item be modified?)
+- Customization tips (if customizable: specific modifications to make it better)
+- Fit score (0-100 based on how well it matches their goals)
+- Why recommended (1-2 sentences explaining WHY this specific item works for THIS specific user's goals and remaining macros)
 
-Return as JSON array with this structure:
+IMPORTANT: The "why_recommended" MUST be personalized and specific:
+- Reference their exact remaining calories (${maxCalories})
+- Reference their protein goal (${remainingBudget.protein}g)
+- Mention their priorities (${priorities?.join(', ') || 'balanced nutrition'})
+- Explain how THIS meal helps THEM specifically
+- Be conversational and encouraging
+
+Example of good "why_recommended":
+"With ${remainingBudget.protein}g of protein still needed today, this ${Math.round(remainingBudget.protein / 2)}g protein boost gets you halfway there while keeping you under ${maxCalories} calories. Perfect for your ${priorities?.includes('high_protein') ? 'high-protein goal' : 'macro balance'}."
+
+Return as JSON array:
 [
   {
     "name": "Item Name",
@@ -184,13 +196,13 @@ Return as JSON array with this structure:
     "carbs": number,
     "fat": number,
     "customizable": boolean,
-    "customization_tips": "Specific tips for this item",
+    "customization_tips": "Specific tips",
     "fit_score": number,
-    "why_recommended": "Brief explanation"
+    "why_recommended": "Personalized 1-2 sentence explanation referencing their exact goals"
   }
 ]
 
-IMPORTANT: Return ONLY valid JSON, no markdown, no explanations outside the JSON.`;
+CRITICAL: Return ONLY valid JSON, no markdown, no explanations outside the JSON.`;
 
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -315,10 +327,18 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
           fat: item.fat
         },
         customization: item.customizable ? {
-          build: item.customization_tips?.split(';').slice(0, 2) || ['Ask for extra protein if available'],
-          skip: item.customization_tips?.split(';').slice(2) || ['Minimize sauces and dressings'],
-          why: item.why_recommended || 'Good balance of protein and calories'
-        } : null,
+          build: item.customization_tips?.includes(';')
+            ? item.customization_tips.split(';').map((tip: string) => tip.trim()).filter((tip: string) => tip.startsWith('Add') || tip.startsWith('Request') || tip.startsWith('Ask for'))
+            : [item.customization_tips || 'Ask for extra protein if available'],
+          skip: item.customization_tips?.includes(';')
+            ? item.customization_tips.split(';').map((tip: string) => tip.trim()).filter((tip: string) => tip.startsWith('Skip') || tip.startsWith('No') || tip.startsWith('Hold'))
+            : ['Minimize sauces and dressings'],
+          why: item.why_recommended || 'AI-personalized recommendation for your goals'
+        } : {
+          build: [],
+          skip: [],
+          why: item.why_recommended || 'Recommended based on your calorie and protein targets'
+        },
         final_nutrition: {
           calories: item.calories,
           protein: item.protein,
