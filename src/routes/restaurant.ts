@@ -1,10 +1,15 @@
 // src/routes/restaurant.ts - RestaurantAdvisor Skill Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import OpenAI from 'openai';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
+});
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || '',
 });
 
 export const restaurantRouter = Router();
@@ -17,11 +22,15 @@ const RESTAURANT_MENUS: Record<string, any[]> = {
     { name: 'Chicken Salad', category: 'salads', calories: 480, protein: 45, carbs: 20, fat: 28, customizable: true },
     { name: 'Veggie Bowl', category: 'bowls', calories: 550, protein: 15, carbs: 72, fat: 22, customizable: true },
   ],
-  'chick-fil-a': [
-    { name: 'Grilled Chicken Sandwich', category: 'sandwiches', calories: 390, protein: 29, carbs: 44, fat: 12 },
-    { name: 'Grilled Nuggets (8-count)', category: 'entrees', calories: 130, protein: 25, carbs: 1, fat: 3 },
-    { name: 'Cobb Salad w/ Grilled Chicken', category: 'salads', calories: 430, protein: 40, carbs: 24, fat: 21 },
-    { name: 'Grilled Cool Wrap', category: 'wraps', calories: 350, protein: 37, carbs: 29, fat: 13 },
+  'chickfila': [
+    { name: 'Grilled Chicken Sandwich', category: 'sandwiches', calories: 380, protein: 28, carbs: 44, fat: 6, customizable: false },
+    { name: 'Chicken Nuggets (12-count)', category: 'entrees', calories: 380, protein: 40, carbs: 16, fat: 17, customizable: false },
+    { name: 'Spicy Southwest Salad', category: 'salads', calories: 450, protein: 33, carbs: 28, fat: 23, customizable: true },
+    { name: 'Grilled Chicken Cool Wrap', category: 'wraps', calories: 350, protein: 37, carbs: 29, fat: 13, customizable: false },
+    { name: 'Chicken Sandwich', category: 'sandwiches', calories: 440, protein: 28, carbs: 41, fat: 17, customizable: false },
+    { name: 'Cobb Salad', category: 'salads', calories: 510, protein: 40, carbs: 27, fat: 28, customizable: true },
+    { name: 'Waffle Potato Fries (Medium)', category: 'sides', calories: 360, protein: 5, carbs: 43, fat: 18, customizable: false },
+    { name: 'Hash Browns', category: 'breakfast', calories: 270, protein: 3, carbs: 25, fat: 18, customizable: false },
   ],
   'panera': [
     { name: 'Mediterranean Bowl with Chicken', category: 'bowls', calories: 520, protein: 35, carbs: 40, fat: 25 },
@@ -35,7 +44,123 @@ const RESTAURANT_MENUS: Record<string, any[]> = {
     { name: 'Kale Caesar', category: 'salads', calories: 450, protein: 28, carbs: 25, fat: 30 },
     { name: 'Super Green Goddess', category: 'salads', calories: 310, protein: 9, carbs: 38, fat: 14 },
   ],
+  'subway': [
+    { name: "6\" Turkey Breast", category: "sandwiches", calories: 280, protein: 18, carbs: 46, fat: 3.5, customizable: true },
+    { name: "6\" Chicken & Bacon Ranch", category: "sandwiches", calories: 530, protein: 36, carbs: 45, fat: 24, customizable: true },
+    { name: "6\" Veggie Delite", category: "sandwiches", calories: 230, protein: 8, carbs: 44, fat: 2.5, customizable: true },
+    { name: "Rotisserie Chicken Salad", category: "salads", calories: 350, protein: 29, carbs: 11, fat: 22, customizable: true },
+    { name: "6\" Steak & Cheese", category: "sandwiches", calories: 380, protein: 23, carbs: 48, fat: 10, customizable: true },
+    { name: "6\" Tuna", category: "sandwiches", calories: 470, protein: 20, carbs: 45, fat: 23, customizable: true },
+    { name: "Egg & Cheese Wrap", category: "breakfast", calories: 390, protein: 19, carbs: 38, fat: 17, customizable: true },
+    { name: "6\" Sweet Onion Chicken Teriyaki", category: "sandwiches", calories: 370, protein: 25, carbs: 57, fat: 4.5, customizable: true },
+  ],
+  'mcdonalds': [
+    { name: "Big Mac", category: "burgers", calories: 550, protein: 25, carbs: 45, fat: 30, customizable: false },
+    { name: "Quarter Pounder with Cheese", category: "burgers", calories: 520, protein: 26, carbs: 42, fat: 26, customizable: false },
+    { name: "10-Piece Chicken McNuggets", category: "chicken", calories: 420, protein: 23, carbs: 25, fat: 24, customizable: false },
+    { name: "Premium Southwest Salad (Grilled)", category: "salads", calories: 350, protein: 37, carbs: 27, fat: 12, customizable: true },
+    { name: "Artisan Grilled Chicken Sandwich", category: "chicken", calories: 380, protein: 37, carbs: 44, fat: 7, customizable: false },
+    { name: "Filet-O-Fish", category: "fish", calories: 380, protein: 15, carbs: 39, fat: 18, customizable: false },
+    { name: "Egg McMuffin", category: "breakfast", calories: 300, protein: 17, carbs: 30, fat: 13, customizable: false },
+    { name: "Fruit & Maple Oatmeal", category: "breakfast", calories: 320, protein: 6, carbs: 64, fat: 4.5, customizable: false },
+  ],
+  'wendys': [
+    { name: "Dave's Single", category: "burgers", calories: 570, protein: 29, carbs: 41, fat: 34, customizable: true },
+    { name: "Grilled Chicken Sandwich", category: "chicken", calories: 370, protein: 34, carbs: 37, fat: 10, customizable: false },
+    { name: "Spicy Chicken Sandwich", category: "chicken", calories: 490, protein: 29, carbs: 48, fat: 20, customizable: false },
+    { name: "Southwest Avocado Chicken Salad", category: "salads", calories: 520, protein: 33, carbs: 31, fat: 31, customizable: true },
+    { name: "Apple Pecan Chicken Salad", category: "salads", calories: 560, protein: 34, carbs: 39, fat: 30, customizable: true },
+    { name: "Homestyle Chicken Go Wrap (Grilled)", category: "wraps", calories: 270, protein: 18, carbs: 25, fat: 10, customizable: false },
+    { name: "Jr. Bacon Cheeseburger", category: "burgers", calories: 370, protein: 19, carbs: 26, fat: 21, customizable: true },
+    { name: "Chili (Small)", category: "sides", calories: 250, protein: 17, carbs: 23, fat: 9, customizable: false },
+  ],
+  'tacobell': [
+    { name: "Chicken Power Bowl", category: "bowls", calories: 470, protein: 26, carbs: 50, fat: 17, customizable: true },
+    { name: "Chicken Soft Taco", category: "tacos", calories: 160, protein: 12, carbs: 15, fat: 5, customizable: true },
+    { name: "Crunchy Taco", category: "tacos", calories: 170, protein: 8, carbs: 13, fat: 10, customizable: true },
+    { name: "Chicken Burrito", category: "burritos", calories: 350, protein: 13, carbs: 48, fat: 11, customizable: true },
+    { name: "Grilled Steak Soft Taco", category: "tacos", calories: 180, protein: 12, carbs: 17, fat: 6, customizable: true },
+    { name: "Black Beans & Rice", category: "sides", calories: 180, protein: 5, carbs: 33, fat: 3.5, customizable: false },
+    { name: "Veggie Power Bowl", category: "bowls", calories: 450, protein: 13, carbs: 62, fat: 16, customizable: true },
+    { name: "Breakfast Crunchwrap (Steak)", category: "breakfast", calories: 680, protein: 21, carbs: 71, fat: 35, customizable: true },
+  ],
 };
+
+/**
+ * Use OpenAI to generate personalized restaurant recommendations
+ */
+async function generateRecommendationsWithAI(
+  restaurant: string,
+  maxCalories: number,
+  remainingBudget: any,
+  priorities?: string[]
+): Promise<any[]> {
+  try {
+    const prompt = `You are a nutrition expert helping someone choose healthy meals at ${restaurant}.
+
+User's constraints:
+- Max calories: ${maxCalories}
+- Remaining daily protein goal: ${remainingBudget.protein}g
+- Priorities: ${priorities?.join(', ') || 'balanced nutrition'}
+
+Generate 3 specific menu item recommendations from ${restaurant}'s actual menu that:
+1. Stay within the calorie budget
+2. Maximize protein content
+3. Are realistic items that ${restaurant} actually serves
+
+For each recommendation, provide:
+- Item name (real menu item)
+- Category (e.g., bowls, sandwiches, salads, entrees)
+- Estimated calories
+- Estimated protein (g)
+- Estimated carbs (g)
+- Estimated fat (g)
+- Customization tips (if applicable)
+- Fit score (0-100, higher is better for their goals)
+
+Return as JSON array with this structure:
+[
+  {
+    "name": "Item Name",
+    "category": "category",
+    "calories": number,
+    "protein": number,
+    "carbs": number,
+    "fat": number,
+    "customizable": boolean,
+    "customization_tips": "Specific tips for this item",
+    "fit_score": number,
+    "why_recommended": "Brief explanation"
+  }
+]
+
+IMPORTANT: Return ONLY valid JSON, no markdown, no explanations outside the JSON.`;
+
+    const completion = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a nutrition expert with deep knowledge of restaurant menus. Return only valid JSON arrays.'
+        },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 1500,
+    });
+
+    const content = completion.choices[0]?.message?.content || '[]';
+
+    // Extract JSON from potential markdown code blocks
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    const items = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+
+    return items;
+  } catch (error: any) {
+    console.error('[restaurant] OpenAI generation error:', error.message);
+    return [];
+  }
+}
 
 /**
  * POST /api/v1/restaurant/recommend
@@ -83,21 +208,74 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
     const effectiveMaxCalories = maxCalories || remainingBudget.calories;
 
     if (!menu) {
-      // Unknown restaurant - provide general guidance
+      // Unknown restaurant - use OpenAI to generate recommendations
+      console.log(`[restaurant] Generating AI recommendations for ${restaurant}`);
+
+      const aiItems = await generateRecommendationsWithAI(
+        restaurant,
+        effectiveMaxCalories,
+        remainingBudget,
+        priorities
+      );
+
+      if (aiItems.length === 0) {
+        // AI generation failed - provide general guidance
+        return res.json({
+          ok: true,
+          restaurant,
+          restaurant_found: false,
+          remaining_budget: remainingBudget,
+          recommendations: [],
+          general_tips: [
+            'Look for grilled proteins over fried',
+            'Ask for dressing/sauce on the side',
+            'Choose vegetables or salad as sides',
+            'Skip the bread basket or chips',
+            `Aim for around ${Math.round(remainingBudget.protein / 2)}g protein in this meal`
+          ],
+          message: `We don't have ${restaurant} in our database yet. Use our general tips for making healthy choices.`
+        });
+      }
+
+      // Format AI recommendations
+      const aiRecommendations = aiItems.map((item: any, index: number) => ({
+        rank: index + 1,
+        name: item.name,
+        category: item.category,
+        base_nutrition: {
+          calories: item.calories,
+          protein: item.protein,
+          carbs: item.carbs,
+          fat: item.fat
+        },
+        customization: item.customizable ? {
+          build: item.customization_tips?.split(';').slice(0, 2) || ['Ask for extra protein if available'],
+          skip: item.customization_tips?.split(';').slice(2) || ['Minimize sauces and dressings'],
+          why: item.why_recommended || 'Good balance of protein and calories'
+        } : null,
+        final_nutrition: {
+          calories: item.calories,
+          protein: item.protein,
+          carbs: item.carbs,
+          fat: item.fat
+        },
+        fit_score: item.fit_score || 75,
+        fits_budget: item.calories <= remainingBudget.calories,
+        ai_generated: true
+      }));
+
       return res.json({
         ok: true,
         restaurant,
-        restaurant_found: false,
+        restaurant_found: true,
+        ai_generated: true,
         remaining_budget: remainingBudget,
-        recommendations: [],
+        recommendations: aiRecommendations,
         general_tips: [
-          'Look for grilled proteins over fried',
-          'Ask for dressing/sauce on the side',
-          'Choose vegetables or salad as sides',
-          'Skip the bread basket or chips',
-          `Aim for around ${Math.round(remainingBudget.protein / 2)}g protein in this meal`
-        ],
-        message: `We don't have ${restaurant} in our database yet. Use our general tips for making healthy choices.`
+          'These recommendations are AI-generated based on typical restaurant offerings',
+          'Actual menu items and nutrition may vary',
+          'Verify with restaurant staff for exact nutrition information'
+        ]
       });
     }
 
