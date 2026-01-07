@@ -1,0 +1,240 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WeeklyPrep Skill Schema",
+  "definitions": {
+    "GeneratePrepPlanRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "meal_plan_id": {
+          "type": "string",
+          "description": "Specific meal plan to prep for, or uses latest"
+        },
+        "prep_day": {
+          "enum": ["sunday", "saturday", "monday"],
+          "default": "sunday"
+        },
+        "available_time_mins": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 60,
+          "maximum": 240
+        },
+        "cooking_skill": {
+          "enum": ["beginner", "intermediate", "advanced"],
+          "default": "intermediate"
+        },
+        "equipment": {
+          "type": "array",
+          "items": {
+            "enum": ["oven", "stovetop", "instant_pot", "rice_cooker", "air_fryer", "slow_cooker", "grill"]
+          },
+          "default": ["oven", "stovetop"]
+        },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "batch_proteins": { "type": "boolean", "default": true },
+            "batch_grains": { "type": "boolean", "default": true },
+            "batch_vegetables": { "type": "boolean", "default": true },
+            "pre_portion_meals": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "PrepPlanResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "meal_plan_summary": {
+          "type": "object",
+          "properties": {
+            "total_meals": { "type": "integer" },
+            "total_servings": { "type": "integer" },
+            "unique_proteins": { "type": "integer" },
+            "unique_grains": { "type": "integer" },
+            "batch_opportunities": { "type": "integer" }
+          }
+        },
+        "prep_plan": {
+          "type": "object",
+          "properties": {
+            "prep_day": { "type": "string" },
+            "total_active_time_mins": { "type": "integer" },
+            "total_passive_time_mins": { "type": "integer" },
+            "difficulty": { "enum": ["easy", "moderate", "challenging"] },
+            "batches": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "category": { "enum": ["protein", "grain", "vegetable", "sauce", "snack"] },
+                  "item": { "type": "string" },
+                  "amount": { "type": "string" },
+                  "covers_meals": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "prep_time_mins": { "type": "integer" },
+                  "cook_time_mins": { "type": "integer" },
+                  "prep_instructions": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "cook_instructions": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "storage_container": { "type": "string" },
+                  "storage_location": { "enum": ["refrigerator", "freezer", "pantry"] },
+                  "stays_fresh_days": { "type": "integer" },
+                  "reheating_instructions": { "type": "string" }
+                }
+              }
+            },
+            "schedule": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "time_offset_mins": { "type": "integer" },
+                  "time_display": { "type": "string" },
+                  "action": { "type": "string" },
+                  "duration_mins": { "type": "integer" },
+                  "batch_id": { "type": "string" },
+                  "is_passive": {
+                    "type": "boolean",
+                    "description": "True if you can do other things (e.g., oven cooking)"
+                  },
+                  "tips": { "type": "string" }
+                }
+              }
+            },
+            "assembly_guide": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "day": { "type": "string" },
+                  "meal": { "type": "string" },
+                  "meal_name": { "type": "string" },
+                  "assembly_time_mins": { "type": "integer" },
+                  "steps": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "components_from_prep": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "fresh_additions": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "shopping_list": {
+          "type": "object",
+          "properties": {
+            "prep_day_items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item": { "type": "string" },
+                  "amount": { "type": "string" },
+                  "category": { "type": "string" },
+                  "for_batches": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            },
+            "buy_fresh_midweek": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item": { "type": "string" },
+                  "buy_on": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            },
+            "pantry_staples_needed": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "instacart_link": { "type": "string" }
+          }
+        },
+        "equipment_needed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "quantity": { "type": "integer" },
+              "essential": { "type": "boolean" }
+            }
+          }
+        },
+        "container_count": {
+          "type": "object",
+          "properties": {
+            "meal_prep_containers": { "type": "integer" },
+            "snack_containers": { "type": "integer" },
+            "large_storage": { "type": "integer" }
+          }
+        },
+        "tips": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "StorageTipsRequest": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "StorageTipsResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "storage_guide": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "refrigerator_days": { "type": "integer" },
+              "freezer_months": { "type": "integer" },
+              "best_container": { "type": "string" },
+              "storage_tips": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "signs_of_spoilage": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "reheating_method": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

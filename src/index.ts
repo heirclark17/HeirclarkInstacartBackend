@@ -92,6 +92,17 @@ import { createSocialRouter } from "./routes/social";
 import { createImportRouter } from "./routes/import";
 import { createAdminRouter } from "./routes/admin";
 
+// Claude Skills Backend Routes
+import { coachRouter } from "./routes/coach";
+import { restaurantRouter } from "./routes/restaurant";
+import { pantryRouter } from "./routes/pantry";
+import { habitsRouter } from "./routes/habits";
+import { workoutFuelRouter } from "./routes/workoutFuel";
+import { weeklyPrepRouter } from "./routes/weeklyPrep";
+import { sleepNutritionRouter } from "./routes/sleepNutrition";
+import { budgetMealsRouter } from "./routes/budgetMeals";
+import { plateauRouter } from "./routes/plateau";
+
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
 
@@ -298,6 +309,37 @@ app.use("/api/v1/import", createImportRouter(dbPool));
 
 // Admin routes - database management, seeding
 app.use("/api/v1/admin", createAdminRouter(dbPool));
+
+// ======================================================================
+//                   CLAUDE SKILLS BACKEND ROUTES
+// ======================================================================
+
+// ProgressCoach - weekly summaries, insights, milestones
+app.use("/api/v1/coach", coachRouter);
+
+// RestaurantAdvisor - dining out recommendations
+app.use("/api/v1/restaurant", restaurantRouter);
+
+// PantryChef - recipe matching from pantry items
+app.use("/api/v1/pantry", pantryRouter);
+
+// HabitBuilder - streaks, XP, challenges
+app.use("/api/v1/habits", habitsRouter);
+
+// WorkoutFuel - exercise-adjusted nutrition
+app.use("/api/v1/workout-fuel", workoutFuelRouter);
+
+// WeeklyPrep - batch cooking plans
+app.use("/api/v1/weekly-prep", weeklyPrepRouter);
+
+// SleepNutrition - sleep-based nutrition adjustments
+app.use("/api/v1/sleep-nutrition", sleepNutritionRouter);
+
+// BudgetMeals - affordable meal planning
+app.use("/api/v1/budget-meals", budgetMealsRouter);
+
+// PlateauBreaker - weight plateau detection and intervention
+app.use("/api/v1/plateau", plateauRouter);
 
 // ======================================================================
 //                       BODY SCAN ROUTE (CORRECT MULTER SCOPE)

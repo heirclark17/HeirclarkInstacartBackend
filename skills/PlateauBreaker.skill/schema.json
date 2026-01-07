@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlateauBreaker Skill Schema",
+  "definitions": {
+    "PlateauStatus": {
+      "enum": ["progressing", "monitoring", "potential_plateau", "confirmed_plateau", "adherence_issue", "unknown"]
+    },
+    "InterventionType": {
+      "enum": ["diet_break", "refeed_days", "calorie_cycling", "reverse_diet", "increase_activity", "protein_increase", "sleep_focus", "stress_management"]
+    },
+    "StatusRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "goal_type": {
+          "enum": ["weight_loss", "weight_gain", "maintenance"],
+          "default": "weight_loss"
+        }
+      }
+    },
+    "StatusResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "plateau_status": { "$ref": "#/definitions/PlateauStatus" },
+        "weeks_analyzed": { "type": "integer" },
+        "weight_trend": {
+          "type": "object",
+          "properties": {
+            "start_weight": { "type": "number" },
+            "current_weight": { "type": "number" },
+            "change": { "type": "number" },
+            "expected_change": { "type": "number" },
+            "weekly_averages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "week": { "type": "integer" },
+                  "average": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "data_quality": {
+          "type": "object",
+          "properties": {
+            "days_with_weight": { "type": "integer" },
+            "days_with_meals": { "type": "integer" },
+            "total_days": { "type": "integer" },
+            "quality_rating": { "enum": ["excellent", "good", "fair", "poor"] }
+          }
+        },
+        "quick_assessment": { "type": "string" },
+        "needs_intervention": { "type": "boolean" }
+      }
+    },
+    "AnalysisRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "analysis_depth": {
+          "enum": ["quick", "standard", "comprehensive"],
+          "default": "standard"
+        }
+      }
+    },
+    "AnalysisResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "plateau_analysis": {
+          "type": "object",
+          "properties": {
+            "status": { "$ref": "#/definitions/PlateauStatus" },
+            "weeks_stalled": { "type": "integer" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+            "weight_trend": {
+              "type": "object",
+              "properties": {
+                "start": { "type": "number" },
+                "current": { "type": "number" },
+                "change": { "type": "number" },
+                "expected_if_progressing": { "type": "number" }
+              }
+            }
+          }
+        },
+        "adherence_check": {
+          "type": "object",
+          "properties": {
+            "logging_consistency_pct": { "type": "number" },
+            "calorie_adherence_pct": { "type": "number" },
+            "protein_adherence_pct": { "type": "number" },
+            "exercise_consistency_pct": { "type": "number" },
+            "overall_adherence": { "enum": ["excellent", "good", "fair", "poor"] },
+            "verdict": { "type": "string" }
+          }
+        },
+        "root_cause_analysis": {
+          "type": "object",
+          "properties": {
+            "primary_factors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "factor": { "type": "string" },
+                  "likelihood": { "enum": ["high", "medium", "low"] },
+                  "explanation": { "type": "string" },
+                  "evidence": { "type": "string" }
+                }
+              }
+            },
+            "secondary_factors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "factor": { "type": "string" },
+                  "likelihood": { "enum": ["high", "medium", "low"] },
+                  "explanation": { "type": "string" }
+                }
+              }
+            },
+            "ruled_out": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "factor": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "interventions": {
+          "type": "object",
+          "properties": {
+            "recommended_strategy": { "$ref": "#/definitions/InterventionType" },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "strategy": { "type": "string" },
+                  "type": { "$ref": "#/definitions/InterventionType" },
+                  "description": { "type": "string" },
+                  "difficulty": { "enum": ["easy", "moderate", "challenging"] },
+                  "implementation": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "duration_days": { "type": "integer" },
+                  "expected_outcome": { "type": "string" },
+                  "why_it_works": { "type": "string" },
+                  "recommended": { "type": "boolean" }
+                }
+              }
+            },
+            "not_recommended": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "strategy": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "action_plan": {
+          "type": "object",
+          "properties": {
+            "immediate": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "this_week": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "monitor": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "reassess_date": { "type": "string", "format": "date" },
+            "reassess_criteria": { "type": "string" }
+          }
+        },
+        "expectation_setting": {
+          "type": "object",
+          "properties": {
+            "realistic_timeline": { "type": "string" },
+            "non_scale_victories": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "when_to_seek_help": { "type": "string" }
+          }
+        }
+      }
+    },
+    "StartInterventionRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "intervention_type"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "intervention_type": { "$ref": "#/definitions/InterventionType" },
+        "duration_days": { "type": "integer" },
+        "custom_params": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "InterventionStatusResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "active_intervention": {
+          "type": "object",
+          "properties": {
+            "type": { "$ref": "#/definitions/InterventionType" },
+            "started_at": { "type": "string", "format": "date" },
+            "ends_at": { "type": "string", "format": "date" },
+            "days_completed": { "type": "integer" },
+            "days_remaining": { "type": "integer" },
+            "adherence_pct": { "type": "number" },
+            "current_targets": {
+              "type": "object",
+              "properties": {
+                "calories": { "type": "integer" },
+                "protein": { "type": "integer" }
+              }
+            }
+          }
+        },
+        "progress_notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "early_indicators": {
+          "type": "object",
+          "properties": {
+            "energy_level": { "type": "string" },
+            "hunger_level": { "type": "string" },
+            "weight_change": { "type": "string" },
+            "outlook": { "enum": ["positive", "neutral", "needs_adjustment"] }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkoutFuel Skill Schema",
+  "definitions": {
+    "WorkoutType": {
+      "enum": [
+        "strength_training",
+        "cardio_low",
+        "cardio_moderate",
+        "cardio_high",
+        "hiit",
+        "yoga",
+        "pilates",
+        "crossfit",
+        "swimming",
+        "cycling",
+        "running",
+        "walking",
+        "sports",
+        "other"
+      ]
+    },
+    "Workout": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "$ref": "#/definitions/WorkoutType" },
+        "name": { "type": "string" },
+        "duration_mins": { "type": "integer" },
+        "intensity": { "enum": ["low", "moderate", "high", "max"] },
+        "start_time": { "type": "string", "format": "date-time" },
+        "end_time": { "type": "string", "format": "date-time" },
+        "estimated_calories_burned": { "type": "integer" },
+        "heart_rate_avg": { "type": "integer" },
+        "heart_rate_max": { "type": "integer" },
+        "source": { "enum": ["apple_health", "fitbit", "garmin", "manual"] }
+      }
+    },
+    "TodayActivityRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "include_recommendations": { "type": "boolean", "default": true }
+      }
+    },
+    "TodayActivityResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "date": { "type": "string", "format": "date" },
+        "activity_summary": {
+          "type": "object",
+          "properties": {
+            "workouts": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/Workout" }
+            },
+            "steps": { "type": "integer" },
+            "active_minutes": { "type": "integer" },
+            "floors_climbed": { "type": "integer" },
+            "distance_miles": { "type": "number" },
+            "total_calories_burned": { "type": "integer" }
+          }
+        },
+        "nutrition_adjustments": {
+          "type": "object",
+          "properties": {
+            "base_calorie_target": { "type": "integer" },
+            "activity_addition": { "type": "integer" },
+            "adjusted_calorie_target": { "type": "integer" },
+            "base_protein_target": { "type": "integer" },
+            "protein_boost": { "type": "integer" },
+            "adjusted_protein_target": { "type": "integer" },
+            "base_carb_target": { "type": "integer" },
+            "carb_boost": { "type": "integer" },
+            "adjusted_carb_target": { "type": "integer" },
+            "explanation": { "type": "string" }
+          }
+        },
+        "timing_recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "window": { "enum": ["pre_workout", "post_workout", "recovery", "before_bed"] },
+              "time_remaining_mins": { "type": "integer" },
+              "recommendation": { "type": "string" },
+              "suggested_meal": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "description": { "type": "string" },
+                  "calories": { "type": "integer" },
+                  "protein": { "type": "integer" },
+                  "carbs": { "type": "integer" },
+                  "fat": { "type": "integer" }
+                }
+              },
+              "why": { "type": "string" },
+              "priority": { "enum": ["high", "medium", "low"] }
+            }
+          }
+        },
+        "remaining_macros": {
+          "type": "object",
+          "properties": {
+            "calories": { "type": "integer" },
+            "protein": { "type": "integer" },
+            "carbs": { "type": "integer" },
+            "fat": { "type": "integer" }
+          }
+        },
+        "hydration": {
+          "type": "object",
+          "properties": {
+            "target_oz": { "type": "integer" },
+            "consumed_oz": { "type": "integer" },
+            "remaining_oz": { "type": "integer" },
+            "workout_adjusted": { "type": "boolean" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "LogWorkoutRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "type", "duration_mins"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "type": { "$ref": "#/definitions/WorkoutType" },
+        "name": { "type": "string" },
+        "duration_mins": { "type": "integer", "minimum": 1 },
+        "intensity": { "enum": ["low", "moderate", "high", "max"], "default": "moderate" },
+        "start_time": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" },
+        "exercises": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "sets": { "type": "integer" },
+              "reps": { "type": "integer" },
+              "weight_lbs": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "PreWorkoutRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "workout_type": { "$ref": "#/definitions/WorkoutType" },
+        "workout_time": { "type": "string", "format": "date-time" },
+        "time_until_workout_mins": { "type": "integer" }
+      }
+    },
+    "PreWorkoutResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "time_until_workout_mins": { "type": "integer" },
+        "meal_window": { "enum": ["full_meal", "light_snack", "quick_energy", "too_close"] },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "calories": { "type": "integer" },
+              "protein": { "type": "integer" },
+              "carbs": { "type": "integer" },
+              "fat": { "type": "integer" },
+              "why_good_choice": { "type": "string" },
+              "avoid_if": { "type": "string" }
+            }
+          }
+        },
+        "foods_to_avoid": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "hydration_tip": { "type": "string" }
+      }
+    },
+    "WeeklySummaryResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "week_start": { "type": "string", "format": "date" },
+        "week_end": { "type": "string", "format": "date" },
+        "total_workouts": { "type": "integer" },
+        "total_workout_minutes": { "type": "integer" },
+        "total_calories_burned": { "type": "integer" },
+        "avg_daily_steps": { "type": "integer" },
+        "workout_breakdown": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "nutrition_sync_score": {
+          "type": "number",
+          "description": "How well nutrition matched activity (0-100)"
+        },
+        "insights": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_week_recommendations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

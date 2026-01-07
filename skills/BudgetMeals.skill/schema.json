@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BudgetMeals Skill Schema",
+  "definitions": {
+    "BudgetTier": {
+      "enum": ["tight", "moderate", "comfortable", "unlimited"]
+    },
+    "GeneratePlanRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "weekly_budget"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "weekly_budget": {
+          "type": "number",
+          "minimum": 30,
+          "description": "Weekly grocery budget in dollars"
+        },
+        "people_count": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 8
+        },
+        "include_snacks": { "type": "boolean", "default": true },
+        "cooking_skill": {
+          "enum": ["beginner", "intermediate", "advanced"],
+          "default": "intermediate"
+        },
+        "time_available": {
+          "enum": ["minimal", "moderate", "plenty"],
+          "default": "moderate"
+        },
+        "preferred_stores": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "prioritize": {
+          "enum": ["lowest_cost", "balanced", "nutrition_first"],
+          "default": "balanced"
+        }
+      }
+    },
+    "BudgetPlanResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "budget_analysis": {
+          "type": "object",
+          "properties": {
+            "weekly_budget": { "type": "number" },
+            "estimated_cost": { "type": "number" },
+            "under_budget_by": { "type": "number" },
+            "over_budget_by": { "type": "number" },
+            "cost_per_day": { "type": "number" },
+            "cost_per_meal": { "type": "number" },
+            "cost_per_person": { "type": "number" },
+            "budget_tier": { "$ref": "#/definitions/BudgetTier" }
+          }
+        },
+        "meal_plan": {
+          "type": "object",
+          "properties": {
+            "days": { "type": "integer" },
+            "meals_per_day": { "type": "integer" },
+            "daily_plans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "day": { "type": "integer" },
+                  "meals": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "meal_type": { "type": "string" },
+                        "name": { "type": "string" },
+                        "description": { "type": "string" },
+                        "cost": { "type": "number" },
+                        "calories": { "type": "integer" },
+                        "protein": { "type": "integer" },
+                        "carbs": { "type": "integer" },
+                        "fat": { "type": "integer" },
+                        "prep_time_mins": { "type": "integer" },
+                        "cook_time_mins": { "type": "integer" },
+                        "ingredients": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "item": { "type": "string" },
+                              "amount": { "type": "string" },
+                              "cost": { "type": "number" }
+                            }
+                          }
+                        },
+                        "budget_tip": { "type": "string" }
+                      }
+                    }
+                  },
+                  "daily_cost": { "type": "number" },
+                  "daily_nutrition": {
+                    "type": "object",
+                    "properties": {
+                      "calories": { "type": "integer" },
+                      "protein": { "type": "integer" },
+                      "carbs": { "type": "integer" },
+                      "fat": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "shopping_list": {
+          "type": "object",
+          "properties": {
+            "total_estimated": { "type": "number" },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": { "type": "string" },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": { "type": "string" },
+                        "quantity": { "type": "string" },
+                        "price": { "type": "number" },
+                        "price_per_unit": { "type": "string" },
+                        "store_recommendation": { "type": "string" },
+                        "budget_alternative": {
+                          "type": "object",
+                          "properties": {
+                            "item": { "type": "string" },
+                            "price": { "type": "number" },
+                            "savings": { "type": "number" }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "subtotal": { "type": "number" }
+                }
+              }
+            },
+            "instacart_link": { "type": "string" }
+          }
+        },
+        "savings_opportunities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "current_item": { "type": "string" },
+              "current_cost": { "type": "number" },
+              "alternative": { "type": "string" },
+              "alternative_cost": { "type": "number" },
+              "weekly_savings": { "type": "number" },
+              "nutrition_impact": { "type": "string" }
+            }
+          }
+        },
+        "seasonal_picks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "current_price": { "type": "string" },
+              "vs_off_season": { "type": "string" },
+              "peak_months": { "type": "string" }
+            }
+          }
+        },
+        "store_strategy": {
+          "type": "object",
+          "properties": {
+            "recommended_stores": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "store": { "type": "string" },
+                  "best_for": { "type": "string" },
+                  "items_to_buy": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            },
+            "one_store_option": {
+              "type": "object",
+              "properties": {
+                "store": { "type": "string" },
+                "total_cost": { "type": "number" },
+                "convenience_premium": { "type": "number" }
+              }
+            }
+          }
+        },
+        "tips": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "SwapSuggestionsRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "current_items": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "target_savings": { "type": "number" }
+      }
+    },
+    "SeasonalProduceResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "current_month": { "type": "string" },
+        "season": { "type": "string" },
+        "best_buys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "typical_price": { "type": "string" },
+              "nutrition_highlight": { "type": "string" },
+              "recipe_ideas": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "avoid_this_month": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "reason": { "type": "string" },
+              "better_alternative": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

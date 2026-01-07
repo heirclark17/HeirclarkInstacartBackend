@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HabitBuilder Skill Schema",
+  "definitions": {
+    "HabitType": {
+      "enum": [
+        "meal_logging",
+        "all_meals_logged",
+        "morning_weigh_in",
+        "hydration_tracking",
+        "calorie_target",
+        "protein_target",
+        "workout_logged",
+        "meal_prep",
+        "prelog_meals",
+        "mindful_eating"
+      ]
+    },
+    "Streak": {
+      "type": "object",
+      "properties": {
+        "habit": { "$ref": "#/definitions/HabitType" },
+        "current_days": { "type": "integer" },
+        "longest_days": { "type": "integer" },
+        "status": { "enum": ["active", "at_risk", "broken"] },
+        "grace_days_used": { "type": "integer" },
+        "grace_days_allowed": { "type": "integer" },
+        "started_at": { "type": "string", "format": "date" },
+        "milestone_next": { "type": "integer" },
+        "milestone_progress": { "type": "string" }
+      }
+    },
+    "Challenge": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "enum": ["daily", "weekly", "monthly", "special"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "difficulty": { "enum": ["easy", "medium", "hard"] },
+        "xp_reward": { "type": "integer" },
+        "status": { "enum": ["available", "in_progress", "completed", "expired"] },
+        "progress": { "type": "string" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "completion_criteria": { "type": "string" }
+      }
+    },
+    "DailyStatusRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "date": { "type": "string", "format": "date" }
+      }
+    },
+    "DailyStatusResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "date": { "type": "string", "format": "date" },
+        "habits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "habit": { "$ref": "#/definitions/HabitType" },
+              "name": { "type": "string" },
+              "completed": { "type": "boolean" },
+              "xp_value": { "type": "integer" },
+              "completion_time": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "habits_completed": { "type": "integer" },
+        "habits_total": { "type": "integer" },
+        "completion_percentage": { "type": "number" },
+        "xp_earned_today": { "type": "integer" },
+        "streaks": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Streak" }
+        },
+        "todays_challenge": { "$ref": "#/definitions/Challenge" },
+        "motivation_message": { "type": "string" }
+      }
+    },
+    "XPStatusResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "total_xp": { "type": "integer" },
+        "level": { "type": "integer" },
+        "level_name": { "type": "string" },
+        "xp_for_current_level": { "type": "integer" },
+        "xp_for_next_level": { "type": "integer" },
+        "xp_progress_in_level": { "type": "integer" },
+        "xp_to_next_level": { "type": "integer" },
+        "progress_percentage": { "type": "number" },
+        "recent_xp_history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string", "format": "date" },
+              "xp_earned": { "type": "integer" },
+              "source": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "InsightsResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "period_analyzed_days": { "type": "integer" },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "enum": ["positive", "opportunity", "warning", "trigger"] },
+              "category": { "enum": ["time", "behavior", "emotional", "social"] },
+              "insight": { "type": "string" },
+              "data_points": { "type": "string" },
+              "suggested_action": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string" },
+                  "description": { "type": "string" },
+                  "implementation": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "strongest_habits": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "habits_needing_attention": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cbt_reframe": {
+          "type": "object",
+          "properties": {
+            "trigger": { "type": "string" },
+            "automatic_thought": { "type": "string" },
+            "reframe": { "type": "string" },
+            "action_step": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ImplementationIntentionRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "focus_area": {
+          "enum": ["logging", "protein", "calories", "workout", "hydration", "meal_prep"]
+        },
+        "custom_intention": {
+          "type": "string",
+          "description": "User's custom 'When X, I will Y' statement"
+        }
+      }
+    },
+    "ImplementationIntentionResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "intention": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "focus_area": { "type": "string" },
+            "when_statement": { "type": "string" },
+            "will_statement": { "type": "string" },
+            "full_statement": { "type": "string" },
+            "why_this_helps": { "type": "string" },
+            "created_at": { "type": "string", "format": "date-time" },
+            "reminder_time": { "type": "string" }
+          }
+        },
+        "active_intentions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "statement": { "type": "string" },
+              "adherence_rate": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "CheckInRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "habit"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "habit": { "$ref": "#/definitions/HabitType" },
+        "notes": { "type": "string" },
+        "mood": { "enum": ["great", "good", "okay", "struggling"] }
+      }
+    }
+  }
+}

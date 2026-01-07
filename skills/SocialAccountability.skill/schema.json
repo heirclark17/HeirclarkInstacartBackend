@@ -1,0 +1,270 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SocialAccountability Skill Schema",
+  "definitions": {
+    "ChallengeType": {
+      "enum": ["consistency", "nutrition_target", "activity", "team", "custom"]
+    },
+    "ChallengeStatus": {
+      "enum": ["upcoming", "active", "completed", "cancelled"]
+    },
+    "Friend": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "avatar_url": { "type": "string" },
+        "connected_since": { "type": "string", "format": "date" },
+        "current_streak": { "type": "integer" },
+        "last_active": { "type": "string", "format": "date-time" },
+        "shared_challenges": { "type": "integer" },
+        "is_accountability_partner": { "type": "boolean" }
+      }
+    },
+    "Challenge": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "$ref": "#/definitions/ChallengeType" },
+        "status": { "$ref": "#/definitions/ChallengeStatus" },
+        "creator_id": { "type": "string" },
+        "start_date": { "type": "string", "format": "date" },
+        "end_date": { "type": "string", "format": "date" },
+        "duration_days": { "type": "integer" },
+        "goal": { "type": "string" },
+        "scoring_method": { "type": "string" },
+        "participants_count": { "type": "integer" },
+        "max_participants": { "type": "integer" },
+        "is_public": { "type": "boolean" },
+        "prize_description": { "type": "string" }
+      }
+    },
+    "DashboardRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" }
+      }
+    },
+    "DashboardResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "social_stats": {
+          "type": "object",
+          "properties": {
+            "friends_count": { "type": "integer" },
+            "active_challenges": { "type": "integer" },
+            "challenges_won": { "type": "integer" },
+            "total_challenges": { "type": "integer" },
+            "pending_invites": { "type": "integer" }
+          }
+        },
+        "accountability_partner": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "avatar_url": { "type": "string" },
+            "connected_days": { "type": "integer" },
+            "their_streak": { "type": "integer" },
+            "last_active": { "type": "string" },
+            "last_message": { "type": "string" },
+            "needs_encouragement": { "type": "boolean" }
+          }
+        },
+        "active_challenges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "challenge": { "$ref": "#/definitions/Challenge" },
+              "your_progress": {
+                "type": "object",
+                "properties": {
+                  "points": { "type": "number" },
+                  "rank": { "type": "integer" },
+                  "days_completed": { "type": "integer" },
+                  "status_message": { "type": "string" }
+                }
+              },
+              "leader": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "points": { "type": "number" }
+                }
+              },
+              "ends_in": { "type": "string" }
+            }
+          }
+        },
+        "leaderboard_summary": {
+          "type": "object",
+          "properties": {
+            "logging_streak_rank": { "type": "integer" },
+            "weekly_adherence_rank": { "type": "integer" },
+            "steps_rank": { "type": "integer" }
+          }
+        },
+        "recent_celebrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "friend_id": { "type": "string" },
+              "friend_name": { "type": "string" },
+              "achievement": { "type": "string" },
+              "achievement_type": { "type": "string" },
+              "when": { "type": "string", "format": "date-time" },
+              "your_reaction": { "type": "string" },
+              "reactions_count": { "type": "integer" }
+            }
+          }
+        },
+        "suggested_actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "action_type": { "enum": ["challenge_friend", "celebrate", "message_partner", "join_challenge"] },
+              "message": { "type": "string" },
+              "target_id": { "type": "string" },
+              "priority": { "enum": ["high", "medium", "low"] }
+            }
+          }
+        }
+      }
+    },
+    "CreateChallengeRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "name", "type", "goal", "duration_days"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 200 },
+        "type": { "$ref": "#/definitions/ChallengeType" },
+        "goal": { "type": "string" },
+        "scoring_method": {
+          "enum": ["binary", "cumulative", "percentage", "ranking"],
+          "default": "cumulative"
+        },
+        "start_date": { "type": "string", "format": "date" },
+        "duration_days": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "max_participants": { "type": "integer", "default": 10 },
+        "is_public": { "type": "boolean", "default": false },
+        "invited_friends": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "LeaderboardResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "leaderboard_type": { "type": "string" },
+        "period": { "type": "string" },
+        "your_position": {
+          "type": "object",
+          "properties": {
+            "rank": { "type": "integer" },
+            "value": { "type": "number" },
+            "percentile": { "type": "number" }
+          }
+        },
+        "rankings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rank": { "type": "integer" },
+              "user_id": { "type": "string" },
+              "display_name": { "type": "string" },
+              "avatar_url": { "type": "string" },
+              "value": { "type": "number" },
+              "is_you": { "type": "boolean" },
+              "change_from_last": { "enum": ["up", "down", "same", "new"] }
+            }
+          }
+        },
+        "total_participants": { "type": "integer" }
+      }
+    },
+    "FindPartnerRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "similar_goals": { "type": "boolean", "default": true },
+            "similar_experience": { "type": "boolean", "default": true },
+            "timezone_match": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "FindPartnerResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "user_id": { "type": "string" },
+              "display_name": { "type": "string" },
+              "avatar_url": { "type": "string" },
+              "compatibility_score": { "type": "number" },
+              "match_reasons": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "their_streak": { "type": "integer" },
+              "member_since": { "type": "string", "format": "date" }
+            }
+          }
+        }
+      }
+    },
+    "PrivacySettingsRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "settings"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "share_streak": { "type": "boolean" },
+            "share_goal_progress": { "type": "boolean" },
+            "share_achievements": { "type": "boolean" },
+            "share_challenge_rank": { "type": "boolean" },
+            "share_adherence_score": { "type": "boolean" },
+            "allow_partner_requests": { "type": "boolean" },
+            "allow_challenge_invites": { "type": "boolean" },
+            "visible_in_leaderboards": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "CelebrateRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "celebration_id", "reaction"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "celebration_id": { "type": "string" },
+        "reaction": {
+          "type": "string",
+          "enum": ["🎉", "💪", "🔥", "❤️", "👏"]
+        },
+        "message": { "type": "string", "maxLength": 100 }
+      }
+    }
+  }
+}

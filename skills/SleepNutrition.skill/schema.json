@@ -1,0 +1,202 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SleepNutrition Skill Schema",
+  "definitions": {
+    "SleepData": {
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "bedtime": { "type": "string", "format": "time" },
+        "wake_time": { "type": "string", "format": "time" },
+        "total_hours": { "type": "number" },
+        "total_minutes": { "type": "integer" },
+        "efficiency_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "deep_sleep_minutes": { "type": "integer" },
+        "deep_sleep_percent": { "type": "number" },
+        "rem_sleep_minutes": { "type": "integer" },
+        "rem_sleep_percent": { "type": "number" },
+        "light_sleep_minutes": { "type": "integer" },
+        "awake_minutes": { "type": "integer" },
+        "wake_count": { "type": "integer" },
+        "heart_rate_avg": { "type": "integer" },
+        "hrv_avg": { "type": "integer" },
+        "respiratory_rate": { "type": "number" },
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "category": { "enum": ["excellent", "good", "fair", "poor"] },
+        "source": { "enum": ["apple_health", "fitbit", "oura", "whoop", "garmin", "manual"] }
+      }
+    },
+    "TodayRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "include_meal_suggestions": { "type": "boolean", "default": true }
+      }
+    },
+    "TodayResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "sleep_summary": {
+          "type": "object",
+          "properties": {
+            "last_night": { "$ref": "#/definitions/SleepData" },
+            "weekly_average": {
+              "type": "object",
+              "properties": {
+                "hours": { "type": "number" },
+                "score": { "type": "integer" },
+                "trend": { "enum": ["improving", "stable", "declining"] }
+              }
+            },
+            "sleep_debt_hours": {
+              "type": "number",
+              "description": "Accumulated sleep deficit this week"
+            }
+          }
+        },
+        "nutrition_impact": {
+          "type": "object",
+          "properties": {
+            "hunger_increase_percent": { "type": "integer" },
+            "expected_extra_cravings": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "willpower_status": { "enum": ["normal", "slightly_reduced", "reduced", "significantly_reduced"] },
+            "calorie_adjustment": {
+              "type": "object",
+              "properties": {
+                "recommendation": { "enum": ["maintain_target", "allow_small_buffer", "focus_on_satiety"] },
+                "buffer_calories": { "type": "integer" },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        },
+        "todays_strategy": {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" },
+            "alert_level": { "enum": ["green", "yellow", "orange", "red"] },
+            "recommendations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": { "enum": ["breakfast", "lunch", "dinner", "snacks", "caffeine", "hydration", "evening", "timing"] },
+                  "advice": { "type": "string" },
+                  "why": { "type": "string" },
+                  "avoid": { "type": "string" },
+                  "priority": { "enum": ["high", "medium", "low"] }
+                }
+              }
+            }
+          }
+        },
+        "meal_suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "meal_type": { "type": "string" },
+              "suggestion": { "type": "string" },
+              "calories": { "type": "integer" },
+              "protein": { "type": "integer" },
+              "why_good_for_today": { "type": "string" }
+            }
+          }
+        },
+        "sleep_improvement_tips": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "WeeklyAnalysisResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "period": {
+          "type": "object",
+          "properties": {
+            "start": { "type": "string", "format": "date" },
+            "end": { "type": "string", "format": "date" }
+          }
+        },
+        "sleep_stats": {
+          "type": "object",
+          "properties": {
+            "avg_hours": { "type": "number" },
+            "avg_score": { "type": "integer" },
+            "best_night": { "$ref": "#/definitions/SleepData" },
+            "worst_night": { "$ref": "#/definitions/SleepData" },
+            "total_sleep_debt": { "type": "number" },
+            "nights_below_7h": { "type": "integer" }
+          }
+        },
+        "nutrition_correlation": {
+          "type": "object",
+          "properties": {
+            "avg_calories_good_sleep": { "type": "integer" },
+            "avg_calories_poor_sleep": { "type": "integer" },
+            "calorie_difference": { "type": "integer" },
+            "snacking_increase_poor_sleep_pct": { "type": "number" },
+            "protein_adherence_good_sleep_pct": { "type": "number" },
+            "protein_adherence_poor_sleep_pct": { "type": "number" }
+          }
+        },
+        "patterns_detected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pattern": { "type": "string" },
+              "confidence": { "type": "number" },
+              "recommendation": { "type": "string" }
+            }
+          }
+        },
+        "foods_affecting_sleep": {
+          "type": "object",
+          "properties": {
+            "positive_correlations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "food": { "type": "string" },
+                  "sleep_score_impact": { "type": "string" }
+                }
+              }
+            },
+            "negative_correlations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "food": { "type": "string" },
+                  "sleep_score_impact": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "LogSleepRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "bedtime", "wake_time"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "bedtime": { "type": "string" },
+        "wake_time": { "type": "string" },
+        "quality_rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "wake_count": { "type": "integer" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

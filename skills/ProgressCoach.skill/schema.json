@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProgressCoach Skill Schema",
+  "definitions": {
+    "WeeklySummaryRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": {
+          "type": "string",
+          "description": "User identifier"
+        },
+        "weekOffset": {
+          "type": "integer",
+          "default": 0,
+          "description": "0 = current week, -1 = last week, etc."
+        }
+      }
+    },
+    "WeeklySummaryResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "period": {
+          "type": "object",
+          "properties": {
+            "start": { "type": "string", "format": "date" },
+            "end": { "type": "string", "format": "date" }
+          }
+        },
+        "weight": {
+          "type": "object",
+          "properties": {
+            "start_lbs": { "type": "number" },
+            "end_lbs": { "type": "number" },
+            "change_lbs": { "type": "number" },
+            "trend": { "enum": ["losing", "gaining", "maintaining", "plateau"] }
+          }
+        },
+        "nutrition": {
+          "type": "object",
+          "properties": {
+            "avg_calories": { "type": "integer" },
+            "calorie_target": { "type": "integer" },
+            "calorie_adherence_pct": { "type": "number" },
+            "avg_protein_g": { "type": "integer" },
+            "protein_target_g": { "type": "integer" },
+            "protein_adherence_pct": { "type": "number" },
+            "days_logged": { "type": "integer" },
+            "total_days": { "type": "integer" }
+          }
+        },
+        "activity": {
+          "type": "object",
+          "properties": {
+            "avg_steps": { "type": "integer" },
+            "total_workouts": { "type": "integer" },
+            "avg_active_minutes": { "type": "integer" }
+          }
+        },
+        "adherence_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "streak_days": { "type": "integer" },
+        "insights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "enum": ["positive", "observation", "warning", "milestone"] },
+              "title": { "type": "string" },
+              "message": { "type": "string" },
+              "suggestion": { "type": "string" },
+              "priority": { "type": "integer", "minimum": 1, "maximum": 5 }
+            }
+          }
+        },
+        "next_week_focus": {
+          "type": "object",
+          "properties": {
+            "goal": { "type": "string" },
+            "metric": { "type": "string" },
+            "target_value": { "type": "number" }
+          }
+        }
+      }
+    },
+    "TrendAnalysisRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "days": { "type": "integer", "default": 30, "minimum": 7, "maximum": 90 },
+        "metrics": {
+          "type": "array",
+          "items": { "enum": ["weight", "calories", "protein", "steps", "adherence"] }
+        }
+      }
+    },
+    "TrendAnalysisResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "period_days": { "type": "integer" },
+        "trends": {
+          "type": "object",
+          "properties": {
+            "weight": {
+              "type": "object",
+              "properties": {
+                "direction": { "enum": ["up", "down", "stable"] },
+                "rate_per_week": { "type": "number" },
+                "total_change": { "type": "number" },
+                "projection_30d": { "type": "number" }
+              }
+            },
+            "calories": {
+              "type": "object",
+              "properties": {
+                "avg": { "type": "integer" },
+                "trend": { "enum": ["increasing", "decreasing", "stable"] },
+                "weekday_avg": { "type": "integer" },
+                "weekend_avg": { "type": "integer" }
+              }
+            },
+            "adherence": {
+              "type": "object",
+              "properties": {
+                "overall_pct": { "type": "number" },
+                "trend": { "enum": ["improving", "declining", "stable"] },
+                "best_day": { "type": "string" },
+                "worst_day": { "type": "string" }
+              }
+            }
+          }
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pattern": { "type": "string" },
+              "frequency": { "type": "string" },
+              "impact": { "type": "string" },
+              "recommendation": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "MilestoneResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "achieved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "achieved_at": { "type": "string", "format": "date-time" },
+              "celebration_message": { "type": "string" }
+            }
+          }
+        },
+        "upcoming": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "progress_pct": { "type": "number" },
+              "estimated_date": { "type": "string", "format": "date" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

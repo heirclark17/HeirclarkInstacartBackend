@@ -1,0 +1,173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PantryChef Skill Schema",
+  "definitions": {
+    "PantryItem": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "category": {
+          "enum": ["protein", "grain", "vegetable", "fruit", "dairy", "pantry_staple", "frozen", "condiment", "spice"]
+        },
+        "expiration_date": { "type": "string", "format": "date" },
+        "added_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "AddPantryItemsRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "items"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/PantryItem" }
+        },
+        "source": {
+          "enum": ["manual", "receipt_scan", "instacart_import"],
+          "default": "manual"
+        }
+      }
+    },
+    "RecipeFromPantryRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "mealType": {
+          "enum": ["breakfast", "lunch", "dinner", "snack"],
+          "description": "Filter recipes by meal type"
+        },
+        "maxPrepTime": {
+          "type": "integer",
+          "description": "Maximum prep + cook time in minutes"
+        },
+        "minMatchPercent": {
+          "type": "integer",
+          "default": 70,
+          "minimum": 50,
+          "maximum": 100,
+          "description": "Minimum ingredient match percentage"
+        },
+        "servings": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8
+        },
+        "prioritize": {
+          "enum": ["expiring_soon", "high_protein", "low_calorie", "quick"],
+          "description": "What to optimize for"
+        }
+      }
+    },
+    "RecipeFromPantryResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "pantry_items_count": { "type": "integer" },
+        "recipes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "match_type": { "enum": ["perfect", "almost", "partial"] },
+              "match_pct": { "type": "integer" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "cuisine": { "type": "string" },
+              "meal_type": { "type": "string" },
+              "difficulty": { "enum": ["easy", "medium", "hard"] },
+              "prep_time_mins": { "type": "integer" },
+              "cook_time_mins": { "type": "integer" },
+              "total_time_mins": { "type": "integer" },
+              "servings": { "type": "integer" },
+              "nutrition_per_serving": {
+                "type": "object",
+                "properties": {
+                  "calories": { "type": "integer" },
+                  "protein": { "type": "integer" },
+                  "carbs": { "type": "integer" },
+                  "fat": { "type": "integer" },
+                  "fiber": { "type": "integer" }
+                }
+              },
+              "ingredients_from_pantry": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "ingredients_missing": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "substitution": { "type": "string" },
+                    "essential": { "type": "boolean" }
+                  }
+                }
+              },
+              "ingredients_assumed": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Pantry staples assumed available"
+              },
+              "instructions": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "tips": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "fits_remaining_budget": { "type": "boolean" },
+              "image_url": { "type": "string" }
+            }
+          }
+        },
+        "expiring_soon_used": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Pantry items expiring soon that were prioritized"
+        },
+        "shopping_suggestions": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "unlocks_recipes": { "type": "integer" },
+                  "cost_estimate": { "type": "string" }
+                }
+              }
+            },
+            "instacart_link": { "type": "string" }
+          }
+        }
+      }
+    },
+    "QuickSuggestionsRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "ingredients"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "ingredients": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Quick list of what user has (e.g., ['chicken', 'rice', 'broccoli'])"
+        },
+        "timeLimit": {
+          "type": "integer",
+          "description": "Max cooking time in minutes"
+        }
+      }
+    }
+  }
+}

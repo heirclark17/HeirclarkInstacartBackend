@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RestaurantAdvisor Skill Schema",
+  "definitions": {
+    "RecommendRequest": {
+      "type": "object",
+      "required": ["shopifyCustomerId", "restaurant"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "restaurant": {
+          "type": "string",
+          "description": "Restaurant name (e.g., 'Chipotle', 'Panera')"
+        },
+        "mealType": {
+          "enum": ["breakfast", "lunch", "dinner", "snack"],
+          "default": "lunch"
+        },
+        "maxCalories": {
+          "type": "integer",
+          "description": "Override remaining budget with specific limit"
+        },
+        "priorities": {
+          "type": "array",
+          "items": { "enum": ["high_protein", "low_carb", "low_fat", "low_sodium", "vegetarian", "vegan"] },
+          "description": "Optimization priorities for this meal"
+        }
+      }
+    },
+    "RecommendResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "restaurant": { "type": "string" },
+        "remaining_budget": {
+          "type": "object",
+          "properties": {
+            "calories": { "type": "integer" },
+            "protein": { "type": "integer" },
+            "carbs": { "type": "integer" },
+            "fat": { "type": "integer" }
+          }
+        },
+        "recommendations": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "rank": { "type": "integer" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "category": { "type": "string" },
+              "base_nutrition": {
+                "type": "object",
+                "properties": {
+                  "calories": { "type": "integer" },
+                  "protein": { "type": "integer" },
+                  "carbs": { "type": "integer" },
+                  "fat": { "type": "integer" },
+                  "fiber": { "type": "integer" },
+                  "sodium": { "type": "integer" }
+                }
+              },
+              "customization": {
+                "type": "object",
+                "properties": {
+                  "build": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Recommended components to include"
+                  },
+                  "skip": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Components to skip or substitute"
+                  },
+                  "modifications": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Specific modifications to request"
+                  },
+                  "why": { "type": "string" }
+                }
+              },
+              "final_nutrition": {
+                "type": "object",
+                "properties": {
+                  "calories": { "type": "integer" },
+                  "protein": { "type": "integer" },
+                  "carbs": { "type": "integer" },
+                  "fat": { "type": "integer" }
+                }
+              },
+              "fit_score": { "type": "number", "minimum": 0, "maximum": 100 },
+              "fits_budget": { "type": "boolean" },
+              "price_estimate": { "type": "string" }
+            }
+          }
+        },
+        "general_tips": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "alternatives_if_unavailable": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "MenuItem": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "nutrition": {
+          "type": "object",
+          "properties": {
+            "calories": { "type": "integer" },
+            "protein": { "type": "integer" },
+            "carbs": { "type": "integer" },
+            "fat": { "type": "integer" },
+            "fiber": { "type": "integer" },
+            "sugar": { "type": "integer" },
+            "sodium": { "type": "integer" }
+          }
+        },
+        "allergens": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dietary_flags": {
+          "type": "array",
+          "items": { "enum": ["vegetarian", "vegan", "gluten-free", "dairy-free", "keto-friendly"] }
+        },
+        "customizable": { "type": "boolean" },
+        "available_modifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "calorie_change": { "type": "integer" },
+              "protein_change": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "EstimateRequest": {
+      "type": "object",
+      "required": ["description"],
+      "properties": {
+        "shopifyCustomerId": { "type": "string" },
+        "restaurant": { "type": "string" },
+        "description": {
+          "type": "string",
+          "description": "Description of the menu item to estimate"
+        },
+        "portion_notes": { "type": "string" }
+      }
+    },
+    "EstimateResponse": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "item_name": { "type": "string" },
+        "estimated_nutrition": {
+          "type": "object",
+          "properties": {
+            "calories": { "type": "integer" },
+            "protein": { "type": "integer" },
+            "carbs": { "type": "integer" },
+            "fat": { "type": "integer" }
+          }
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+        "estimation_notes": { "type": "string" },
+        "similar_known_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "restaurant": { "type": "string" },
+              "name": { "type": "string" },
+              "calories": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
