@@ -637,6 +637,48 @@ CREATE INDEX IF NOT EXISTS idx_imported_foods_user ON hc_imported_foods(user_id)
 `;
 
 // ==========================================================================
+// 6. Food Preferences Schema
+// ==========================================================================
+const FOOD_PREFERENCES_SCHEMA = `
+-- Food preferences table
+CREATE TABLE IF NOT EXISTS food_preferences (
+  id SERIAL PRIMARY KEY,
+  customer_id VARCHAR(255) UNIQUE NOT NULL,
+
+  -- Meal preferences
+  meal_style VARCHAR(50) NOT NULL CHECK (meal_style IN ('threePlusSnacks', 'fewerLarger')),
+  meal_diversity VARCHAR(50) NOT NULL CHECK (meal_diversity IN ('diverse', 'sameDaily')),
+
+  -- Food selections (stored as arrays)
+  favorite_proteins TEXT[] NOT NULL DEFAULT '{}',
+  favorite_fruits TEXT[] NOT NULL DEFAULT '{}',
+  favorite_cuisines TEXT[] NOT NULL DEFAULT '{}',
+  favorite_snacks TEXT[] NOT NULL DEFAULT '{}',
+
+  -- Text preferences
+  top_foods TEXT[] NOT NULL DEFAULT '{}',
+  hated_foods TEXT DEFAULT '',
+
+  -- Schedule
+  cheat_days TEXT[] NOT NULL DEFAULT '{}',
+  eat_out_frequency INTEGER NOT NULL DEFAULT 0 CHECK (eat_out_frequency >= 0 AND eat_out_frequency <= 7),
+
+  -- Timestamps
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  -- Foreign key
+  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES shopify_customers(id) ON DELETE CASCADE
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_food_prefs_customer_id ON food_preferences(customer_id);
+
+-- Table comment
+COMMENT ON TABLE food_preferences IS 'User food preferences for personalized meal planning';
+`;
+
+// ==========================================================================
 // Run All Migrations
 // ==========================================================================
 async function runMigrations() {
@@ -648,6 +690,7 @@ async function runMigrations() {
     { name: 'Body Scan Reports', schema: BODY_SCAN_REPORTS_SCHEMA },
     { name: 'Social', schema: SOCIAL_SCHEMA },
     { name: 'Import', schema: IMPORT_SCHEMA },
+    { name: 'Food Preferences', schema: FOOD_PREFERENCES_SCHEMA },
   ];
 
   for (const migration of migrations) {
