@@ -6,7 +6,7 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "preDeployCommand": "npm run build && npm run migrate:product",
+    "preDeployCommand": "npm run build && npm run migrate:food-prefs",
     "startCommand": "npm start",
     "sleepApplication": false,
     "useLegacyStacker": false,
