@@ -1,0 +1,107 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#MainContent"
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link [ref=e7] [cursor=pointer]:
+            - /url: /pages/goals
+            - img [ref=e8]
+          - heading "7-Day Meal Plan" [level=1] [ref=e10]
+          - button "Regenerate plan" [ref=e11] [cursor=pointer]:
+            - img [ref=e12]
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - generic [ref=e17]: Daily Targets
+            - link "Edit" [ref=e18] [cursor=pointer]:
+              - /url: /pages/goals
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]: "2000"
+              - generic [ref=e22]: Calories
+            - generic [ref=e23]:
+              - generic [ref=e24]: 150g
+              - generic [ref=e25]: Protein
+            - generic [ref=e26]:
+              - generic [ref=e27]: 200g
+              - generic [ref=e28]: Carbs
+            - generic [ref=e29]:
+              - generic [ref=e30]: 65g
+              - generic [ref=e31]: Fats
+        - generic [ref=e33]:
+          - img [ref=e35]
+          - heading "Create Your Personalized Plan" [level=2] [ref=e37]
+          - paragraph [ref=e38]: AI will generate a 7-day meal plan tailored to your calorie and macro goals
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Dietary Preference
+              - combobox "Dietary Preference" [ref=e42]:
+                - option "Balanced" [selected]
+                - option "High Protein"
+                - option "Low Carb"
+                - option "Vegetarian"
+                - option "Vegan"
+                - option "Keto"
+                - option "Mediterranean"
+            - generic [ref=e43]:
+              - generic [ref=e44]: Allergies / Restrictions
+              - textbox "Allergies / Restrictions" [ref=e45]:
+                - /placeholder: e.g., nuts, dairy, gluten
+            - generic [ref=e46]:
+              - generic [ref=e47]: Cooking Skill
+              - combobox "Cooking Skill" [ref=e48]:
+                - option "Beginner (< 15 min recipes)"
+                - option "Intermediate (15-30 min)" [selected]
+                - option "Advanced (any complexity)"
+            - generic [ref=e49]:
+              - generic [ref=e50]: Weekly Budget
+              - combobox "Weekly Budget" [ref=e51]:
+                - option "Budget ($50-75/week)"
+                - option "Moderate ($75-125/week)" [selected]
+                - option "Premium ($125-200/week)"
+          - button "Generate My 7-Day Plan" [ref=e52] [cursor=pointer]:
+            - img [ref=e53]
+            - generic [ref=e55]: Generate My 7-Day Plan
+      - navigation [ref=e56]:
+        - generic [ref=e57]:
+          - link "Home" [ref=e58] [cursor=pointer]:
+            - /url: /pages/calorie-counter
+            - img [ref=e60]
+            - generic [ref=e63]: Home
+          - link "Insights" [ref=e64] [cursor=pointer]:
+            - /url: /pages/insights
+            - img [ref=e66]
+            - generic [ref=e69]: Insights
+          - link "Meals" [ref=e70] [cursor=pointer]:
+            - /url: /pages/meal-plan
+            - img [ref=e72]
+            - generic [ref=e76]: Meals
+          - link "Workouts" [ref=e77] [cursor=pointer]:
+            - /url: /pages/workouts
+            - img [ref=e79]
+            - generic [ref=e83]: Workouts
+          - link "Social" [ref=e84] [cursor=pointer]:
+            - /url: /pages/social
+            - img [ref=e86]
+            - generic [ref=e91]: Social
+          - link "Goals" [ref=e92] [cursor=pointer]:
+            - /url: /pages/goals
+            - img [ref=e94]
+            - generic [ref=e98]: Goals
+          - link "Steps" [ref=e99] [cursor=pointer]:
+            - /url: /pages/steps
+            - img [ref=e101]
+            - generic [ref=e106]: Steps
+          - link "Programs" [ref=e107] [cursor=pointer]:
+            - /url: /pages/programs
+            - img [ref=e109]
+            - generic [ref=e111]: Programs
+          - link "Settings" [ref=e112] [cursor=pointer]:
+            - /url: /pages/settings
+            - img [ref=e114]
+            - generic [ref=e117]: Settings
+```

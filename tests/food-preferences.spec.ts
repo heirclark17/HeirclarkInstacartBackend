@@ -24,7 +24,7 @@ test.describe('Food Preferences Integration', () => {
     await page.goto(`${SHOPIFY_STORE}/pages/food-preferences`);
 
     // Wait for form to load
-    await page.waitForSelector('.hc-food-prefs-container', { timeout: 10000 });
+    await page.waitForSelector('.hc-food-prefs-app', { timeout: 10000 });
 
     // Verify all 10 questions are present
     await expect(page.locator('h3:has-text("How do you prefer to eat?")').first()).toBeVisible();
@@ -97,12 +97,12 @@ test.describe('Food Preferences Integration', () => {
     console.log('✓ Food preferences submitted successfully');
   });
 
-  test('should fetch food preferences in 7-day meal plan', async ({ page }) => {
-    // First, navigate to the 7-day meal plan page
-    await page.goto(`${SHOPIFY_STORE}/pages/seven-day-plan`);
+  test('should fetch food preferences in meal plan', async ({ page }) => {
+    // First, navigate to the meal plan page
+    await page.goto(`${SHOPIFY_STORE}/pages/meal-plan`);
 
     // Wait for the page to load
-    await page.waitForSelector('#hc-plan-root', { timeout: 10000 });
+    await page.waitForSelector('#hc-meal-plan-app', { timeout: 10000 });
 
     // Set up console message listener to capture API calls
     const consoleLogs: string[] = [];
@@ -125,17 +125,17 @@ test.describe('Food Preferences Integration', () => {
     );
 
     expect(foodPrefsFetched).toBeTruthy();
-    console.log('✓ 7-day meal plan attempted to fetch food preferences');
+    console.log('✓ Meal plan attempted to fetch food preferences');
   });
 
   test('should include food preferences in meal generation constraints', async ({ page }) => {
-    await page.goto(`${SHOPIFY_STORE}/pages/seven-day-plan`);
-    await page.waitForSelector('#hc-plan-root', { timeout: 10000 });
+    await page.goto(`${SHOPIFY_STORE}/pages/meal-plan`);
+    await page.waitForSelector('#hc-meal-plan-app', { timeout: 10000 });
 
     // Set up request interception to capture API calls
     const apiCalls: any[] = [];
     page.on('request', request => {
-      if (request.url().includes('/day-plan')) {
+      if (request.url().includes('/meal-plan-7day')) {
         apiCalls.push({
           url: request.url(),
           method: request.method(),
@@ -144,12 +144,12 @@ test.describe('Food Preferences Integration', () => {
       }
     });
 
-    // Look for the "Generate Day 1 Plan" button
-    const day1Button = page.locator('button[data-hc-smart-day-btn="1"]');
+    // Look for the "Generate Plan" button
+    const generateButton = page.locator('button#hc-generate-plan');
 
     // Only proceed if the button exists and is visible
-    if (await day1Button.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await day1Button.click();
+    if (await generateButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await generateButton.click();
 
       // Wait for API call to be made
       await page.waitForTimeout(3000);
@@ -160,14 +160,14 @@ test.describe('Food Preferences Integration', () => {
         if (requestBody) {
           const parsed = JSON.parse(requestBody);
 
-          // Check if constraints include food preferences
-          expect(parsed.constraints).toBeDefined();
-          console.log('✓ Meal generation includes constraints object');
+          // Check if preferences include food preferences
+          expect(parsed.preferences).toBeDefined();
+          console.log('✓ Meal generation includes preferences object');
 
-          // Verify food preference fields exist in constraints
-          const hasProteins = parsed.constraints.favoriteProteins !== undefined;
-          const hasFruits = parsed.constraints.favoriteFruits !== undefined;
-          const hasCuisines = parsed.constraints.favoriteCuisines !== undefined;
+          // Verify food preference fields exist in preferences
+          const hasProteins = parsed.preferences.favoriteProteins !== undefined;
+          const hasFruits = parsed.preferences.favoriteFruits !== undefined;
+          const hasCuisines = parsed.preferences.favoriteCuisines !== undefined;
 
           if (hasProteins || hasFruits || hasCuisines) {
             console.log('✓ Food preferences included in meal generation');
@@ -179,13 +179,13 @@ test.describe('Food Preferences Integration', () => {
         console.log('⚠ No API calls captured - meal generation may not have triggered');
       }
     } else {
-      console.log('ℹ Generate Day 1 button not found - skipping meal generation test');
+      console.log('ℹ Generate Plan button not found - skipping meal generation test');
     }
   });
 
   test('should display food preferences in UI summary', async ({ page }) => {
-    await page.goto(`${SHOPIFY_STORE}/pages/seven-day-plan`);
-    await page.waitForSelector('#hc-plan-root', { timeout: 10000 });
+    await page.goto(`${SHOPIFY_STORE}/pages/meal-plan`);
+    await page.waitForSelector('#hc-meal-plan-app', { timeout: 10000 });
 
     // Wait for preferences to load
     await page.waitForTimeout(2000);
@@ -225,7 +225,7 @@ test.describe('Food Preferences API Tests', () => {
 
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
-    expect(data.success).toBe(true);
+    expect(data.ok).toBe(true);
     expect(data.data.mealStyle).toBe('threePlusSnacks');
 
     console.log('✓ Food preferences saved via API');
@@ -242,7 +242,7 @@ test.describe('Food Preferences API Tests', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
 
-    if (data.success && data.data) {
+    if (data.ok && data.data) {
       expect(data.data.mealStyle).toBeDefined();
       console.log('✓ Food preferences retrieved via API');
       console.log('  → Meal Style:', data.data.mealStyle);

@@ -198,6 +198,7 @@ app.use(
       "Authorization",
       "Accept",
       "X-Shopify-Customer-Id",
+      "X-Customer-ID",  // Food preferences authentication
       "X-Correlation-Id",
       "X-Confirm-Delete",  // GDPR deletion confirmation
       "Cache-Control",
