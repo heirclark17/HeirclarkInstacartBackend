@@ -34,6 +34,94 @@ const foodPreferencesSchema = z.object({
 type FoodPreferencesData = z.infer<typeof foodPreferencesSchema>;
 
 /**
+ * Shared handler for creating/updating food preferences
+ */
+async function upsertFoodPreferences(
+  req: AuthenticatedRequest,
+  res: Response
+) {
+  const customerId = req.auth?.customerId;
+  if (!customerId) {
+    return sendError(res, "Missing customer ID", 400);
+  }
+
+  // Validate request body
+  const parseResult = foodPreferencesSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return sendValidationError(
+      res,
+      parseResult.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`)
+    );
+  }
+
+  const data = parseResult.data;
+
+  // Upsert food preferences
+  const result = await pool.query(
+    `
+    INSERT INTO food_preferences (
+      customer_id,
+      meal_style,
+      favorite_proteins,
+      favorite_fruits,
+      favorite_cuisines,
+      top_foods,
+      hated_foods,
+      cheat_days,
+      eat_out_frequency,
+      favorite_snacks,
+      meal_diversity,
+      created_at,
+      updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+    ON CONFLICT (customer_id)
+    DO UPDATE SET
+      meal_style = EXCLUDED.meal_style,
+      favorite_proteins = EXCLUDED.favorite_proteins,
+      favorite_fruits = EXCLUDED.favorite_fruits,
+      favorite_cuisines = EXCLUDED.favorite_cuisines,
+      top_foods = EXCLUDED.top_foods,
+      hated_foods = EXCLUDED.hated_foods,
+      cheat_days = EXCLUDED.cheat_days,
+      eat_out_frequency = EXCLUDED.eat_out_frequency,
+      favorite_snacks = EXCLUDED.favorite_snacks,
+      meal_diversity = EXCLUDED.meal_diversity,
+      updated_at = NOW()
+    RETURNING *
+    `,
+    [
+      customerId,
+      data.mealStyle,
+      data.favoriteProteins,
+      data.favoriteFruits,
+      data.favoriteCuisines,
+      data.topFoods,
+      data.hatedFoods,
+      data.cheatDays,
+      data.eatOutFrequency,
+      data.favoriteSnacks,
+      data.mealDiversity,
+    ]
+  );
+
+  const prefs = result.rows[0];
+  return sendSuccess(res, {
+    mealStyle: prefs.meal_style,
+    favoriteProteins: prefs.favorite_proteins,
+    favoriteFruits: prefs.favorite_fruits,
+    favoriteCuisines: prefs.favorite_cuisines,
+    topFoods: prefs.top_foods,
+    hatedFoods: prefs.hated_foods,
+    cheatDays: prefs.cheat_days,
+    eatOutFrequency: prefs.eat_out_frequency,
+    favoriteSnacks: prefs.favorite_snacks,
+    mealDiversity: prefs.meal_diversity,
+    createdAt: prefs.created_at,
+    updatedAt: prefs.updated_at,
+  });
+}
+
+/**
  * GET /api/v1/food-preferences
  *
  * Get user's food preferences
@@ -80,87 +168,7 @@ foodPreferencesRouter.get(
  */
 foodPreferencesRouter.post(
   "/",
-  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const customerId = req.auth?.customerId;
-    if (!customerId) {
-      return sendError(res, "Missing customer ID", 400);
-    }
-
-    // Validate request body
-    const parseResult = foodPreferencesSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return sendValidationError(
-        res,
-        parseResult.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`)
-      );
-    }
-
-    const data = parseResult.data;
-
-    // Upsert food preferences
-    const result = await pool.query(
-      `
-      INSERT INTO food_preferences (
-        customer_id,
-        meal_style,
-        favorite_proteins,
-        favorite_fruits,
-        favorite_cuisines,
-        top_foods,
-        hated_foods,
-        cheat_days,
-        eat_out_frequency,
-        favorite_snacks,
-        meal_diversity,
-        created_at,
-        updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-      ON CONFLICT (customer_id)
-      DO UPDATE SET
-        meal_style = EXCLUDED.meal_style,
-        favorite_proteins = EXCLUDED.favorite_proteins,
-        favorite_fruits = EXCLUDED.favorite_fruits,
-        favorite_cuisines = EXCLUDED.favorite_cuisines,
-        top_foods = EXCLUDED.top_foods,
-        hated_foods = EXCLUDED.hated_foods,
-        cheat_days = EXCLUDED.cheat_days,
-        eat_out_frequency = EXCLUDED.eat_out_frequency,
-        favorite_snacks = EXCLUDED.favorite_snacks,
-        meal_diversity = EXCLUDED.meal_diversity,
-        updated_at = NOW()
-      RETURNING *
-      `,
-      [
-        customerId,
-        data.mealStyle,
-        data.favoriteProteins,
-        data.favoriteFruits,
-        data.favoriteCuisines,
-        data.topFoods,
-        data.hatedFoods,
-        data.cheatDays,
-        data.eatOutFrequency,
-        data.favoriteSnacks,
-        data.mealDiversity,
-      ]
-    );
-
-    const prefs = result.rows[0];
-    return sendSuccess(res, {
-      mealStyle: prefs.meal_style,
-      favoriteProteins: prefs.favorite_proteins,
-      favoriteFruits: prefs.favorite_fruits,
-      favoriteCuisines: prefs.favorite_cuisines,
-      topFoods: prefs.top_foods,
-      hatedFoods: prefs.hated_foods,
-      cheatDays: prefs.cheat_days,
-      eatOutFrequency: prefs.eat_out_frequency,
-      favoriteSnacks: prefs.favorite_snacks,
-      mealDiversity: prefs.meal_diversity,
-      createdAt: prefs.created_at,
-      updatedAt: prefs.updated_at,
-    });
-  })
+  asyncHandler(upsertFoodPreferences)
 );
 
 /**
@@ -170,14 +178,7 @@ foodPreferencesRouter.post(
  */
 foodPreferencesRouter.put(
   "/",
-  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    // Reuse POST logic
-    return foodPreferencesRouter.handle(
-      { ...req, method: "POST" } as any,
-      res,
-      () => {}
-    );
-  })
+  asyncHandler(upsertFoodPreferences)
 );
 
 /**
