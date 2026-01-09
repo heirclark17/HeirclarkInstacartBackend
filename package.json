@@ -6,6 +6,7 @@
     "build": "tsc",
     "migrate": "node dist/db/migrate.js",
     "migrate:product": "node dist/db/migrations/runProductMigrations.js",
+    "migrate:food-prefs": "node dist/db/migrations/runFoodPrefsMigration.js",
     "seed:usda": "node dist/scripts/seed-usda-foods.js",
     "seed:onboarding": "node dist/scripts/seed-onboarding-program.js",
     "start": "node dist/index.js",
