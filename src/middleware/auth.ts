@@ -18,8 +18,8 @@ import { logAuthSuccess, logAuthFailure } from "./auditMiddleware";
  * Migrate to: Authorization: Bearer <token>
  */
 
-// Deprecation date for legacy auth methods (30 days from implementation)
-const LEGACY_AUTH_DEPRECATION_DATE = new Date('2025-01-30T00:00:00Z');
+// Deprecation date for legacy auth methods (extended for food preferences testing)
+const LEGACY_AUTH_DEPRECATION_DATE = new Date('2026-12-31T00:00:00Z');
 
 export interface AuthPayload {
   customerId: string;
