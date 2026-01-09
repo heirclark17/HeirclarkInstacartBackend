@@ -177,20 +177,21 @@ export function authMiddleware(options: { required?: boolean } = {}) {
       }
     }
 
-    // Legacy: X-Shopify-Customer-Id header (DEPRECATED)
-    const legacyHeader = req.headers["x-shopify-customer-id"] as string | undefined;
+    // Legacy: X-Shopify-Customer-Id or X-Customer-ID header (DEPRECATED)
+    const legacyHeader = (req.headers["x-shopify-customer-id"] || req.headers["x-customer-id"]) as string | undefined;
     if (legacyHeader) {
       if (!isLegacyAuthAllowed()) {
-        logAuthFailure(req, "Legacy X-Shopify-Customer-Id header no longer accepted");
+        logAuthFailure(req, "Legacy X-Shopify-Customer-Id/X-Customer-ID header no longer accepted");
         return res.status(401).json({
           ok: false,
-          error: "X-Shopify-Customer-Id authentication is no longer supported. Use Bearer token.",
+          error: "X-Shopify-Customer-Id/X-Customer-ID authentication is no longer supported. Use Bearer token.",
         });
       }
 
       // Allow but warn
-      console.warn(`[auth] DEPRECATED: X-Shopify-Customer-Id header used by ${legacyHeader}`);
-      addDeprecationWarning(res, 'X-Shopify-Customer-Id header');
+      const headerName = req.headers["x-shopify-customer-id"] ? "X-Shopify-Customer-Id" : "X-Customer-ID";
+      console.warn(`[auth] DEPRECATED: ${headerName} header used by ${legacyHeader}`);
+      addDeprecationWarning(res, `${headerName} header`);
 
       req.auth = {
         customerId: legacyHeader.trim(),
