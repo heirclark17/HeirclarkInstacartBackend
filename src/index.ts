@@ -32,6 +32,7 @@ import { weightRouter } from "./routes/weight";
 
 // User preferences router
 import { preferencesRouter } from "./routes/preferences";
+import { foodPreferencesRouter } from "./routes/foodPreferences";
 
 // Body Scan router (Tier 3 SMPL-X microservice proxy)
 import { bodyScanRouter } from "./routes/bodyScan";
@@ -242,6 +243,7 @@ app.use("/api/v1/weight", weightRouter);
 
 // User preferences routes
 app.use("/api/v1/preferences", preferencesRouter);
+app.use("/api/v1/food-preferences", foodPreferencesRouter);
 
 // Fitbit integration routes (OAuth + token refresh + today activity)
 app.use("/api/v1/integrations/fitbit", fitbitRouter);
