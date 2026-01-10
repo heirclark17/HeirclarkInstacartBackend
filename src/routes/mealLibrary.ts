@@ -29,6 +29,7 @@ async function ensureTableExists() {
         prep_time_minutes INTEGER,
         cook_time_minutes INTEGER,
         tags TEXT[],
+        is_favorite BOOLEAN DEFAULT FALSE,
         times_used INTEGER DEFAULT 0,
         last_used_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -37,6 +38,7 @@ async function ensureTableExists() {
 
       CREATE INDEX IF NOT EXISTS idx_meal_library_customer ON hc_meal_library(shopify_customer_id);
       CREATE INDEX IF NOT EXISTS idx_meal_library_type ON hc_meal_library(meal_type);
+      CREATE INDEX IF NOT EXISTS idx_meal_library_favorite ON hc_meal_library(shopify_customer_id, is_favorite);
     `);
     console.log('[Meal Library] Table created/verified');
   } catch (err) {
@@ -61,6 +63,7 @@ mealLibraryRouter.get('/library', async (req: Request, res: Response) => {
 
     const mealType = req.query.mealType as string;
     const search = req.query.search as string;
+    const favoritesOnly = req.query.favoritesOnly === 'true';
     const sortBy = req.query.sortBy as string || 'created_at'; // created_at, times_used, meal_name, calories
     const sortOrder = req.query.sortOrder as string || 'DESC';
 
@@ -70,6 +73,11 @@ mealLibraryRouter.get('/library', async (req: Request, res: Response) => {
     `;
     const params: any[] = [shopifyCustomerId];
     let paramIndex = 2;
+
+    // Filter by favorites
+    if (favoritesOnly) {
+      query += ` AND is_favorite = true`;
+    }
 
     // Filter by meal type
     if (mealType) {
@@ -293,7 +301,8 @@ mealLibraryRouter.get('/library/stats', async (req: Request, res: Response) => {
         COUNT(DISTINCT meal_type) as meal_types,
         SUM(times_used) as total_uses,
         AVG(calories)::INTEGER as avg_calories,
-        AVG(protein)::INTEGER as avg_protein
+        AVG(protein)::INTEGER as avg_protein,
+        COUNT(*) FILTER (WHERE is_favorite = true) as favorite_count
       FROM hc_meal_library
       WHERE shopify_customer_id = $1
     `, [shopifyCustomerId]);
@@ -305,6 +314,51 @@ mealLibraryRouter.get('/library/stats', async (req: Request, res: Response) => {
 
   } catch (err: any) {
     console.error('[Meal Library] Get stats error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/v1/meals/library/:id/favorite
+ * Toggle favorite status of a meal
+ */
+mealLibraryRouter.patch('/library/:id/favorite', async (req: Request, res: Response) => {
+  try {
+    const shopifyCustomerId = req.body.shopifyCustomerId || req.headers['x-shopify-customer-id'];
+    const mealId = parseInt(req.params.id);
+    const isFavorite = req.body.isFavorite;
+
+    if (!shopifyCustomerId) {
+      return res.status(400).json({ ok: false, error: 'Missing shopifyCustomerId' });
+    }
+
+    if (isNaN(mealId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid meal ID' });
+    }
+
+    if (typeof isFavorite !== 'boolean') {
+      return res.status(400).json({ ok: false, error: 'isFavorite must be a boolean' });
+    }
+
+    const result = await pool.query(
+      `UPDATE hc_meal_library
+       SET is_favorite = $1
+       WHERE id = $2 AND shopify_customer_id = $3
+       RETURNING *`,
+      [isFavorite, mealId, shopifyCustomerId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Meal not found' });
+    }
+
+    res.json({
+      ok: true,
+      meal: result.rows[0]
+    });
+
+  } catch (err: any) {
+    console.error('[Meal Library] Toggle favorite error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
