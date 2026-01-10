@@ -309,7 +309,13 @@ async function generateMealPlanWithAI(
     prefsList.push(`Cuisines: ${preferences.favoriteCuisines.join(', ')}`);
   }
   if (includeSnacks) {
-    prefsList.push('Include 2-3 snacks/day (100-200cal each)');
+    const snackTypes = preferences.favoriteSnacks?.length
+      ? `(prefer ${preferences.favoriteSnacks.join(', ')} based snacks)`
+      : '';
+    prefsList.push(`Include 2-3 snacks/day (100-200cal each) ${snackTypes}`);
+  }
+  if (preferences.cheatDays?.length) {
+    prefsList.push(`Cheat days (${preferences.cheatDays.join(', ')}): Allow indulgent meals with higher calories and more flexibility on these days`);
   }
   if (preferences.mealDiversity === 'diverse') {
     prefsList.push('Make all 7 days unique');
