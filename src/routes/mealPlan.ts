@@ -302,9 +302,6 @@ async function generateMealPlanWithAI(
 
   // Build concise preferences list
   const prefsList = [];
-  if (preferences.hatedFoods) {
-    prefsList.push(`NEVER include these foods or mention them in dish names: ${preferences.hatedFoods}. Don't use "(No X)" in dish names - just avoid those dishes entirely`);
-  }
   if (preferences.favoriteProteins?.length) {
     prefsList.push(`Proteins: ${preferences.favoriteProteins.join(', ')}`);
   }
@@ -318,6 +315,11 @@ async function generateMealPlanWithAI(
     prefsList.push('Make all 7 days unique');
   } else if (preferences.mealDiversity === 'sameDaily') {
     prefsList.push('Repeat same meals all 7 days');
+  }
+
+  // CRITICAL: Put hated foods LAST so AI pays maximum attention (recency bias)
+  if (preferences.hatedFoods) {
+    prefsList.push(`CRITICAL ABSOLUTE RULE - NEVER EVER include or mention these foods in ANY meal or dish name: ${preferences.hatedFoods}. This is NON-NEGOTIABLE. Choose completely different dishes instead`);
   }
 
   const systemPrompt = `7-day meal plan JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"...","description":"...","calories":500,"macros":{"protein":35,"carbs":50,"fat":18},"servings":1}]}]}
