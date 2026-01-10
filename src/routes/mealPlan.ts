@@ -303,7 +303,7 @@ async function generateMealPlanWithAI(
   // Build concise preferences list
   const prefsList = [];
   if (preferences.hatedFoods) {
-    prefsList.push(`NEVER: ${preferences.hatedFoods}`);
+    prefsList.push(`NEVER include these foods or mention them in dish names: ${preferences.hatedFoods}. Don't use "(No X)" in dish names - just avoid those dishes entirely`);
   }
   if (preferences.favoriteProteins?.length) {
     prefsList.push(`Proteins: ${preferences.favoriteProteins.join(', ')}`);
