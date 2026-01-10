@@ -628,32 +628,42 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
         const allMeals = plan.days?.flatMap((day: any) => day.meals || []) || [];
         if (allMeals.length > 0) {
           console.log(`[mealPlan] Auto-saving ${allMeals.length} meals to library...`);
+          let savedCount = 0;
           for (const meal of allMeals) {
             try {
-              await pool.query(`
+              const result = await pool.query(`
                 INSERT INTO hc_meal_library (
                   shopify_customer_id, meal_name, meal_description, meal_type,
-                  calories, protein, carbs, fat, ingredients, servings, times_used
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
-                ON CONFLICT (shopify_customer_id, meal_name) DO NOTHING
+                  calories, protein, carbs, fat, ingredients, instructions,
+                  servings, prep_time_minutes, cook_time_minutes, times_used
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 1)
+                ON CONFLICT (shopify_customer_id, meal_name)
+                DO UPDATE SET times_used = hc_meal_library.times_used + 1, last_used_at = NOW()
+                RETURNING id
               `, [
                 String(shopifyCustomerId),
                 meal.dishName,
-                meal.description,
+                meal.description || meal.mealDescription || '',
                 meal.mealType,
-                meal.calories,
-                meal.macros?.protein || 0,
-                meal.macros?.carbs || 0,
-                meal.macros?.fat || 0,
+                meal.calories || meal.macros?.calories || 0,
+                meal.macros?.protein || meal.protein || 0,
+                meal.macros?.carbs || meal.carbs || 0,
+                meal.macros?.fat || meal.fat || 0,
                 JSON.stringify(meal.ingredients || []),
-                meal.servings || 1
+                meal.instructions || '',
+                meal.servings || 1,
+                meal.prepTimeMinutes || null,
+                meal.cookTimeMinutes || null
               ]);
-            } catch (err) {
-              console.warn('[mealPlan] Error saving meal to library:', meal.dishName);
+              if (result.rows.length > 0) {
+                savedCount++;
+              }
+            } catch (err: any) {
+              console.error('[mealPlan] Error saving meal to library:', meal.dishName, err.message);
               // Continue with other meals
             }
           }
-          console.log('[mealPlan] Meals saved to library');
+          console.log(`[mealPlan] Saved ${savedCount}/${allMeals.length} meals to library`);
         }
       } catch (dbErr) {
         console.warn('[mealPlan] Failed to store plan in database:', dbErr);
