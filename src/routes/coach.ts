@@ -277,4 +277,80 @@ coachRouter.get('/milestones', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/v1/coach/mealplan
+ * Get personalized coaching for meal plan
+ */
+coachRouter.post('/mealplan', async (req: Request, res: Response) => {
+  try {
+    const { plan, targets, userInputs } = req.body;
+
+    if (!plan || !targets) {
+      return res.status(400).json({ ok: false, error: 'Missing plan or targets' });
+    }
+
+    // Get user's name for personalization
+    const userName = userInputs?.name || 'friend';
+
+    // Extract first day's meals for specific examples
+    const day1 = plan.days?.[0];
+    const breakfast = day1?.meals?.find((m: any) => m.mealType === 'Breakfast');
+    const lunch = day1?.meals?.find((m: any) => m.mealType === 'Lunch');
+    const dinner = day1?.meals?.find((m: any) => m.mealType === 'Dinner');
+    const snacks = day1?.meals?.filter((m: any) => m.mealType === 'Snack') || [];
+
+    // Check if Sunday (day 7) has cheat day meals
+    const sunday = plan.days?.find((d: any) => d.day === 7);
+    const hasSundayCheat = sunday?.meals?.some((m: any) =>
+      m.calories > (targets.calories / 3) * 1.3
+    );
+
+    // Build personalized coaching script
+    let script = `Hey ${userName}, your personalized 7-day meal plan looks fantastic! `;
+
+    // Mention specific daily targets
+    script += `I've designed this plan around your daily goals of ${targets.calories} calories, with ${targets.protein} grams of protein, ${targets.carbs} grams of carbs, and ${targets.fat} grams of fat. `;
+
+    // Mention specific meals from day 1
+    if (breakfast && lunch && dinner) {
+      script += `Let me walk you through day one. You'll start with ${breakfast.dishName}, which gives you ${breakfast.macros?.protein || 0} grams of protein right away. `;
+      script += `For lunch, you've got ${lunch.dishName}, and dinner is ${dinner.dishName}. `;
+    }
+
+    // Mention snacks if present
+    if (snacks.length > 0) {
+      script += `I've also included ${snacks.length} snacks throughout the day, like ${snacks[0]?.dishName}${snacks.length > 1 ? ` and ${snacks[1]?.dishName}` : ''}. `;
+    }
+
+    // Mention meal diversity
+    const totalMeals = plan.days?.reduce((sum: number, d: any) => sum + d.meals?.length || 0, 0) || 0;
+    const uniqueDishes = new Set(plan.days?.flatMap((d: any) => d.meals?.map((m: any) => m.dishName) || [])).size;
+    if (uniqueDishes === totalMeals / 7) {
+      script += `I've kept the same meals every day for easy meal prep - you can cook once and eat all week! `;
+    } else {
+      script += `I've created diverse meals for every day, so you won't get bored! `;
+    }
+
+    // Mention cheat day if applicable
+    if (hasSundayCheat) {
+      script += `And I noticed you have a cheat day on Sunday, so I made those meals more indulgent while still keeping you on track. `;
+    }
+
+    // Closing encouragement
+    script += `This plan is designed specifically for YOU, hitting your macros while keeping things delicious and sustainable. Tap the grocery button when you're ready to order these ingredients through Instacart. You've got this!`;
+
+    res.json({
+      ok: true,
+      streamingAvailable: true,
+      script,
+      defaultAvatarId: process.env.HEYGEN_AVATAR_ID || 'default',
+      defaultVoiceId: process.env.HEYGEN_VOICE_ID || 'default',
+    });
+
+  } catch (err: any) {
+    console.error('[coach] mealplan error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default coachRouter;
