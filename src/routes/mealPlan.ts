@@ -45,12 +45,12 @@ interface MealPlanPreferences {
   mealStyle?: string;
   favoriteProteins?: string[];
   favoriteFruits?: string[];
+  favoriteVegetables?: string[];
+  favoriteStarches?: string[];
   favoriteCuisines?: string[];
   favoriteSnacks?: string[];
-  topFoods?: string[];
   hatedFoods?: string;
   cheatDays?: string[];
-  eatOutFrequency?: number;
   mealDiversity?: string;
 }
 
@@ -273,11 +273,14 @@ async function generateMealPlanWithAI(
   const favoriteFruitsText = preferences.favoriteFruits?.length
     ? `Use these fruits: ${preferences.favoriteFruits.join(', ')}.`
     : '';
+  const favoriteVegetablesText = preferences.favoriteVegetables?.length
+    ? `Use these vegetables: ${preferences.favoriteVegetables.join(', ')}.`
+    : '';
+  const favoriteStarchesText = preferences.favoriteStarches?.length
+    ? `Use these starches/carbs: ${preferences.favoriteStarches.join(', ')}.`
+    : '';
   const favoriteCuisinesText = preferences.favoriteCuisines?.length
     ? `Favor these cuisines: ${preferences.favoriteCuisines.join(', ')}.`
-    : '';
-  const topFoodsText = preferences.topFoods?.length
-    ? `User loves these foods: ${preferences.topFoods.join(', ')}. Include them frequently.`
     : '';
   const favoriteSnacksText = preferences.favoriteSnacks?.length
     ? `For snacks, use: ${preferences.favoriteSnacks.join(', ')}.`
@@ -304,6 +307,12 @@ async function generateMealPlanWithAI(
   const prefsList = [];
   if (preferences.favoriteProteins?.length) {
     prefsList.push(`Proteins: ${preferences.favoriteProteins.join(', ')}`);
+  }
+  if (preferences.favoriteVegetables?.length) {
+    prefsList.push(`Vegetables: ${preferences.favoriteVegetables.join(', ')}`);
+  }
+  if (preferences.favoriteStarches?.length) {
+    prefsList.push(`Starches/Carbs: ${preferences.favoriteStarches.join(', ')}`);
   }
   if (preferences.favoriteCuisines?.length) {
     prefsList.push(`Cuisines: ${preferences.favoriteCuisines.join(', ')}`);
@@ -580,12 +589,12 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
     mealStyle: preferences?.mealStyle,
     favoriteProteins: preferences?.favoriteProteins || [],
     favoriteFruits: preferences?.favoriteFruits || [],
+    favoriteVegetables: preferences?.favoriteVegetables || [],
+    favoriteStarches: preferences?.favoriteStarches || [],
     favoriteCuisines: preferences?.favoriteCuisines || [],
     favoriteSnacks: preferences?.favoriteSnacks || [],
-    topFoods: preferences?.topFoods || [],
     hatedFoods: preferences?.hatedFoods || '',
     cheatDays: preferences?.cheatDays || [],
-    eatOutFrequency: preferences?.eatOutFrequency,
     mealDiversity: preferences?.mealDiversity,
   };
 
