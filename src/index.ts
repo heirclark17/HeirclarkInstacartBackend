@@ -282,8 +282,8 @@ app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
 // AI Meal Plan routes (7-day plan generation)
 app.use("/api/v1/ai", mealPlanRouter);
 
-// Meal library routes (saved meals)
-app.use("/api/v1/meals", mealLibraryRouter);
+// Meal library routes (saved meals) - Different path to avoid conflict with /api/v1/meals/:id
+app.use("/api/v1/meal-library", mealLibraryRouter);
 
 // Web scraping routes (Firecrawl integration)
 app.use("/api/v1/scrape", scrapeRouter);
