@@ -40,6 +40,20 @@ async function ensureTableExists() {
       CREATE INDEX IF NOT EXISTS idx_meal_library_type ON hc_meal_library(meal_type);
       CREATE INDEX IF NOT EXISTS idx_meal_library_favorite ON hc_meal_library(shopify_customer_id, is_favorite);
     `);
+
+    // Add is_favorite column if it doesn't exist (migration)
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'hc_meal_library' AND column_name = 'is_favorite'
+        ) THEN
+          ALTER TABLE hc_meal_library ADD COLUMN is_favorite BOOLEAN DEFAULT FALSE;
+        END IF;
+      END $$;
+    `);
+
     console.log('[Meal Library] Table created/verified');
   } catch (err) {
     console.error('[Meal Library] Error creating table:', err);
