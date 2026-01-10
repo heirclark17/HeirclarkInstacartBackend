@@ -239,9 +239,12 @@ async function getUnsplashImage(dishName: string, mealType?: string): Promise<st
 async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
   // Add images directly to each meal (using curated library is fast, no batching needed)
   for (const day of plan.days) {
-    for (const meal of day.meals) {
-      const imageUrl = await getUnsplashImage(meal.dishName, meal.mealType);
-      (meal as any).imageUrl = imageUrl;
+    // Skip cheat days (they don't have meals)
+    if (!(day as any).isCheatDay && day.meals && Array.isArray(day.meals)) {
+      for (const meal of day.meals) {
+        const imageUrl = await getUnsplashImage(meal.dishName, meal.mealType);
+        (meal as any).imageUrl = imageUrl;
+      }
     }
   }
 
