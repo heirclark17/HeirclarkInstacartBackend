@@ -371,21 +371,44 @@ async function generateMealPlanWithAI(
     prefsList.push(`CRITICAL ABSOLUTE RULE - NEVER EVER include or mention these foods in ANY meal or dish name: ${preferences.hatedFoods}. This is NON-NEGOTIABLE. Choose completely different dishes instead`);
   }
 
-  // Build JSON format example based on whether there are cheat days
-  const jsonExample = cheatDayNumbers.length > 0
-    ? `{"days":[{"day":1,"meals":[...]},{"day":2,"isCheatDay":true,"cheatDayAdvice":"Motivational advice on enjoying this cheat day mindfully..."}]}`
-    : `{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"...","description":"...","calories":500,"macros":{"protein":35,"carbs":50,"fat":18},"servings":1}]}]}`;
+  // Build detailed JSON format example
+  const mealFormatExample = `{
+  "mealType": "Breakfast",
+  "dishName": "Greek Yogurt Parfait",
+  "description": "Creamy Greek yogurt layered with fresh berries and granola",
+  "calories": 450,
+  "macros": {"protein": 30, "carbs": 50, "fat": 15},
+  "servings": 1
+}`;
 
   const cheatDayInstructions = cheatDayNumbers.length > 0
-    ? `\n\nIMPORTANT - CHEAT DAY FORMAT:\nFor days ${cheatDayNumbers.join(', ')}, use this format:\n{"day":X,"isCheatDay":true,"cheatDayAdvice":"2-3 sentences of encouraging, motivational advice on how to enjoy this cheat day guilt-free while staying mindful. Focus on balance, enjoyment, and getting back on track tomorrow."}\nDo NOT generate meals for cheat days.`
+    ? `\n\nCHEAT DAYS (Days ${cheatDayNumbers.join(', ')}): Use this EXACT format:\n{"day":X,"isCheatDay":true,"cheatDayAdvice":"Motivational 2-3 sentence advice"}\nDo NOT generate meals for cheat days.`
     : '';
 
-  const systemPrompt = `7-day meal plan JSON: ${jsonExample}
-Target: ${targets.calories}cal, ${targets.protein}g protein/day. ${dietTypeText} diet. ${allergiesText}
-Preferences: ${prefsList.join('. ')}.${cheatDayInstructions}
-Return ONLY valid JSON for all 7 days.`;
+  const systemPrompt = `You are a meal planning expert. Generate a 7-day meal plan in this EXACT JSON format:
 
-  const userPrompt = `Generate complete 7-day meal plan now.`;
+{
+  "days": [
+    {
+      "day": 1,
+      "meals": [${mealFormatExample}, ...]
+    }
+  ]
+}
+
+CRITICAL - MEAL FORMAT:
+- Each meal MUST have: mealType, dishName, description, calories, macros{protein,carbs,fat}, servings
+- dishName is the COMPLETE dish name (e.g., "Grilled Chicken with Rice and Broccoli")
+- calories is total for the dish
+- macros must be an object with protein, carbs, fat in grams
+
+Target: ${targets.calories}cal, ${targets.protein}g protein/day per day. ${dietTypeText} diet.
+${allergiesText}
+Preferences: ${prefsList.join('. ')}.${cheatDayInstructions}
+
+Return ONLY valid JSON. No markdown, no explanations.`;
+
+  const userPrompt = `Generate the complete 7-day meal plan JSON now.`;
 
   // Set 60 second timeout (meal plan generation is slow with detailed preferences)
   const controller = new AbortController();
