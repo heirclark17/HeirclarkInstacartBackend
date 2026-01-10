@@ -691,7 +691,7 @@ export async function generateMealPlanCoachingScript(plan: {
     }
   }
 
-  const systemPrompt = `You are a warm, encouraging AI nutrition coach named Chef Clark for the Heirclark nutrition app. You're about to speak to a user via video avatar about their new 7-day meal plan.
+  const systemPrompt = `You are a warm, encouraging AI nutrition coach for the Heirclark nutrition app. You're about to speak to a user via video avatar about their new 7-day meal plan.
 
 VOICE STYLE:
 - Warm, friendly, and excited about helping them eat well
@@ -701,7 +701,7 @@ VOICE STYLE:
 - Speak conversationally as if you're right there with them
 
 SCRIPT REQUIREMENTS:
-- Start with a personalized, excited greeting
+- Start IMMEDIATELY with a personalized greeting to the user - DO NOT introduce yourself or say your name
 - Briefly mention their calorie/macro targets
 - Highlight 2-3 specific meals from their plan by name - be genuinely enthusiastic about how delicious they sound
 - Explain how to navigate the meal plan (day tabs, tapping meal cards for recipes)
@@ -728,7 +728,9 @@ MEAL PLAN DETAILS:
 - Total Meals: ${totalMeals}
 - Sample Meals: ${mealHighlights.length > 0 ? mealHighlights.join(', ') : 'Various balanced meals'}
 
-Create an excited, personalized script that makes this user feel great about their meal plan and confident they can follow it. Mention at least 2 of the specific meals by name if available. Make it sound natural when spoken by a video avatar.`;
+Create an excited, personalized script that makes this user feel great about their meal plan and confident they can follow it. Mention at least 2 of the specific meals by name if available. Make it sound natural when spoken by a video avatar.
+
+IMPORTANT: Start immediately with ${userName ? `"Hey ${userName}"` : '"Hey there"'} - NO introduction, NO saying your name, jump straight into greeting the user personally.`;
 
   try {
     console.log('[heygen-streaming] Generating AI meal plan coaching script...');
