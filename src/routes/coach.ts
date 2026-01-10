@@ -302,7 +302,7 @@ coachRouter.post('/mealplan', async (req: Request, res: Response) => {
     // Check if Sunday (day 7) has cheat day meals
     const sunday = plan.days?.find((d: any) => d.day === 7);
     const hasSundayCheat = sunday?.meals?.some((m: any) =>
-      m.calories > (targets.calories / 3) * 1.3
+      m.calories > (targets.calories / 3) * 1.2
     );
 
     // Build personalized coaching script
