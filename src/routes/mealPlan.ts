@@ -292,9 +292,27 @@ async function generateMealPlanWithAI(
     ? 'IMPORTANT: Include 2-3 snacks per day in addition to breakfast, lunch, and dinner. Each snack should be 100-200 calories.'
     : '';
 
-  // Handle cheat days
-  const cheatDaysText = preferences.cheatDays?.length
-    ? `CHEAT DAYS: On ${preferences.cheatDays.join(', ')}, allow more indulgent meals with higher calories and flexibility. User wants to enjoy these days without strict macro tracking.`
+  // Handle cheat days - map to day numbers
+  const cheatDayNumbers: number[] = [];
+  const dayNameToNumber: { [key: string]: number } = {
+    'Monday': 1,
+    'Tuesday': 2,
+    'Wednesday': 3,
+    'Thursday': 4,
+    'Friday': 5,
+    'Saturday': 6,
+    'Sunday': 7
+  };
+
+  if (preferences.cheatDays?.length) {
+    preferences.cheatDays.forEach(dayName => {
+      const dayNum = dayNameToNumber[dayName];
+      if (dayNum) cheatDayNumbers.push(dayNum);
+    });
+  }
+
+  const cheatDaysText = cheatDayNumbers.length > 0
+    ? `CHEAT DAYS (Days ${cheatDayNumbers.join(', ')}): Do NOT generate meals for these days. Instead, provide encouraging advice on how to enjoy a cheat day mindfully while staying aligned with their goals.`
     : '';
 
   const mealDiversityText = preferences.mealDiversity === 'diverse'
@@ -337,9 +355,18 @@ async function generateMealPlanWithAI(
     prefsList.push(`CRITICAL ABSOLUTE RULE - NEVER EVER include or mention these foods in ANY meal or dish name: ${preferences.hatedFoods}. This is NON-NEGOTIABLE. Choose completely different dishes instead`);
   }
 
-  const systemPrompt = `7-day meal plan JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"...","description":"...","calories":500,"macros":{"protein":35,"carbs":50,"fat":18},"servings":1}]}]}
+  // Build JSON format example based on whether there are cheat days
+  const jsonExample = cheatDayNumbers.length > 0
+    ? `{"days":[{"day":1,"meals":[...]},{"day":2,"isCheatDay":true,"cheatDayAdvice":"Motivational advice on enjoying this cheat day mindfully..."}]}`
+    : `{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"...","description":"...","calories":500,"macros":{"protein":35,"carbs":50,"fat":18},"servings":1}]}]}`;
+
+  const cheatDayInstructions = cheatDayNumbers.length > 0
+    ? `\n\nIMPORTANT - CHEAT DAY FORMAT:\nFor days ${cheatDayNumbers.join(', ')}, use this format:\n{"day":X,"isCheatDay":true,"cheatDayAdvice":"2-3 sentences of encouraging, motivational advice on how to enjoy this cheat day guilt-free while staying mindful. Focus on balance, enjoyment, and getting back on track tomorrow."}\nDo NOT generate meals for cheat days.`
+    : '';
+
+  const systemPrompt = `7-day meal plan JSON: ${jsonExample}
 Target: ${targets.calories}cal, ${targets.protein}g protein/day. ${dietTypeText} diet. ${allergiesText}
-Preferences: ${prefsList.join('. ')}.
+Preferences: ${prefsList.join('. ')}.${cheatDayInstructions}
 Return ONLY valid JSON for all 7 days.`;
 
   const userPrompt = `Generate complete 7-day meal plan now.`;
@@ -398,6 +425,18 @@ Return ONLY valid JSON for all 7 days.`;
     if (!parsedPlan.days || !Array.isArray(parsedPlan.days) || parsedPlan.days.length !== 7) {
       console.error('[mealPlan] Invalid plan structure - missing or incomplete days');
       throw new Error('Invalid meal plan structure');
+    }
+
+    // Validate each day has either meals or is a cheat day
+    for (const day of parsedPlan.days) {
+      if (!day.isCheatDay && (!day.meals || day.meals.length === 0)) {
+        console.error('[mealPlan] Invalid day structure - day has no meals and is not a cheat day:', day);
+        throw new Error('Invalid meal plan structure - days must have meals or be cheat days');
+      }
+      if (day.isCheatDay && !day.cheatDayAdvice) {
+        console.error('[mealPlan] Cheat day missing advice:', day);
+        throw new Error('Cheat days must include cheatDayAdvice');
+      }
     }
 
     return {
@@ -633,10 +672,12 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
           [String(shopifyCustomerId), JSON.stringify(plan)]
         );
 
-        // Auto-save meals to user's meal library
-        const allMeals = plan.days?.flatMap((day: any) => day.meals || []) || [];
+        // Auto-save meals to user's meal library (skip cheat days)
+        const allMeals = plan.days
+          ?.filter((day: any) => !day.isCheatDay)
+          .flatMap((day: any) => day.meals || []) || [];
         if (allMeals.length > 0) {
-          console.log(`[mealPlan] Auto-saving ${allMeals.length} meals to library...`);
+          console.log(`[mealPlan] Auto-saving ${allMeals.length} meals to library (skipping cheat days)...`);
           let savedCount = 0;
           for (const meal of allMeals) {
             try {
