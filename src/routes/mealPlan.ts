@@ -238,16 +238,29 @@ async function getUnsplashImage(dishName: string, mealType?: string): Promise<st
 
 async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
   // Add images directly to each meal (using curated library is fast, no batching needed)
+  console.log('[addImagesToMealPlan] Starting image generation for', plan.days.length, 'days');
+
   for (const day of plan.days) {
     // Skip cheat days (they don't have meals)
-    if (!(day as any).isCheatDay && day.meals && Array.isArray(day.meals)) {
-      for (const meal of day.meals) {
-        const imageUrl = await getUnsplashImage(meal.dishName, meal.mealType);
-        (meal as any).imageUrl = imageUrl;
-      }
+    if ((day as any).isCheatDay) {
+      console.log('[addImagesToMealPlan] Skipping day', day.day, '- is cheat day');
+      continue;
+    }
+
+    if (!day.meals || !Array.isArray(day.meals)) {
+      console.warn('[addImagesToMealPlan] Day', day.day, 'has no meals array');
+      continue;
+    }
+
+    console.log('[addImagesToMealPlan] Adding images to day', day.day, '-', day.meals.length, 'meals');
+    for (const meal of day.meals) {
+      const imageUrl = await getUnsplashImage(meal.dishName, meal.mealType);
+      (meal as any).imageUrl = imageUrl;
+      console.log('[addImagesToMealPlan]   -', meal.dishName, ':', imageUrl ? 'image added' : 'no image');
     }
   }
 
+  console.log('[addImagesToMealPlan] Image generation complete');
   return plan;
 }
 
