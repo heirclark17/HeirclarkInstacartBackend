@@ -300,36 +300,32 @@ async function generateMealPlanWithAI(
     ? 'IMPORTANT: Create meal prep simplicity by using the EXACT SAME meals for all 7 days. Day 1 meals should be identical to Day 2, Day 3, etc. This allows the user to meal prep once for the entire week.'
     : 'Create diverse meals with different dishes each day.';
 
-  // Simplified prompt for faster generation - recipes fetched separately
-  const mealJsonExample = includeSnacks
-    ? '{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1},{"mealType":"Snack","dishName":"Snack Name","description":"Brief desc","calories":150,"macros":{"protein":5,"carbs":20,"fat":5},"servings":1}]}]}'
-    : '{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}';
+  // Build concise preferences list
+  const prefsList = [];
+  if (preferences.hatedFoods) {
+    prefsList.push(`NEVER: ${preferences.hatedFoods}`);
+  }
+  if (preferences.favoriteProteins?.length) {
+    prefsList.push(`Proteins: ${preferences.favoriteProteins.join(', ')}`);
+  }
+  if (preferences.favoriteCuisines?.length) {
+    prefsList.push(`Cuisines: ${preferences.favoriteCuisines.join(', ')}`);
+  }
+  if (includeSnacks) {
+    prefsList.push('Include 2-3 snacks/day (100-200cal each)');
+  }
+  if (preferences.mealDiversity === 'diverse') {
+    prefsList.push('Make all 7 days unique');
+  } else if (preferences.mealDiversity === 'sameDaily') {
+    prefsList.push('Repeat same meals all 7 days');
+  }
 
-  const systemPrompt = `Create 7-day meal plan as JSON: ${mealJsonExample}
-Target: ${targets.calories}cal, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat per day. Diet: ${dietTypeText}. ${allergiesText}
+  const systemPrompt = `7-day meal plan JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"...","description":"...","calories":500,"macros":{"protein":35,"carbs":50,"fat":18},"servings":1}]}]}
+Target: ${targets.calories}cal, ${targets.protein}g protein/day. ${dietTypeText} diet. ${allergiesText}
+Preferences: ${prefsList.join('. ')}.
+Return ONLY valid JSON for all 7 days.`;
 
-MEAL STRUCTURE:
-${snacksInstruction}
-${cheatDaysText}
-${mealDiversityText}
-
-FOOD PREFERENCES:
-${hatedFoodsText}
-${favoriteProteinsText}
-${favoriteFruitsText}
-${favoriteCuisinesText}
-${topFoodsText}
-${favoriteSnacksText}
-
-Include ${mealsPerDay} meals per day${includeSnacks ? ' plus 2-3 snacks' : ''}. Return ONLY JSON.`;
-
-  const userPromptSuffix = preferences.mealDiversity === 'sameDaily'
-    ? ' CRITICAL: Use identical meals for all 7 days (same breakfast, lunch, dinner repeated daily).'
-    : preferences.mealDiversity === 'diverse'
-    ? ' CRITICAL: Ensure every day has completely different and unique meals.'
-    : '';
-
-  const userPrompt = `Generate 7-day ${dietTypeText} meal plan following all food preferences above.${userPromptSuffix}`;
+  const userPrompt = `Generate complete 7-day meal plan now.`;
 
   // Set 60 second timeout (meal plan generation is slow with detailed preferences)
   const controller = new AbortController();
