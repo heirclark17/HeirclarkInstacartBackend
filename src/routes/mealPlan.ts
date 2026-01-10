@@ -282,6 +282,18 @@ async function generateMealPlanWithAI(
   const favoriteSnacksText = preferences.favoriteSnacks?.length
     ? `For snacks, use: ${preferences.favoriteSnacks.join(', ')}.`
     : '';
+
+  // Handle snacks based on meal style
+  const includeSnacks = preferences.mealStyle === 'threePlusSnacks';
+  const snacksInstruction = includeSnacks
+    ? 'IMPORTANT: Include 2-3 snacks per day in addition to breakfast, lunch, and dinner. Each snack should be 100-200 calories.'
+    : '';
+
+  // Handle cheat days
+  const cheatDaysText = preferences.cheatDays?.length
+    ? `CHEAT DAYS: On ${preferences.cheatDays.join(', ')}, allow more indulgent meals with higher calories and flexibility. User wants to enjoy these days without strict macro tracking.`
+    : '';
+
   const mealDiversityText = preferences.mealDiversity === 'diverse'
     ? 'IMPORTANT: Create completely different and diverse meals for each day. Every day should have unique dishes - no repeating meals across the 7 days.'
     : preferences.mealDiversity === 'sameDaily'
@@ -289,8 +301,17 @@ async function generateMealPlanWithAI(
     : 'Create diverse meals with different dishes each day.';
 
   // Simplified prompt for faster generation - recipes fetched separately
-  const systemPrompt = `Create 7-day meal plan as JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}
+  const mealJsonExample = includeSnacks
+    ? '{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1},{"mealType":"Snack","dishName":"Snack Name","description":"Brief desc","calories":150,"macros":{"protein":5,"carbs":20,"fat":5},"servings":1}]}]}'
+    : '{"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}';
+
+  const systemPrompt = `Create 7-day meal plan as JSON: ${mealJsonExample}
 Target: ${targets.calories}cal, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat per day. Diet: ${dietTypeText}. ${allergiesText}
+
+MEAL STRUCTURE:
+${snacksInstruction}
+${cheatDaysText}
+${mealDiversityText}
 
 FOOD PREFERENCES:
 ${hatedFoodsText}
@@ -299,9 +320,8 @@ ${favoriteFruitsText}
 ${favoriteCuisinesText}
 ${topFoodsText}
 ${favoriteSnacksText}
-${mealDiversityText}
 
-Include ${mealsPerDay} meals per day. Return ONLY JSON.`;
+Include ${mealsPerDay} meals per day${includeSnacks ? ' plus 2-3 snacks' : ''}. Return ONLY JSON.`;
 
   const userPromptSuffix = preferences.mealDiversity === 'sameDaily'
     ? ' CRITICAL: Use identical meals for all 7 days (same breakfast, lunch, dinner repeated daily).'
