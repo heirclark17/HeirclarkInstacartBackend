@@ -283,8 +283,10 @@ async function generateMealPlanWithAI(
     ? `For snacks, use: ${preferences.favoriteSnacks.join(', ')}.`
     : '';
   const mealDiversityText = preferences.mealDiversity === 'diverse'
-    ? 'Create diverse meals with different dishes each day.'
-    : 'Meals can repeat across days for simplicity.';
+    ? 'IMPORTANT: Create completely different and diverse meals for each day. Every day should have unique dishes - no repeating meals across the 7 days.'
+    : preferences.mealDiversity === 'sameDaily'
+    ? 'IMPORTANT: Create meal prep simplicity by using the EXACT SAME meals for all 7 days. Day 1 meals should be identical to Day 2, Day 3, etc. This allows the user to meal prep once for the entire week.'
+    : 'Create diverse meals with different dishes each day.';
 
   // Simplified prompt for faster generation - recipes fetched separately
   const systemPrompt = `Create 7-day meal plan as JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}
@@ -301,7 +303,13 @@ ${mealDiversityText}
 
 Include ${mealsPerDay} meals per day. Return ONLY JSON.`;
 
-  const userPrompt = `Generate 7-day ${dietTypeText} meal plan following all food preferences above.`;
+  const userPromptSuffix = preferences.mealDiversity === 'sameDaily'
+    ? ' CRITICAL: Use identical meals for all 7 days (same breakfast, lunch, dinner repeated daily).'
+    : preferences.mealDiversity === 'diverse'
+    ? ' CRITICAL: Ensure every day has completely different and unique meals.'
+    : '';
+
+  const userPrompt = `Generate 7-day ${dietTypeText} meal plan following all food preferences above.${userPromptSuffix}`;
 
   // Set 45 second timeout (meal plan generation is slow)
   const controller = new AbortController();
