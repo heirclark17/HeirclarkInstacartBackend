@@ -623,13 +623,45 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
            DO UPDATE SET plan_data = $2, created_at = NOW()`,
           [String(shopifyCustomerId), JSON.stringify(plan)]
         );
+
+        // Auto-save meals to user's meal library
+        const allMeals = plan.days?.flatMap((day: any) => day.meals || []) || [];
+        if (allMeals.length > 0) {
+          console.log(`[mealPlan] Auto-saving ${allMeals.length} meals to library...`);
+          for (const meal of allMeals) {
+            try {
+              await pool.query(`
+                INSERT INTO hc_meal_library (
+                  shopify_customer_id, meal_name, meal_description, meal_type,
+                  calories, protein, carbs, fat, ingredients, servings, times_used
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
+                ON CONFLICT (shopify_customer_id, meal_name) DO NOTHING
+              `, [
+                String(shopifyCustomerId),
+                meal.dishName,
+                meal.description,
+                meal.mealType,
+                meal.calories,
+                meal.macros?.protein || 0,
+                meal.macros?.carbs || 0,
+                meal.macros?.fat || 0,
+                JSON.stringify(meal.ingredients || []),
+                meal.servings || 1
+              ]);
+            } catch (err) {
+              console.warn('[mealPlan] Error saving meal to library:', meal.dishName);
+              // Continue with other meals
+            }
+          }
+          console.log('[mealPlan] Meals saved to library');
+        }
       } catch (dbErr) {
         console.warn('[mealPlan] Failed to store plan in database:', dbErr);
         // Continue anyway - plan still works
       }
     }
 
-    return sendSuccess(res, { plan });
+    return sendSuccess(res, { plan});
 
   } catch (err: any) {
     console.error('[mealPlan] Generation failed:', err);

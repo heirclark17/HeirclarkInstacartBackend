@@ -70,6 +70,9 @@ import aiBackgroundsRouter from "./routes/aiBackgrounds";
 // AI Meal Plan router
 import { mealPlanRouter } from "./routes/mealPlan";
 
+// Meal Library router
+import { mealLibraryRouter } from "./routes/mealLibrary";
+
 // Web Scraping router (Firecrawl)
 import { scrapeRouter } from "./routes/scrape";
 
@@ -278,6 +281,9 @@ app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
 
 // AI Meal Plan routes (7-day plan generation)
 app.use("/api/v1/ai", mealPlanRouter);
+
+// Meal library routes (saved meals)
+app.use("/api/v1/meals", mealLibraryRouter);
 
 // Web scraping routes (Firecrawl integration)
 app.use("/api/v1/scrape", scrapeRouter);
