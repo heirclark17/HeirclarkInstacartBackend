@@ -331,9 +331,9 @@ Include ${mealsPerDay} meals per day${includeSnacks ? ' plus 2-3 snacks' : ''}. 
 
   const userPrompt = `Generate 7-day ${dietTypeText} meal plan following all food preferences above.${userPromptSuffix}`;
 
-  // Set 45 second timeout (meal plan generation is slow)
+  // Set 60 second timeout (meal plan generation is slow with detailed preferences)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -395,8 +395,8 @@ Include ${mealsPerDay} meals per day${includeSnacks ? ' plus 2-3 snacks' : ''}. 
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      console.warn('[mealPlan] OpenAI request timed out after 45s');
-      throw new Error('Request timed out');
+      console.warn('[mealPlan] OpenAI request timed out after 60s');
+      throw new Error('Request timed out - AI generation took too long. Try again or simplify preferences.');
     }
     console.error('[mealPlan] Failed to parse OpenAI response:', err.message);
     throw err;
@@ -588,20 +588,16 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
   console.log(`[mealPlan] Generating 7-day plan for user ${shopifyCustomerId || 'anonymous'}:`, validatedTargets);
 
   try {
-    // Try AI generation first
+    // Generate AI meal plan
     let plan: MealPlanResponse;
-    let source: 'ai' | 'fallback' = 'ai';
-    let failureReason: string | undefined;
 
+    console.log(`[mealPlan] Calling OpenAI with model: ${OPENAI_MODEL}`);
     try {
-      console.log(`[mealPlan] Calling OpenAI with model: ${OPENAI_MODEL}`);
       plan = await generateMealPlanWithAI(validatedTargets, validatedPreferences);
       console.log('[mealPlan] AI plan generated successfully');
     } catch (aiErr: any) {
-      console.warn('[mealPlan] AI generation failed, using fallback:', aiErr.message);
-      source = 'fallback';
-      failureReason = aiErr.message;
-      plan = generateFallbackPlan(validatedTargets);
+      console.error('[mealPlan] AI generation failed:', aiErr.message);
+      return sendServerError(res, `AI meal plan generation failed: ${aiErr.message}. Please try again.`);
     }
 
     // Add Unsplash images to each meal
@@ -629,7 +625,7 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
       }
     }
 
-    return sendSuccess(res, { plan, source, failureReason });
+    return sendSuccess(res, { plan });
 
   } catch (err: any) {
     console.error('[mealPlan] Generation failed:', err);
