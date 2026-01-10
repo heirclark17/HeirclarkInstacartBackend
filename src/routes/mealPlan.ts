@@ -40,6 +40,18 @@ interface MealPlanPreferences {
   cuisinePreferences?: string[];
   cookingSkill?: 'beginner' | 'intermediate' | 'advanced';
   budgetPerDay?: number;
+  budgetTier?: string;
+  // Food preferences from onboarding
+  mealStyle?: string;
+  favoriteProteins?: string[];
+  favoriteFruits?: string[];
+  favoriteCuisines?: string[];
+  favoriteSnacks?: string[];
+  topFoods?: string[];
+  hatedFoods?: string;
+  cheatDays?: string[];
+  eatOutFrequency?: number;
+  mealDiversity?: string;
 }
 
 interface Ingredient {
@@ -251,12 +263,45 @@ async function generateMealPlanWithAI(
     : '';
   const skillText = preferences.cookingSkill || 'intermediate';
 
+  // Build food preferences text
+  const hatedFoodsText = preferences.hatedFoods
+    ? `CRITICAL - NEVER include these hated foods: ${preferences.hatedFoods}. The user strongly dislikes these and they must be completely avoided.`
+    : '';
+  const favoriteProteinsText = preferences.favoriteProteins?.length
+    ? `Prioritize these proteins: ${preferences.favoriteProteins.join(', ')}.`
+    : '';
+  const favoriteFruitsText = preferences.favoriteFruits?.length
+    ? `Use these fruits: ${preferences.favoriteFruits.join(', ')}.`
+    : '';
+  const favoriteCuisinesText = preferences.favoriteCuisines?.length
+    ? `Favor these cuisines: ${preferences.favoriteCuisines.join(', ')}.`
+    : '';
+  const topFoodsText = preferences.topFoods?.length
+    ? `User loves these foods: ${preferences.topFoods.join(', ')}. Include them frequently.`
+    : '';
+  const favoriteSnacksText = preferences.favoriteSnacks?.length
+    ? `For snacks, use: ${preferences.favoriteSnacks.join(', ')}.`
+    : '';
+  const mealDiversityText = preferences.mealDiversity === 'diverse'
+    ? 'Create diverse meals with different dishes each day.'
+    : 'Meals can repeat across days for simplicity.';
+
   // Simplified prompt for faster generation - recipes fetched separately
   const systemPrompt = `Create 7-day meal plan as JSON: {"days":[{"day":1,"meals":[{"mealType":"Breakfast","dishName":"Dish Name","description":"Brief desc","calories":450,"macros":{"protein":30,"carbs":40,"fat":15},"servings":1}]}]}
 Target: ${targets.calories}cal, ${targets.protein}g protein, ${targets.carbs}g carbs, ${targets.fat}g fat per day. Diet: ${dietTypeText}. ${allergiesText}
-Include 3 meals per day. Return ONLY JSON.`;
 
-  const userPrompt = `Generate 7-day ${dietTypeText} meal plan.`;
+FOOD PREFERENCES:
+${hatedFoodsText}
+${favoriteProteinsText}
+${favoriteFruitsText}
+${favoriteCuisinesText}
+${topFoodsText}
+${favoriteSnacksText}
+${mealDiversityText}
+
+Include ${mealsPerDay} meals per day. Return ONLY JSON.`;
+
+  const userPrompt = `Generate 7-day ${dietTypeText} meal plan following all food preferences above.`;
 
   // Set 45 second timeout (meal plan generation is slow)
   const controller = new AbortController();
@@ -498,6 +543,18 @@ mealPlanRouter.post('/meal-plan-7day', planRateLimit, async (req: Request, res: 
     mealsPerDay: preferences?.mealsPerDay || 3,
     allergies: preferences?.allergies || [],
     cookingSkill: preferences?.cookingSkill || 'intermediate',
+    budgetTier: preferences?.budgetTier,
+    // Food preferences from onboarding
+    mealStyle: preferences?.mealStyle,
+    favoriteProteins: preferences?.favoriteProteins || [],
+    favoriteFruits: preferences?.favoriteFruits || [],
+    favoriteCuisines: preferences?.favoriteCuisines || [],
+    favoriteSnacks: preferences?.favoriteSnacks || [],
+    topFoods: preferences?.topFoods || [],
+    hatedFoods: preferences?.hatedFoods || '',
+    cheatDays: preferences?.cheatDays || [],
+    eatOutFrequency: preferences?.eatOutFrequency,
+    mealDiversity: preferences?.mealDiversity,
   };
 
   console.log(`[mealPlan] Generating 7-day plan for user ${shopifyCustomerId || 'anonymous'}:`, validatedTargets);
