@@ -328,12 +328,6 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
       console.log('[restaurant] No dietary preferences found for user, continuing without restrictions');
     }
 
-    // Try database first, then hardcoded fallback
-    let menu = await getMenuFromDatabase(normalizedName, dietaryRestrictions);
-    if (menu.length === 0) {
-      menu = RESTAURANT_MENUS[normalizedName] || [];
-    }
-
     // Get user's remaining budget for the day
     const goalsResult = await pool.query(
       `SELECT calories_target, protein_target, carbs_target, fat_target
@@ -360,8 +354,9 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
 
     const effectiveMaxCalories = maxCalories || remainingBudget.calories;
 
-    if (!menu || menu.length === 0) {
-      // Unknown restaurant - use OpenAI to generate recommendations
+    // ALWAYS use AI generation for personalized, meal-specific recommendations
+    if (true) {
+      // AI-powered recommendations - personalized to user's exact goals
       console.log(`[restaurant] Generating AI recommendations for ${restaurant}`);
 
       const aiItems = await generateRecommendationsWithAI(
@@ -458,82 +453,6 @@ restaurantRouter.post('/recommend', async (req: Request, res: Response) => {
         ]
       });
     }
-
-    // Score and rank menu items
-    const scoredItems = menu
-      .filter((item: any) => item.calories <= effectiveMaxCalories * 1.1)
-      .map((item: any) => {
-        let score = 0;
-
-        // Calorie fit score (0-40 points)
-        const calorieDeviation = Math.abs(item.calories - effectiveMaxCalories * 0.8) / effectiveMaxCalories;
-        score += Math.max(0, 40 - calorieDeviation * 100);
-
-        // Protein score (0-30 points) - higher protein = better
-        const proteinDensity = item.protein / item.calories * 100;
-        score += Math.min(30, proteinDensity * 3);
-
-        // Priority bonuses
-        if (priorities?.includes('high_protein') && item.protein > 30) score += 15;
-        if (priorities?.includes('low_carb') && item.carbs < 30) score += 15;
-        if (priorities?.includes('low_fat') && item.fat < 15) score += 10;
-
-        return { ...item, fit_score: Math.round(score) };
-      })
-      .sort((a: any, b: any) => b.fit_score - a.fit_score)
-      .slice(0, 3);
-
-    // Add customization suggestions
-    const recommendations = scoredItems.map((item: any, index: number) => ({
-      rank: index + 1,
-      name: item.name,
-      category: item.category,
-      base_nutrition: {
-        calories: item.calories,
-        protein: item.protein,
-        carbs: item.carbs,
-        fat: item.fat
-      },
-      price: item.price_cents ? {
-        cents: item.price_cents,
-        formatted: `$${(item.price_cents / 100).toFixed(2)}`,
-        protein_per_dollar: item.price_cents > 0 ? (item.protein / (item.price_cents / 100)).toFixed(2) : null
-      } : null,
-      dietary_info: {
-        is_vegetarian: item.is_vegetarian || false,
-        is_vegan: item.is_vegan || false,
-        is_gluten_free: item.is_gluten_free || false,
-        is_dairy_free: item.is_dairy_free || false,
-        is_keto_friendly: item.is_keto_friendly || false,
-        allergens: item.allergens || []
-      },
-      customization: item.customizable ? {
-        build: ['Add extra protein if available', 'Load up on vegetables'],
-        skip: ['Cheese (-100 cal)', 'Sour cream (-60 cal)', 'Extra sauce/dressing'],
-        why: 'Maximizes protein while keeping calories in check'
-      } : null,
-      final_nutrition: {
-        calories: item.calories,
-        protein: item.protein,
-        carbs: item.carbs,
-        fat: item.fat
-      },
-      fit_score: item.fit_score,
-      fits_budget: item.calories <= remainingBudget.calories
-    }));
-
-    res.json({
-      ok: true,
-      restaurant,
-      restaurant_found: true,
-      remaining_budget: remainingBudget,
-      recommendations,
-      general_tips: [
-        'Ask for dressing on the side',
-        'Grilled is almost always better than fried',
-        'Double protein is usually worth the extra cost'
-      ]
-    });
 
   } catch (err: any) {
     console.error('[restaurant] recommend error:', err);
