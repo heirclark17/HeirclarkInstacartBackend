@@ -108,6 +108,7 @@ import { weeklyPrepRouter } from "./routes/weeklyPrep";
 import { sleepNutritionRouter } from "./routes/sleepNutrition";
 import { budgetMealsRouter } from "./routes/budgetMeals";
 import { plateauRouter } from "./routes/plateau";
+import authRouter from "./routes/auth";
 
 // Nutrition scraper cron job
 import { scheduleNutritionScraper } from "./jobs/nutritionScraper";
@@ -270,6 +271,9 @@ app.get("/health", (_req: Request, res: Response) => {
 
 // Apply global rate limiting
 app.use(rateLimitMiddleware());
+
+// Authentication routes (JWT token generation)
+app.use("/api/v1/auth", authRouter);
 
 // Mount calorie / nutrition routes
 app.use("/api/v1/meals", mealsRouter);
