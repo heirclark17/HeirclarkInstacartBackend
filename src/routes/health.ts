@@ -10,8 +10,77 @@ import { authMiddleware, getCustomerId, AuthenticatedRequest } from "../middlewa
 
 export const healthRouter = Router();
 
+// Helper function used by ingest endpoints
+function toNumOrUndef(v: any): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * 📱 SIMPLIFIED ENDPOINT FOR APPLE SHORTCUTS
+ * This endpoint MUST be defined BEFORE strictAuth middleware to allow legacy authentication
+ * POST /api/v1/health/ingest-simple
+ *
+ * Body: {
+ *   "shopifyCustomerId": "9339338686771",
+ *   "date": "2025-01-12",
+ *   "steps": 8421,
+ *   "caloriesOut": 612,
+ *   "restingEnergy": 1600,
+ *   "heartRate": 74
+ * }
+ */
+healthRouter.post("/ingest-simple", (req: Request, res: Response) => {
+  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
+  const date = String(req.body?.date || "").trim();
+
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+  }
+
+  if (!date) {
+    return res.status(400).json({ ok: false, error: "Missing date" });
+  }
+
+  // Validate date format
+  const dateObj = new Date(date);
+  if (Number.isNaN(dateObj.getTime())) {
+    return res.status(400).json({ ok: false, error: "Invalid date format. Use YYYY-MM-DD" });
+  }
+
+  // Extract health data
+  const steps = toNumOrUndef(req.body?.steps);
+  const activeCalories = toNumOrUndef(req.body?.caloriesOut) || toNumOrUndef(req.body?.activeCalories);
+  const restingEnergy = toNumOrUndef(req.body?.restingEnergy) || toNumOrUndef(req.body?.basalEnergy);
+  const latestHeartRateBpm = toNumOrUndef(req.body?.heartRate) || toNumOrUndef(req.body?.latestHeartRateBpm);
+  const workoutsToday = toNumOrUndef(req.body?.workouts) || toNumOrUndef(req.body?.workoutsToday);
+
+  // Store in memory (same as regular ingest)
+  const snapshot: HealthSnapshotEntry = {
+    ts: dateObj.toISOString(),
+    steps,
+    activeCalories,
+    restingEnergy,
+    latestHeartRateBpm,
+    workoutsToday,
+    source: "shortcut",
+    receivedAt: Date.now(),
+    createdAt: Date.now(),
+  };
+
+  latestByUser.set(shopifyCustomerId, snapshot);
+
+  return res.json({
+    ok: true,
+    message: "Health data ingested successfully",
+    data: snapshot
+  });
+});
+
 // ✅ SECURITY FIX: Apply STRICT authentication to all health routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
+// NOTE: /ingest-simple endpoint above bypasses this for Apple Shortcuts compatibility
 healthRouter.use(authMiddleware({ strictAuth: true }));
 
 /**
@@ -176,9 +245,3 @@ healthRouter.get("/latest", (req: Request, res: Response) => {
   const data = latestByUser.get(shopifyCustomerId) || null;
   return res.json({ ok: true, data });
 });
-
-function toNumOrUndef(v: any): number | undefined {
-  if (v === null || v === undefined || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}

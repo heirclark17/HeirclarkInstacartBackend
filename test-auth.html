@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heirclark Auth Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .step {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #e7f4e7;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .error {
+            background: #ffe7e7;
+            color: #c00;
+        }
+        .success {
+            color: #2e7d32;
+            font-weight: bold;
+        }
+        .code {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Heirclark Authentication Test</h1>
+
+        <div class="step">
+            <h3>Step 1: Enter Your Shopify Customer ID</h3>
+            <input type="text" id="customerId" placeholder="e.g., 9339338686771" value="9339338686771">
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Generate JWT Token</h3>
+            <button onclick="generateToken()">Generate Token</button>
+            <div id="tokenResult"></div>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Test Protected Endpoint</h3>
+            <button onclick="testGoals()" id="testBtn" disabled>Test GET /user/goals</button>
+            <div id="goalsResult"></div>
+        </div>
+
+        <div class="step">
+            <h3>Step 4: Frontend Integration Code</h3>
+            <div class="code" id="integrationCode"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://heirclarkinstacartbackend-production.up.railway.app/api/v1';
+        let authToken = null;
+
+        async function generateToken() {
+            const customerId = document.getElementById('customerId').value.trim();
+            const resultDiv = document.getElementById('tokenResult');
+
+            if (!customerId) {
+                resultDiv.innerHTML = '<div class="result error">Please enter a Shopify Customer ID</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="result">Generating token...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ shopifyCustomerId: customerId })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.ok) {
+                    throw new Error(data.error || 'Token generation failed');
+                }
+
+                authToken = data.data.token;
+
+                resultDiv.innerHTML = `
+                    <div class="result">
+                        <div class="success">✅ Token Generated Successfully!</div>
+                        <br>
+                        <strong>Token:</strong><br>
+                        ${authToken.substring(0, 50)}...<br><br>
+                        <strong>Expires In:</strong> ${data.data.expiresIn}<br>
+                        <strong>Token Type:</strong> ${data.data.tokenType}<br>
+                        <strong>Customer ID:</strong> ${data.data.customerId}
+                    </div>
+                `;
+
+                document.getElementById('testBtn').disabled = false;
+                updateIntegrationCode(customerId, authToken);
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testGoals() {
+            const resultDiv = document.getElementById('goalsResult');
+
+            if (!authToken) {
+                resultDiv.innerHTML = '<div class="result error">Please generate a token first</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="result">Fetching user goals...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/user/goals`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to fetch goals');
+                }
+
+                resultDiv.innerHTML = `
+                    <div class="result">
+                        <div class="success">✅ Successfully Fetched User Goals!</div>
+                        <br>
+                        <strong>Response (${response.status}):</strong><br>
+                        ${JSON.stringify(data, null, 2)}
+                    </div>
+                `;
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        function updateIntegrationCode(customerId, token) {
+            const code = `// Frontend Integration Example
+
+// 1. Generate token (once per 7 days)
+const response = await fetch('${API_BASE}/auth/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ shopifyCustomerId: '${customerId}' })
+});
+
+const { data } = await response.json();
+const token = data.token;
+
+// 2. Store token in localStorage
+localStorage.setItem('hc_auth_token', token);
+localStorage.setItem('hc_token_expires', Date.now() + (7 * 24 * 60 * 60 * 1000));
+
+// 3. Use token for API requests
+const goalsResponse = await fetch('${API_BASE}/user/goals', {
+  headers: {
+    'Authorization': \`Bearer \${token}\`,
+    'Content-Type': 'application/json'
+  }
+});
+
+const goals = await goalsResponse.json();
+console.log('User goals:', goals);
+
+// 4. Your token for testing:
+// ${token ? token.substring(0, 50) + '...' : 'Generate token first'}`;
+
+            document.getElementById('integrationCode').textContent = code;
+        }
+
+        // Initial code display
+        updateIntegrationCode('YOUR_CUSTOMER_ID', null);
+    </script>
+</body>
+</html>
