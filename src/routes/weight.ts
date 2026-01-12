@@ -1,32 +1,31 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { memoryStore } from "../services/inMemoryStore";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { getUserPreferences } from "../services/userPreferences";
 import { sendSuccess, sendError, sendValidationError } from "../middleware/responseHelper";
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from "../middleware/auth";
 
 export const weightRouter = Router();
+
+// ✅ SECURITY FIX: Apply authentication to all weight routes (OWASP A01: IDOR Protection)
+weightRouter.use(authMiddleware());
 
 const logWeightSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
   weightLbs: z.number().positive()
 });
 
-/**
- * Helper to get customer ID from request.
- */
-function getCustomerId(req: Request): string {
-  const header = req.headers["x-shopify-customer-id"] as string | undefined;
-  const query = req.query?.shopifyCustomerId as string | undefined;
-  const body = (req.body as any)?.shopifyCustomerId as string | undefined;
-  return String(header || query || body || memoryStore.userId || "").trim();
-}
-
-weightRouter.post("/log", (req, res, next) => {
+weightRouter.post("/log", (req: AuthenticatedRequest, res, next) => {
   try {
     const parsed = logWeightSchema.parse(req.body);
+    // ✅ Use validated customer ID from authMiddleware
     const userId = getCustomerId(req);
+
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Authentication required" });
+    }
 
     const existingIdx = memoryStore.weights.findIndex(
       (w) => w.date === parsed.date && w.userId === userId
@@ -53,8 +52,13 @@ weightRouter.post("/log", (req, res, next) => {
 });
 
 // GET /api/v1/weight/current
-weightRouter.get("/current", asyncHandler(async (req: Request, res: Response) => {
+weightRouter.get("/current", asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  // ✅ Use validated customer ID from authMiddleware
   const userId = getCustomerId(req);
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "Authentication required" });
+  }
 
   if (memoryStore.weights.length === 0) {
     return sendSuccess(res, { currentWeightLbs: null, lastLogDate: null });

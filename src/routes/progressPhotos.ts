@@ -1,9 +1,13 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { pool } from "../db/pool";
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from "../middleware/auth";
 
 export const progressPhotosRouter = Router();
+
+// ✅ SECURITY FIX: Apply authentication to all progress photo routes (OWASP A01: IDOR Protection)
+progressPhotosRouter.use(authMiddleware());
 
 // Schema for creating a progress photo
 const createPhotoSchema = z.object({
@@ -14,11 +18,12 @@ const createPhotoSchema = z.object({
 });
 
 // POST /api/v1/progress-photos - Upload a progress photo
-progressPhotosRouter.post("/", async (req, res, next) => {
+progressPhotosRouter.post("/", async (req: AuthenticatedRequest, res, next) => {
   try {
-    const customerId = req.headers["x-shopify-customer-id"] as string;
+    // ✅ Use validated customer ID from authMiddleware
+    const customerId = getCustomerId(req);
     if (!customerId) {
-      return res.status(401).json({ error: "Missing customer ID" });
+      return res.status(401).json({ error: "Authentication required" });
     }
 
     const parsed = createPhotoSchema.parse(req.body);
@@ -48,11 +53,12 @@ progressPhotosRouter.post("/", async (req, res, next) => {
 });
 
 // GET /api/v1/progress-photos - Get all progress photos for a user
-progressPhotosRouter.get("/", async (req, res, next) => {
+progressPhotosRouter.get("/", async (req: AuthenticatedRequest, res, next) => {
   try {
-    const customerId = req.headers["x-shopify-customer-id"] as string;
+    // ✅ Use validated customer ID from authMiddleware
+    const customerId = getCustomerId(req);
     if (!customerId) {
-      return res.status(401).json({ error: "Missing customer ID" });
+      return res.status(401).json({ error: "Authentication required" });
     }
 
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);

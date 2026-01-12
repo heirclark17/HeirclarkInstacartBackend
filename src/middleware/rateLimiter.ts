@@ -1,22 +1,99 @@
 // src/middleware/rateLimiter.ts
+// ✅ SECURITY FIX: Redis-backed rate limiting for distributed environments
+// Fixes penetration test finding: Rate limiting not working (OWASP A04)
+
 import { Request, Response, NextFunction } from "express";
+import Redis from "ioredis";
 
 interface RateLimitEntry {
   count: number;
   resetAt: number;
 }
 
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetAt: number;
+}
+
 /**
- * Simple in-memory rate limiter.
- * For production, consider using Redis for distributed rate limiting.
+ * Abstract rate limiter interface
  */
-class RateLimiter {
+interface IRateLimiter {
+  check(key: string, windowMs: number, maxRequests: number): Promise<RateLimitResult>;
+  destroy(): void;
+}
+
+/**
+ * Redis-backed rate limiter (production)
+ * Supports distributed rate limiting across multiple Railway containers
+ */
+class RedisRateLimiter implements IRateLimiter {
+  private redis: Redis;
+
+  constructor(redisUrl: string) {
+    this.redis = new Redis(redisUrl, {
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      retryStrategy(times) {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      },
+    });
+
+    this.redis.on('error', (err) => {
+      console.error('[RateLimit] Redis connection error:', err.message);
+    });
+
+    this.redis.on('connect', () => {
+      console.log('[RateLimit] Redis connected successfully');
+    });
+  }
+
+  async check(key: string, windowMs: number, maxRequests: number): Promise<RateLimitResult> {
+    const now = Date.now();
+    const resetAt = now + windowMs;
+    const redisKey = `ratelimit:${key}`;
+
+    try {
+      // Use Redis INCR for atomic increment
+      const count = await this.redis.incr(redisKey);
+
+      if (count === 1) {
+        // First request in window - set expiration
+        await this.redis.pexpire(redisKey, windowMs);
+      }
+
+      if (count > maxRequests) {
+        // Get TTL for resetAt
+        const ttl = await this.redis.pttl(redisKey);
+        const actualResetAt = ttl > 0 ? now + ttl : resetAt;
+        return { allowed: false, remaining: 0, resetAt: actualResetAt };
+      }
+
+      return { allowed: true, remaining: maxRequests - count, resetAt };
+    } catch (err) {
+      console.error('[RateLimit] Redis check error:', err);
+      // Fail open - allow request on Redis error
+      return { allowed: true, remaining: maxRequests, resetAt };
+    }
+  }
+
+  destroy() {
+    this.redis.disconnect();
+  }
+}
+
+/**
+ * In-memory rate limiter (fallback for development)
+ */
+class InMemoryRateLimiter implements IRateLimiter {
   private store = new Map<string, RateLimitEntry>();
   private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor() {
-    // Cleanup expired entries every minute
     this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    console.warn('[RateLimit] Using in-memory rate limiter (not recommended for production)');
   }
 
   private cleanup() {
@@ -28,12 +105,11 @@ class RateLimiter {
     }
   }
 
-  check(key: string, windowMs: number, maxRequests: number): { allowed: boolean; remaining: number; resetAt: number } {
+  async check(key: string, windowMs: number, maxRequests: number): Promise<RateLimitResult> {
     const now = Date.now();
     const entry = this.store.get(key);
 
     if (!entry || entry.resetAt < now) {
-      // New window
       const resetAt = now + windowMs;
       this.store.set(key, { count: 1, resetAt });
       return { allowed: true, remaining: maxRequests - 1, resetAt };
@@ -56,7 +132,16 @@ class RateLimiter {
   }
 }
 
-const limiter = new RateLimiter();
+// Initialize rate limiter based on environment
+let limiter: IRateLimiter;
+
+if (process.env.REDIS_URL) {
+  console.log('[RateLimit] Initializing Redis-backed rate limiter');
+  limiter = new RedisRateLimiter(process.env.REDIS_URL);
+} else {
+  console.log('[RateLimit] REDIS_URL not found, using in-memory fallback');
+  limiter = new InMemoryRateLimiter();
+}
 
 export interface RateLimitOptions {
   windowMs?: number;      // Time window in milliseconds (default: 60000 = 1 minute)
@@ -84,13 +169,13 @@ export function rateLimitMiddleware(options: RateLimitOptions = {}) {
     message = "Too many requests, please try again later",
   } = options;
 
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     if (skip(req)) {
       return next();
     }
 
     const key = keyGenerator(req);
-    const result = limiter.check(key, windowMs, maxRequests);
+    const result = await limiter.check(key, windowMs, maxRequests);
 
     // Set rate limit headers
     res.setHeader("X-RateLimit-Limit", maxRequests);
