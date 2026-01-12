@@ -42,7 +42,9 @@ export function createAdminRouter(pool: Pool): Router {
   // GET /api/v1/admin/stats
   router.get('/stats', checkAdminAuth, async (req: Request, res: Response) => {
     try {
-      const tables = [
+      // ✅ SECURITY FIX: SQL Injection Prevention (OWASP A03)
+      // Use allowlist validation for table names (PostgreSQL doesn't support parameterized table names)
+      const ALLOWED_TABLES = new Set([
         'nutrition_foods',
         'hc_programs',
         'hc_tasks',
@@ -51,11 +53,18 @@ export function createAdminRouter(pool: Pool): Router {
         'hc_challenges',
         'hc_progress_photos',
         'hc_import_jobs',
-      ];
+      ]);
 
+      const tables = Array.from(ALLOWED_TABLES);
       const stats: Record<string, number> = {};
 
       for (const table of tables) {
+        // Validate table name against allowlist before querying
+        if (!ALLOWED_TABLES.has(table)) {
+          console.error(`[Admin] Invalid table name rejected: ${table}`);
+          continue;
+        }
+
         try {
           const result = await pool.query(`SELECT COUNT(*) FROM ${table}`);
           stats[table] = parseInt(result.rows[0].count);

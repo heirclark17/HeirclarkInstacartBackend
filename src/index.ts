@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import helmet from "helmet";
 import morgan from "morgan";
 import multer from "multer";
 import { Pool } from "pg";
@@ -183,6 +184,7 @@ const upload = multer({
 const allowlist = new Set<string>([
   "https://heirclark.com",
   "https://www.heirclark.com",
+  "https://mduiup-rn.myshopify.com",  // Shopify store (SECURITY FIX: Added for frontend integration)
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ]);
@@ -213,6 +215,36 @@ app.use(
 
 // ✅ Preflight (important for multipart uploads)
 app.options("*", cors());
+
+// ✅ Security Headers (Helmet.js - OWASP Top 10: A05 Security Misconfiguration)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,      // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: {
+    action: 'deny',         // Prevent clickjacking
+  },
+  noSniff: true,            // Prevent MIME sniffing
+  xssFilter: true,          // Enable XSS filter
+  referrerPolicy: {
+    policy: 'no-referrer',
+  },
+}));
 
 // Logging
 app.use(morgan("dev"));

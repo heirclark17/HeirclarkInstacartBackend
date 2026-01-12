@@ -1,22 +1,29 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { pool } from "../db/pool";
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from "../middleware/auth";
+import { validateHealthMetrics } from "../middleware/validation";
 
 export const userRouter = Router();
 
+// ✅ SECURITY FIX: Apply authentication to all routes (OWASP A01: Broken Access Control)
+userRouter.use(authMiddleware());
+
 /**
- * GET /api/v1/user/goals?shopifyCustomerId=...
+ * GET /api/v1/user/goals
  * Fetch user's nutrition goals
+ *
+ * ✅ SECURITY: Requires authentication via Bearer token or legacy auth (deprecated)
+ * ✅ IDOR Protection: Uses validated customer ID from authMiddleware
  */
-userRouter.get("/goals", async (req: Request, res: Response) => {
+userRouter.get("/goals", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const shopifyCustomerId =
-      (req.query.shopifyCustomerId as string) ||
-      req.headers["x-shopify-customer-id"] as string;
+    // ✅ Extract validated customer ID from auth middleware
+    const shopifyCustomerId = getCustomerId(req);
 
     if (!shopifyCustomerId) {
-      return res.status(400).json({
+      return res.status(401).json({
         ok: false,
-        error: "shopifyCustomerId is required",
+        error: "Authentication required",
       });
     }
 
@@ -77,18 +84,25 @@ userRouter.get("/goals", async (req: Request, res: Response) => {
 /**
  * POST /api/v1/user/goals
  * Save user's nutrition goals
- * Body: { shopifyCustomerId, goals: { calories, protein, carbs, fat, hydration?, goalWeight?, timezone? } }
+ * Body: { goals: { calories, protein, carbs, fat, hydration?, goalWeight?, timezone? } }
+ *
+ * ✅ SECURITY: Requires authentication via Bearer token or legacy auth (deprecated)
+ * ✅ IDOR Protection: Uses validated customer ID from authMiddleware
+ * ✅ Input Validation: Validates numeric ranges for health metrics (OWASP A04)
  */
-userRouter.post("/goals", async (req: Request, res: Response) => {
+userRouter.post("/goals", validateHealthMetrics, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { shopifyCustomerId, goals } = req.body;
+    // ✅ Extract validated customer ID from auth middleware
+    const shopifyCustomerId = getCustomerId(req);
 
     if (!shopifyCustomerId) {
-      return res.status(400).json({
+      return res.status(401).json({
         ok: false,
-        error: "shopifyCustomerId is required",
+        error: "Authentication required",
       });
     }
+
+    const { goals } = req.body;
 
     if (!goals || typeof goals !== "object") {
       return res.status(400).json({
@@ -107,7 +121,7 @@ userRouter.post("/goals", async (req: Request, res: Response) => {
       timezone = "America/New_York",
     } = goals;
 
-    // Upsert user preferences
+    // ✅ Upsert user preferences using validated customer ID
     await pool.query(
       `INSERT INTO hc_user_preferences (
         shopify_customer_id,
@@ -130,7 +144,7 @@ userRouter.post("/goals", async (req: Request, res: Response) => {
         timezone = EXCLUDED.timezone,
         updated_at = NOW()`,
       [
-        shopifyCustomerId,
+        shopifyCustomerId,  // ✅ Validated customer ID from JWT
         Number(calories) || 2200,
         Number(protein) || 190,
         Number(carbs) || 190,
