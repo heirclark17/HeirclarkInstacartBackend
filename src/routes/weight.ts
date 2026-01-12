@@ -95,8 +95,13 @@ weightRouter.get("/current", asyncHandler(async (req: AuthenticatedRequest, res:
 }));
 
 // GET /api/v1/weight/progress?rangeDays=90
-weightRouter.get("/progress", asyncHandler(async (req: Request, res: Response) => {
+weightRouter.get("/progress", asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = getCustomerId(req);
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "Authentication required" });
+  }
+
   const rangeDays = parseInt((req.query.rangeDays as string) || "90", 10);
 
   const weights = memoryStore.weights
