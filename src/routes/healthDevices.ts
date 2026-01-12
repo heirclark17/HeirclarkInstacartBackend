@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
+import { authMiddleware } from "../middleware/auth";
 
 export type HealthDevice = {
   deviceKey: string;
@@ -67,6 +68,9 @@ export function getDevicesForUser(shopifyCustomerId: string): Record<string, Hea
 }
 
 const r = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+r.use(authMiddleware({ strictAuth: true }));
 
 /**
  * GET /api/v1/health/devices?shopifyCustomerId=...

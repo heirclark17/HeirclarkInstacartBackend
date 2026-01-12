@@ -4,8 +4,13 @@ import { pool } from '../db/pool';
 import { sendSuccess, sendError, sendServerError } from '../middleware/responseHelper';
 import { rateLimitMiddleware } from '../middleware/rateLimiter';
 import { createInstacartProductsLink, InstacartLineItem } from '../instacartClient';
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from '../middleware/auth';
 
 export const mealPlanRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication to all meal plan routes (OWASP A01: IDOR Protection)
+// strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
+mealPlanRouter.use(authMiddleware({ strictAuth: true }));
 
 // Apply rate limiting (10 requests per minute per IP) for expensive operations
 const planRateLimit = rateLimitMiddleware({

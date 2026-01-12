@@ -1,6 +1,7 @@
 // src/routes/mealLibrary.ts - Personal Meal Library Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,6 +9,9 @@ const pool = new Pool({
 });
 
 export const mealLibraryRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+mealLibraryRouter.use(authMiddleware({ strictAuth: true }));
 
 // Create meal library table if not exists
 async function ensureTableExists() {

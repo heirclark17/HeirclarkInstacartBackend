@@ -1,6 +1,7 @@
 // src/routes/workoutFuel.ts - WorkoutFuel Skill Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,6 +9,9 @@ const pool = new Pool({
 });
 
 export const workoutFuelRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+workoutFuelRouter.use(authMiddleware({ strictAuth: true }));
 
 // MET values for different workout types
 const MET_VALUES: Record<string, number> = {

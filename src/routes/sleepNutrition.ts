@@ -1,6 +1,7 @@
 // src/routes/sleepNutrition.ts - SleepNutrition Skill Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,6 +9,9 @@ const pool = new Pool({
 });
 
 export const sleepNutritionRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+sleepNutritionRouter.use(authMiddleware({ strictAuth: true }));
 
 /**
  * POST /api/v1/sleep-nutrition/log

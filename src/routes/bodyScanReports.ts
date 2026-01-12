@@ -15,6 +15,7 @@ import {
   PhotoType,
 } from '../types/bodyScan';
 import { BODY_SCAN_PROMPTS } from '../services/aiPromptTemplates';
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from '../middleware/auth';
 
 // ==========================================================================
 // Router Factory
@@ -23,6 +24,10 @@ import { BODY_SCAN_PROMPTS } from '../services/aiPromptTemplates';
 export function createBodyScanReportsRouter(pool: Pool): Router {
   const router = Router();
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  // ✅ SECURITY FIX: Apply STRICT authentication to all body scan routes (OWASP A01: IDOR Protection)
+  // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
+  router.use(authMiddleware({ strictAuth: true }));
 
   // ==========================================================================
   // Progress Photos Endpoints

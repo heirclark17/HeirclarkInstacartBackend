@@ -6,8 +6,13 @@ import {
   createDeviceMap,
   createHealthSnapshotMap,
 } from "../services/memoryCleanup";
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from "../middleware/auth";
 
 export const healthRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication to all health routes (OWASP A01: IDOR Protection)
+// strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
+healthRouter.use(authMiddleware({ strictAuth: true }));
 
 /**
  * IN-MEMORY STORE WITH TTL-BASED CLEANUP

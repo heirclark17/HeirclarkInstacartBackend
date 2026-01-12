@@ -6,8 +6,12 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { syncOrchestrator } from '../services/wearables/syncOrchestrator';
 import type { SourceType } from '../services/wearables/types';
+import { authMiddleware } from '../middleware/auth';
 
 export const healthDataRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+healthDataRouter.use(authMiddleware({ strictAuth: true }));
 
 // ============================================
 // Validation Schemas

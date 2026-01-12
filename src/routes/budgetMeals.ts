@@ -1,6 +1,7 @@
 // src/routes/budgetMeals.ts - BudgetMeals Skill Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,6 +9,9 @@ const pool = new Pool({
 });
 
 export const budgetMealsRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+budgetMealsRouter.use(authMiddleware({ strictAuth: true }));
 
 // Budget meal database
 const BUDGET_MEALS = [

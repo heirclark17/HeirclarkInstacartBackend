@@ -2,6 +2,7 @@
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
 import OpenAI from 'openai';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -13,6 +14,9 @@ const openai = new OpenAI({
 });
 
 export const restaurantRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+restaurantRouter.use(authMiddleware({ strictAuth: true }));
 
 /**
  * Get menu items from database

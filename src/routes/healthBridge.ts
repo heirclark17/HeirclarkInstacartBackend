@@ -1,8 +1,12 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { Pool } from "pg";
+import { authMiddleware } from "../middleware/auth";
 
 export const healthBridgeRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+healthBridgeRouter.use(authMiddleware({ strictAuth: true }));
 
 /**
  * Railway Postgres: DATABASE_URL should be set in your Node service Variables as:

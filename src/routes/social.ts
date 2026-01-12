@@ -4,6 +4,7 @@
 
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 import {
   UserProfile,
   UserConnection,
@@ -183,6 +184,9 @@ CREATE INDEX IF NOT EXISTS idx_notifications_unread ON hc_notifications(user_id)
 
 export function createSocialRouter(pool: Pool): Router {
   const router = Router();
+
+  // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+  router.use(authMiddleware({ strictAuth: true }));
 
   // ==========================================================================
   // Profile Endpoints

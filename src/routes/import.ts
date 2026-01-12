@@ -11,6 +11,7 @@ import {
   ImportSource,
   ImportStatus,
 } from '../types/social';
+import { authMiddleware } from '../middleware/auth';
 
 // ==========================================================================
 // SQL Schema for Import Features
@@ -229,6 +230,9 @@ async function handleCsvImport(pool: Pool, req: Request, res: Response): Promise
 
 export function createImportRouter(pool: Pool): Router {
   const router = Router();
+
+  // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+  router.use(authMiddleware({ strictAuth: true }));
 
   // ==========================================================================
   // GET /api/v1/import/sources

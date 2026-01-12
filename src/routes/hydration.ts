@@ -7,8 +7,12 @@ import { todayDateOnly } from "../utils/date";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { getUserPreferences } from "../services/userPreferences";
 import { sendSuccess, sendValidationError } from "../middleware/responseHelper";
+import { authMiddleware } from "../middleware/auth";
 
 export const hydrationRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+hydrationRouter.use(authMiddleware({ strictAuth: true }));
 
 const logWaterSchema = z.object({
   datetime: z.string().datetime().optional(),

@@ -1,6 +1,7 @@
 // src/routes/weeklyPrep.ts - WeeklyPrep Skill Routes
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
+import { authMiddleware } from '../middleware/auth';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -8,6 +9,9 @@ const pool = new Pool({
 });
 
 export const weeklyPrepRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+weeklyPrepRouter.use(authMiddleware({ strictAuth: true }));
 
 // Batch cooking recipes database
 const BATCH_RECIPES = [

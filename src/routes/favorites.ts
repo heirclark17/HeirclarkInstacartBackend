@@ -2,8 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
 import { pool } from "../db/pool";
+import { authMiddleware } from "../middleware/auth";
 
 export const favoritesRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+favoritesRouter.use(authMiddleware({ strictAuth: true }));
 
 // Schema for creating a favorite meal
 const createFavoriteSchema = z.object({

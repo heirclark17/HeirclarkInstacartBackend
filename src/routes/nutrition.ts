@@ -6,6 +6,7 @@ import sharp from "sharp";
 import OpenAI from "openai";
 import crypto from "crypto";
 import { Pool } from "pg";
+import { authMiddleware } from "../middleware/auth";
 
 // PostgreSQL connection for persistent meal storage
 const pool = new Pool({
@@ -35,6 +36,10 @@ import {
  */
 
 const nutritionRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+nutritionRouter.use(authMiddleware({ strictAuth: true }));
+
 export { nutritionRouter };
 export default nutritionRouter;
 

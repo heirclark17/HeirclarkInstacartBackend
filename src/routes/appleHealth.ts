@@ -7,8 +7,12 @@ import {
   appleGetToday,
   appleUpsertSamples,
 } from "../utils/services/appleHealthStore";
+import { authMiddleware } from "../middleware/auth";
 
 export const appleHealthRouter = Router();
+
+// ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
+appleHealthRouter.use(authMiddleware({ strictAuth: true }));
 
 // Web app: start link flow
 // POST /api/v1/wearables/apple/link/start  { shopifyCustomerId }

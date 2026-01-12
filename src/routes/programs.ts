@@ -12,6 +12,7 @@ import {
   TaskCompleteResponse,
   TaskResponseData,
 } from '../types/programs';
+import { authMiddleware, getCustomerId, AuthenticatedRequest } from '../middleware/auth';
 
 // ==========================================================================
 // 7-Day Onboarding Program Definition
@@ -532,11 +533,15 @@ export function createProgramsRouter(pool: Pool): Router {
   const router = Router();
   const programsDB = new ProgramsDB(pool);
 
+  // ✅ SECURITY FIX: Apply STRICT authentication to all program routes (OWASP A01: IDOR Protection)
+  // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
+  router.use(authMiddleware({ strictAuth: true }));
+
   // ==========================================================================
   // GET /api/v1/programs
   // List available programs for user
   // ==========================================================================
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.query.userId as string || req.headers['x-shopify-customer-id'] as string;
 
