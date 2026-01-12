@@ -143,9 +143,12 @@ function addDeprecationWarning(res: Response, method: string): void {
  * 1. Authorization: Bearer <token> (RECOMMENDED)
  * 2. X-Shopify-Customer-Id header (DEPRECATED - removed after 2025-01-30)
  * 3. shopifyCustomerId query/body parameter (DEPRECATED - removed after 2025-01-30)
+ *
+ * @param options.required - Whether authentication is required (default: true)
+ * @param options.strictAuth - If true, ONLY accepts JWT Bearer tokens (blocks legacy auth). Use this for security-critical routes to prevent IDOR attacks.
  */
-export function authMiddleware(options: { required?: boolean } = {}) {
-  const { required = true } = options;
+export function authMiddleware(options: { required?: boolean; strictAuth?: boolean } = {}) {
+  const { required = true, strictAuth = false } = options;
 
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const secret = process.env.JWT_SECRET;
@@ -180,6 +183,15 @@ export function authMiddleware(options: { required?: boolean } = {}) {
     // Legacy: X-Shopify-Customer-Id or X-Customer-ID header (DEPRECATED)
     const legacyHeader = (req.headers["x-shopify-customer-id"] || req.headers["x-customer-id"]) as string | undefined;
     if (legacyHeader) {
+      // ✅ SECURITY FIX: Reject legacy auth in strict mode (prevents IDOR attacks)
+      if (strictAuth) {
+        logAuthFailure(req, "Legacy authentication blocked by strictAuth mode");
+        return res.status(401).json({
+          ok: false,
+          error: "This endpoint requires JWT Bearer token authentication. X-Shopify-Customer-Id header is not accepted.",
+        });
+      }
+
       if (!isLegacyAuthAllowed()) {
         logAuthFailure(req, "Legacy X-Shopify-Customer-Id/X-Customer-ID header no longer accepted");
         return res.status(401).json({
@@ -208,6 +220,15 @@ export function authMiddleware(options: { required?: boolean } = {}) {
     const legacyId = String(legacyQuery || legacyBody || "").trim();
 
     if (legacyId) {
+      // ✅ SECURITY FIX: Reject legacy auth in strict mode (prevents IDOR attacks)
+      if (strictAuth) {
+        logAuthFailure(req, "Legacy authentication blocked by strictAuth mode");
+        return res.status(401).json({
+          ok: false,
+          error: "This endpoint requires JWT Bearer token authentication. shopifyCustomerId parameter is not accepted.",
+        });
+      }
+
       if (!isLegacyAuthAllowed()) {
         logAuthFailure(req, "Legacy shopifyCustomerId parameter no longer accepted");
         return res.status(401).json({
