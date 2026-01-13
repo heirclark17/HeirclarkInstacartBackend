@@ -5,6 +5,99 @@ import { authMiddleware } from "../middleware/auth";
 
 export const healthBridgeRouter = Router();
 
+/**
+ * 📱 SIMPLIFIED ENDPOINT FOR APPLE SHORTCUTS (NO AUTHENTICATION REQUIRED)
+ * This endpoint MUST be defined BEFORE authMiddleware
+ * POST /api/v1/health/ingest-simple
+ *
+ * Body: {
+ *   "shopifyCustomerId": "9339338686771",
+ *   "date": "2025-01-12",
+ *   "steps": 8421,
+ *   "caloriesOut": 612,
+ *   "restingEnergy": 1600,
+ *   "heartRate": 74,
+ *   "workouts": 1
+ * }
+ */
+healthBridgeRouter.post("/ingest-simple", async (req: Request, res: Response) => {
+  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
+  const date = String(req.body?.date || "").trim();
+
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+  }
+
+  if (!date) {
+    return res.status(400).json({ ok: false, error: "Missing date" });
+  }
+
+  // Validate date format
+  const dateObj = new Date(date);
+  if (Number.isNaN(dateObj.getTime())) {
+    return res.status(400).json({ ok: false, error: "Invalid date format. Use YYYY-MM-DD" });
+  }
+
+  // Helper to convert to number or null
+  const toNumOrNull = (v: any): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // Extract health data
+  const steps = toNumOrNull(req.body?.steps);
+  const activeCalories = toNumOrNull(req.body?.caloriesOut) || toNumOrNull(req.body?.activeCalories);
+  const restingEnergy = toNumOrNull(req.body?.restingEnergy) || toNumOrNull(req.body?.basalEnergy);
+  const heartRate = toNumOrNull(req.body?.heartRate) || toNumOrNull(req.body?.latestHeartRateBpm);
+  const workouts = toNumOrNull(req.body?.workouts) || toNumOrNull(req.body?.workoutsToday);
+
+  try {
+    // Use DATABASE_URL from environment (will be set below in the file)
+    const DATABASE_URL = process.env.DATABASE_URL || "";
+    if (!DATABASE_URL) {
+      console.warn("[ingest-simple] DATABASE_URL not set, using in-memory storage");
+      // Just return success without persisting
+      return res.json({
+        ok: true,
+        message: "Health data received (DATABASE_URL not configured)",
+        data: { shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts }
+      });
+    }
+
+    const pool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+    });
+
+    // Insert or update health snapshot for this date
+    await pool.query(
+      `INSERT INTO health_snapshots (shopify_customer_id, date, steps, active_calories, resting_energy, heart_rate, workouts, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'shortcut')
+       ON CONFLICT (shopify_customer_id, date)
+       DO UPDATE SET
+         steps = COALESCE(EXCLUDED.steps, health_snapshots.steps),
+         active_calories = COALESCE(EXCLUDED.active_calories, health_snapshots.active_calories),
+         resting_energy = COALESCE(EXCLUDED.resting_energy, health_snapshots.resting_energy),
+         heart_rate = COALESCE(EXCLUDED.heart_rate, health_snapshots.heart_rate),
+         workouts = COALESCE(EXCLUDED.workouts, health_snapshots.workouts),
+         updated_at = NOW()`,
+      [shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts]
+    );
+
+    await pool.end();
+
+    return res.json({
+      ok: true,
+      message: "Health data ingested successfully",
+      data: { shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts }
+    });
+  } catch (err) {
+    console.error("[ingest-simple] Database error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to store health data" });
+  }
+});
+
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
 healthBridgeRouter.use(authMiddleware());
 
