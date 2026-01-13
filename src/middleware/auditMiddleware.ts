@@ -226,7 +226,7 @@ export function logAuthFailure(
 export function logAuthSuccess(
   req: Request,
   userId: string,
-  method: 'jwt' | 'legacy_header' | 'legacy_param'
+  method: 'jwt' | 'legacy_header' | 'legacy_param' | 'customer_id_header' | 'customer_id_param'
 ): void {
   const correlationId = req.correlationId || generateCorrelationId();
 
