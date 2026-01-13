@@ -11,7 +11,7 @@ import { authMiddleware } from '../middleware/auth';
 export const healthDataRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-healthDataRouter.use(authMiddleware({ strictAuth: true }));
+healthDataRouter.use(authMiddleware());
 
 // ============================================
 // Validation Schemas

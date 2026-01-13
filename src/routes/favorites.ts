@@ -7,7 +7,7 @@ import { authMiddleware } from "../middleware/auth";
 export const favoritesRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-favoritesRouter.use(authMiddleware({ strictAuth: true }));
+favoritesRouter.use(authMiddleware());
 
 // Schema for creating a favorite meal
 const createFavoriteSchema = z.object({

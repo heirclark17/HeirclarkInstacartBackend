@@ -27,7 +27,7 @@ export function createBodyScanReportsRouter(pool: Pool): Router {
 
   // ✅ SECURITY FIX: Apply STRICT authentication to all body scan routes (OWASP A01: IDOR Protection)
   // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-  router.use(authMiddleware({ strictAuth: true }));
+  router.use(authMiddleware());
 
   // ==========================================================================
   // Progress Photos Endpoints

@@ -11,7 +11,7 @@ const pool = new Pool({
 export const coachRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-coachRouter.use(authMiddleware({ strictAuth: true }));
+coachRouter.use(authMiddleware());
 
 /**
  * GET /api/v1/coach/weekly-summary

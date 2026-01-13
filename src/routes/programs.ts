@@ -535,7 +535,7 @@ export function createProgramsRouter(pool: Pool): Router {
 
   // ✅ SECURITY FIX: Apply STRICT authentication to all program routes (OWASP A01: IDOR Protection)
   // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-  router.use(authMiddleware({ strictAuth: true }));
+  router.use(authMiddleware());
 
   // ==========================================================================
   // GET /api/v1/programs

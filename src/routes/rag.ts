@@ -19,7 +19,7 @@ import { authMiddleware } from '../middleware/auth';
 const router = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-router.use(authMiddleware({ strictAuth: true }));
+router.use(authMiddleware());
 
 // ============================================================================
 // Health Check

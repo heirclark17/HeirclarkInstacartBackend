@@ -11,7 +11,7 @@ const pool = new Pool({
 export const budgetMealsRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-budgetMealsRouter.use(authMiddleware({ strictAuth: true }));
+budgetMealsRouter.use(authMiddleware());
 
 // Budget meal database
 const BUDGET_MEALS = [

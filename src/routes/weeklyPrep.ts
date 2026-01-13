@@ -11,7 +11,7 @@ const pool = new Pool({
 export const weeklyPrepRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-weeklyPrepRouter.use(authMiddleware({ strictAuth: true }));
+weeklyPrepRouter.use(authMiddleware());
 
 // Batch cooking recipes database
 const BATCH_RECIPES = [

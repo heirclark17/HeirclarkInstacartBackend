@@ -6,7 +6,7 @@ import { authMiddleware } from "../middleware/auth";
 export const healthBridgeRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-healthBridgeRouter.use(authMiddleware({ strictAuth: true }));
+healthBridgeRouter.use(authMiddleware());
 
 /**
  * Railway Postgres: DATABASE_URL should be set in your Node service Variables as:

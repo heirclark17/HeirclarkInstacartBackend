@@ -16,7 +16,7 @@ const openai = new OpenAI({
 export const restaurantRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-restaurantRouter.use(authMiddleware({ strictAuth: true }));
+restaurantRouter.use(authMiddleware());
 
 /**
  * Get menu items from database

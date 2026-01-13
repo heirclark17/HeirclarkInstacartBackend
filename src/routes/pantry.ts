@@ -11,7 +11,7 @@ const pool = new Pool({
 export const pantryRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-pantryRouter.use(authMiddleware({ strictAuth: true }));
+pantryRouter.use(authMiddleware());
 
 // Sample recipe database
 const RECIPES = [

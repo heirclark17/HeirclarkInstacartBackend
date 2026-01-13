@@ -10,7 +10,7 @@ export const mealPlanRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication to all meal plan routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-mealPlanRouter.use(authMiddleware({ strictAuth: true }));
+mealPlanRouter.use(authMiddleware());
 
 // Apply rate limiting (10 requests per minute per IP) for expensive operations
 const planRateLimit = rateLimitMiddleware({

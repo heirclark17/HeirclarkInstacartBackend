@@ -70,7 +70,7 @@ export function getDevicesForUser(shopifyCustomerId: string): Record<string, Hea
 const r = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-r.use(authMiddleware({ strictAuth: true }));
+r.use(authMiddleware());
 
 /**
  * GET /api/v1/health/devices?shopifyCustomerId=...

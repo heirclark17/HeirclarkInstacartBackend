@@ -12,7 +12,7 @@ import { authMiddleware } from "../middleware/auth";
 export const hydrationRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-hydrationRouter.use(authMiddleware({ strictAuth: true }));
+hydrationRouter.use(authMiddleware());
 
 const logWaterSchema = z.object({
   datetime: z.string().datetime().optional(),

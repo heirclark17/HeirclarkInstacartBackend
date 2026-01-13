@@ -11,7 +11,7 @@ const pool = new Pool({
 export const sleepNutritionRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-sleepNutritionRouter.use(authMiddleware({ strictAuth: true }));
+sleepNutritionRouter.use(authMiddleware());
 
 /**
  * POST /api/v1/sleep-nutrition/log

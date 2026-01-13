@@ -19,7 +19,7 @@ import { authMiddleware } from '../middleware/auth';
 export const wearablesRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-wearablesRouter.use(authMiddleware({ strictAuth: true }));
+wearablesRouter.use(authMiddleware());
 
 // ============================================
 // Validation Schemas

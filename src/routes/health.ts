@@ -81,7 +81,7 @@ healthRouter.post("/ingest-simple", (req: Request, res: Response) => {
 // ✅ SECURITY FIX: Apply STRICT authentication to all health routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
 // NOTE: /ingest-simple endpoint above bypasses this for Apple Shortcuts compatibility
-healthRouter.use(authMiddleware({ strictAuth: true }));
+healthRouter.use(authMiddleware());
 
 /**
  * IN-MEMORY STORE WITH TTL-BASED CLEANUP

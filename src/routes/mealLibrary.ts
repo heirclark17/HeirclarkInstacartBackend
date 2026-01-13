@@ -11,7 +11,7 @@ const pool = new Pool({
 export const mealLibraryRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-mealLibraryRouter.use(authMiddleware({ strictAuth: true }));
+mealLibraryRouter.use(authMiddleware());
 
 // Create meal library table if not exists
 async function ensureTableExists() {

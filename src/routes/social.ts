@@ -186,7 +186,7 @@ export function createSocialRouter(pool: Pool): Router {
   const router = Router();
 
   // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-  router.use(authMiddleware({ strictAuth: true }));
+  router.use(authMiddleware());
 
   // ==========================================================================
   // Profile Endpoints

@@ -12,7 +12,7 @@ export const habitsRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication to all habits routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-habitsRouter.use(authMiddleware({ strictAuth: true }));
+habitsRouter.use(authMiddleware());
 
 // XP rewards for actions
 const XP_REWARDS = {

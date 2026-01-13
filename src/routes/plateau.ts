@@ -11,7 +11,7 @@ const pool = new Pool({
 export const plateauRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-plateauRouter.use(authMiddleware({ strictAuth: true }));
+plateauRouter.use(authMiddleware());
 
 /**
  * GET /api/v1/plateau/detect

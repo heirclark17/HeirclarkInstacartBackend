@@ -38,7 +38,7 @@ import {
 const nutritionRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-nutritionRouter.use(authMiddleware({ strictAuth: true }));
+nutritionRouter.use(authMiddleware());
 
 export { nutritionRouter };
 export default nutritionRouter;

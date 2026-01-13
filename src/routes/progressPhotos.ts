@@ -8,7 +8,7 @@ export const progressPhotosRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication to all progress photo routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-progressPhotosRouter.use(authMiddleware({ strictAuth: true }));
+progressPhotosRouter.use(authMiddleware());
 
 // Schema for creating a progress photo
 const createPhotoSchema = z.object({

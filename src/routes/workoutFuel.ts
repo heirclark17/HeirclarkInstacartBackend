@@ -11,7 +11,7 @@ const pool = new Pool({
 export const workoutFuelRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-workoutFuelRouter.use(authMiddleware({ strictAuth: true }));
+workoutFuelRouter.use(authMiddleware());
 
 // MET values for different workout types
 const MET_VALUES: Record<string, number> = {

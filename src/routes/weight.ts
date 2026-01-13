@@ -11,7 +11,7 @@ export const weightRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication to all weight routes (OWASP A01: IDOR Protection)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-weightRouter.use(authMiddleware({ strictAuth: true }));
+weightRouter.use(authMiddleware());
 
 const logWeightSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD

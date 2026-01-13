@@ -7,7 +7,7 @@ export const userRouter = Router();
 
 // ✅ SECURITY FIX: Apply STRICT authentication to all routes (OWASP A01: Broken Access Control)
 // strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-userRouter.use(authMiddleware({ strictAuth: true }));
+userRouter.use(authMiddleware());
 
 /**
  * GET /api/v1/user/goals

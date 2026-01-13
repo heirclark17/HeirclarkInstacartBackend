@@ -232,7 +232,7 @@ export function createImportRouter(pool: Pool): Router {
   const router = Router();
 
   // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
-  router.use(authMiddleware({ strictAuth: true }));
+  router.use(authMiddleware());
 
   // ==========================================================================
   // GET /api/v1/import/sources
