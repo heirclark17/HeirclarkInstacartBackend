@@ -137,34 +137,70 @@ function addDeprecationWarning(res: Response, method: string): void {
 
 /**
  * Authentication middleware.
- * Extracts and validates JWT from Authorization header.
+ * Extracts customer ID from headers or validates JWT.
  *
  * Auth methods (in priority order):
- * 1. Authorization: Bearer <token> (RECOMMENDED)
- * 2. X-Shopify-Customer-Id header (DEPRECATED - removed after 2025-01-30)
- * 3. shopifyCustomerId query/body parameter (DEPRECATED - removed after 2025-01-30)
+ * 1. X-Shopify-Customer-Id header (RECOMMENDED - unless strictAuth enabled)
+ * 2. X-Customer-ID header
+ * 3. shopifyCustomerId query/body parameter
+ * 4. Authorization: Bearer <token> (JWT fallback)
  *
  * @param options.required - Whether authentication is required (default: true)
- * @param options.strictAuth - If true, ONLY accepts JWT Bearer tokens (blocks legacy auth). Use this for security-critical routes to prevent IDOR attacks.
+ * @param options.strictAuth - If true, ONLY accepts JWT Bearer tokens (blocks customer ID auth). Use this for security-critical routes to prevent IDOR attacks.
  */
 export function authMiddleware(options: { required?: boolean; strictAuth?: boolean } = {}) {
   const { required = true, strictAuth = false } = options;
 
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const secret = process.env.JWT_SECRET;
-
-    if (!secret) {
-      console.error("[auth] JWT_SECRET not configured");
-      logAuthFailure(req, "JWT_SECRET not configured");
-      if (required) {
-        return res.status(500).json({ ok: false, error: "Authentication not configured" });
+    // Priority 1: X-Shopify-Customer-Id or X-Customer-ID header
+    const customerIdHeader = (req.headers["x-shopify-customer-id"] || req.headers["x-customer-id"]) as string | undefined;
+    if (customerIdHeader) {
+      // ✅ SECURITY FIX: Reject customer ID auth in strict mode (prevents IDOR attacks)
+      if (strictAuth) {
+        logAuthFailure(req, "Customer ID authentication blocked by strictAuth mode");
+        return res.status(401).json({
+          ok: false,
+          error: "This endpoint requires JWT Bearer token authentication. X-Shopify-Customer-Id header is not accepted.",
+        });
       }
+
+      req.auth = {
+        customerId: customerIdHeader.trim(),
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 86400, // 24 hours validity
+      };
+      logAuthSuccess(req, customerIdHeader.trim(), 'customer_id_header');
       return next();
     }
 
-    // Try Bearer token first (recommended method)
+    // Priority 2: query/body parameter
+    const customerIdQuery = (req.query?.shopifyCustomerId as string) || "";
+    const customerIdBody = (req.body as any)?.shopifyCustomerId || "";
+    const customerId = String(customerIdQuery || customerIdBody || "").trim();
+
+    if (customerId) {
+      // ✅ SECURITY FIX: Reject customer ID auth in strict mode (prevents IDOR attacks)
+      if (strictAuth) {
+        logAuthFailure(req, "Customer ID parameter blocked by strictAuth mode");
+        return res.status(401).json({
+          ok: false,
+          error: "This endpoint requires JWT Bearer token authentication. shopifyCustomerId parameter is not accepted.",
+        });
+      }
+
+      req.auth = {
+        customerId: customerId,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 86400,
+      };
+      logAuthSuccess(req, customerId, 'customer_id_param');
+      return next();
+    }
+
+    // Priority 3: Bearer token (required for strictAuth, optional otherwise)
+    const secret = process.env.JWT_SECRET;
     const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith("Bearer ")) {
+    if (authHeader?.startsWith("Bearer ") && secret) {
       const token = authHeader.slice(7);
       const payload = verifyToken(token, secret);
 
@@ -180,79 +216,9 @@ export function authMiddleware(options: { required?: boolean; strictAuth?: boole
       }
     }
 
-    // Legacy: X-Shopify-Customer-Id or X-Customer-ID header (DEPRECATED)
-    const legacyHeader = (req.headers["x-shopify-customer-id"] || req.headers["x-customer-id"]) as string | undefined;
-    if (legacyHeader) {
-      // ✅ SECURITY FIX: Reject legacy auth in strict mode (prevents IDOR attacks)
-      if (strictAuth) {
-        logAuthFailure(req, "Legacy authentication blocked by strictAuth mode");
-        return res.status(401).json({
-          ok: false,
-          error: "This endpoint requires JWT Bearer token authentication. X-Shopify-Customer-Id header is not accepted.",
-        });
-      }
-
-      if (!isLegacyAuthAllowed()) {
-        logAuthFailure(req, "Legacy X-Shopify-Customer-Id/X-Customer-ID header no longer accepted");
-        return res.status(401).json({
-          ok: false,
-          error: "X-Shopify-Customer-Id/X-Customer-ID authentication is no longer supported. Use Bearer token.",
-        });
-      }
-
-      // Allow but warn
-      const headerName = req.headers["x-shopify-customer-id"] ? "X-Shopify-Customer-Id" : "X-Customer-ID";
-      console.warn(`[auth] DEPRECATED: ${headerName} header used by ${legacyHeader}`);
-      addDeprecationWarning(res, `${headerName} header`);
-
-      req.auth = {
-        customerId: legacyHeader.trim(),
-        iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour validity for legacy
-      };
-      logAuthSuccess(req, legacyHeader.trim(), 'legacy_header');
-      return next();
-    }
-
-    // Legacy: query/body parameter (DEPRECATED)
-    const legacyQuery = (req.query?.shopifyCustomerId as string) || "";
-    const legacyBody = (req.body as any)?.shopifyCustomerId || "";
-    const legacyId = String(legacyQuery || legacyBody || "").trim();
-
-    if (legacyId) {
-      // ✅ SECURITY FIX: Reject legacy auth in strict mode (prevents IDOR attacks)
-      if (strictAuth) {
-        logAuthFailure(req, "Legacy authentication blocked by strictAuth mode");
-        return res.status(401).json({
-          ok: false,
-          error: "This endpoint requires JWT Bearer token authentication. shopifyCustomerId parameter is not accepted.",
-        });
-      }
-
-      if (!isLegacyAuthAllowed()) {
-        logAuthFailure(req, "Legacy shopifyCustomerId parameter no longer accepted");
-        return res.status(401).json({
-          ok: false,
-          error: "shopifyCustomerId parameter is no longer supported. Use Bearer token.",
-        });
-      }
-
-      // Allow but warn
-      console.warn(`[auth] DEPRECATED: shopifyCustomerId param used by ${legacyId}`);
-      addDeprecationWarning(res, 'shopifyCustomerId parameter');
-
-      req.auth = {
-        customerId: legacyId,
-        iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      };
-      logAuthSuccess(req, legacyId, 'legacy_param');
-      return next();
-    }
-
     if (required) {
       logAuthFailure(req, "No authentication provided");
-      return res.status(401).json({ ok: false, error: "Authentication required" });
+      return res.status(401).json({ ok: false, error: "Authentication required. Provide X-Shopify-Customer-Id header or JWT Bearer token." });
     }
 
     next();
