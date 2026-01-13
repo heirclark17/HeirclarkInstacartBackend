@@ -38,7 +38,7 @@ healthBridgeRouter.post("/ingest-simple", async (req: Request, res: Response) =>
     return res.status(400).json({ ok: false, error: "Invalid date format. Use YYYY-MM-DD" });
   }
 
-  // Helper to convert to number or null
+  // Helper to convert to number or null (will be defined again later, but we need it here)
   const toNumOrNull = (v: any): number | null => {
     if (v === null || v === undefined || v === "") return null;
     const n = Number(v);
@@ -52,13 +52,74 @@ healthBridgeRouter.post("/ingest-simple", async (req: Request, res: Response) =>
   const heartRate = toNumOrNull(req.body?.heartRate) || toNumOrNull(req.body?.latestHeartRateBpm);
   const workouts = toNumOrNull(req.body?.workouts) || toNumOrNull(req.body?.workoutsToday);
 
-  // For now, just return success with the data (in-memory only)
-  // The database pool will be available later in the file for authenticated endpoints
-  return res.json({
-    ok: true,
-    message: "Health data received successfully (stored in-memory)",
-    data: { shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts }
-  });
+  // Convert date to ISO timestamp (end of day)
+  const ts = new Date(date + "T23:59:59Z");
+
+  // Get database pool (will be defined below in the file)
+  const DATABASE_URL = process.env.DATABASE_URL || "";
+  if (!DATABASE_URL) {
+    console.warn("[ingest-simple] DATABASE_URL not set, returning success without persistence");
+    return res.json({
+      ok: true,
+      message: "Health data received (database not configured)",
+      data: { shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts }
+    });
+  }
+
+  try {
+    // Import pool from below in the file - we'll use a local connection
+    const { Pool } = require("pg");
+    const localPool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+    });
+
+    const client = await localPool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Insert into hc_health_latest table (same as authenticated /ingest endpoint)
+      await client.query(
+        `
+        INSERT INTO hc_health_latest (
+          shopify_customer_id, ts, steps, active_calories, resting_energy,
+          latest_heart_rate_bpm, workouts_today, received_at, source
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), 'shortcut-simple')
+        ON CONFLICT (shopify_customer_id)
+        DO UPDATE SET
+          ts = EXCLUDED.ts,
+          steps = COALESCE(EXCLUDED.steps, hc_health_latest.steps),
+          active_calories = COALESCE(EXCLUDED.active_calories, hc_health_latest.active_calories),
+          resting_energy = COALESCE(EXCLUDED.resting_energy, hc_health_latest.resting_energy),
+          latest_heart_rate_bpm = COALESCE(EXCLUDED.latest_heart_rate_bpm, hc_health_latest.latest_heart_rate_bpm),
+          workouts_today = COALESCE(EXCLUDED.workouts_today, hc_health_latest.workouts_today),
+          received_at = NOW(),
+          source = 'shortcut-simple'
+        `,
+        [shopifyCustomerId, ts.toISOString(), steps, activeCalories, restingEnergy, heartRate, workouts]
+      );
+
+      await client.query("COMMIT");
+
+      return res.json({
+        ok: true,
+        message: "Health data ingested successfully",
+        data: { shopifyCustomerId, date, steps, activeCalories, restingEnergy, heartRate, workouts }
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("[ingest-simple] Database error:", err);
+      return res.status(500).json({ ok: false, error: "Failed to store health data" });
+    } finally {
+      client.release();
+      await localPool.end();
+    }
+  } catch (err) {
+    console.error("[ingest-simple] Connection error:", err);
+    return res.status(500).json({ ok: false, error: "Database connection failed" });
+  }
 });
 
 // ✅ SECURITY FIX: Apply STRICT authentication (OWASP A01: IDOR Protection)
