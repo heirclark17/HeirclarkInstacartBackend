@@ -78,11 +78,6 @@ healthRouter.post("/ingest-simple", (req: Request, res: Response) => {
   });
 });
 
-// ✅ SECURITY FIX: Apply STRICT authentication to all health routes (OWASP A01: IDOR Protection)
-// strictAuth: true blocks legacy X-Shopify-Customer-Id headers to prevent IDOR attacks
-// NOTE: /ingest-simple endpoint above bypasses this for Apple Shortcuts compatibility
-healthRouter.use(authMiddleware());
-
 /**
  * IN-MEMORY STORE WITH TTL-BASED CLEANUP
  * Uses cleanup-enabled Maps to prevent unbounded memory growth.
@@ -123,26 +118,10 @@ const devices = createDeviceMap<DeviceEntry>();
 const latestByUser = createHealthSnapshotMap<HealthSnapshotEntry>();
 
 /**
- * OPTIONAL helper:
- * Web creates pairingToken (you can call this from Shopify when user clicks "Connect Apple Health")
- *
- * POST /api/v1/health/pair/start
- * Body: { shopifyCustomerId: "123" }
- * Returns: { ok: true, pairingToken, expiresAt }
+ * ✅ APPLE SHORTCUT DEVICE KEY AUTHENTICATION ENDPOINTS
+ * These endpoints MUST be defined BEFORE authMiddleware to work independently
+ * They have their own authentication: pairingToken validation and deviceKey validation
  */
-healthRouter.post("/pair/start", (req: Request, res: Response) => {
-  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
-  if (!shopifyCustomerId) {
-    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
-  }
-
-  const pairingToken = randomUUID();
-  const createdAt = Date.now();
-  const expiresAt = createdAt + 15 * 60 * 1000; // 15 minutes
-  pairingTokens.set(pairingToken, { shopifyCustomerId, createdAt, expiresAt });
-
-  return res.json({ ok: true, pairingToken, expiresAt });
-});
 
 /**
  * ✅ REQUIRED (Shortcut step 1)
@@ -230,6 +209,34 @@ healthRouter.post("/ingest", (req: Request, res: Response) => {
   devices.set(deviceKey, { ...device, lastSeenAt: Date.now() });
 
   return res.json({ ok: true });
+});
+
+/**
+ * ✅ APPLY AUTHENTICATION MIDDLEWARE TO REMAINING ENDPOINTS
+ * Routes below this line require X-Shopify-Customer-Id header or JWT Bearer token
+ */
+healthRouter.use(authMiddleware());
+
+/**
+ * OPTIONAL helper:
+ * Web creates pairingToken (you can call this from Shopify when user clicks "Connect Apple Health")
+ *
+ * POST /api/v1/health/pair/start
+ * Body: { shopifyCustomerId: "123" }
+ * Returns: { ok: true, pairingToken, expiresAt }
+ */
+healthRouter.post("/pair/start", (req: Request, res: Response) => {
+  const shopifyCustomerId = String(req.body?.shopifyCustomerId || "").trim();
+  if (!shopifyCustomerId) {
+    return res.status(400).json({ ok: false, error: "Missing shopifyCustomerId" });
+  }
+
+  const pairingToken = randomUUID();
+  const createdAt = Date.now();
+  const expiresAt = createdAt + 15 * 60 * 1000; // 15 minutes
+  pairingTokens.set(pairingToken, { shopifyCustomerId, createdAt, expiresAt });
+
+  return res.json({ ok: true, pairingToken, expiresAt });
 });
 
 /**
