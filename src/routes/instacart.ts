@@ -362,4 +362,159 @@ router.get("/retailers", asyncHandler(async (req: Request, res: Response) => {
   }
 }));
 
+/**
+ * POST /instacart/day-plan
+ *
+ * Generate a single-day AI meal plan with multilingual support.
+ * Called from Shopify app proxy: /apps/instacart/day-plan
+ */
+router.post("/day-plan", asyncHandler(async (req: Request, res: Response) => {
+  const { constraints, day } = req.body;
+
+  if (!constraints || !day) {
+    return sendError(res, "Missing constraints or day", 400);
+  }
+
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+  const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+  if (!OPENAI_API_KEY) {
+    return sendError(res, "AI meal planning not configured", 503);
+  }
+
+  // Extract constraints
+  const dailyCalories = constraints.dailyCalories || 2000;
+  const proteinGrams = constraints.proteinGrams || 150;
+  const carbsGrams = constraints.carbsGrams || 150;
+  const fatsGrams = constraints.fatsGrams || 60;
+  const language = constraints.language || "en";
+
+  // Map language codes to full language names
+  const languageNames: Record<string, string> = {
+    en: "English",
+    es: "Spanish",
+    fr: "French",
+    de: "German",
+    "pt-BR": "Portuguese",
+    it: "Italian",
+    ja: "Japanese",
+    ko: "Korean",
+    "zh-CN": "Chinese (Simplified)",
+    "zh-TW": "Chinese (Traditional)",
+  };
+
+  const languageName = languageNames[language] || "English";
+
+  // Extract day info
+  const dayIndex = day.dayIndex || 1;
+  const dayLabel = day.label || `Day ${dayIndex}`;
+  const meals = day.meals || [];
+
+  // Build AI prompt with language support
+  const systemPrompt = `You are a meal planning expert. Generate meals for ONE day in ${languageName}. Return ONLY valid JSON with NO markdown code blocks.
+
+CRITICAL REQUIREMENTS:
+- ALL text (meal names, descriptions, ingredients, instructions) MUST be in ${languageName}
+- Use culturally appropriate dish names for ${languageName} speakers
+- Return ONLY the JSON structure below, no explanations
+
+{
+  "day": {
+    "dayIndex": ${dayIndex},
+    "label": "${dayLabel}",
+    "isoDate": "${day.isoDate || ""}",
+    "meals": [
+      {
+        "type": "breakfast",
+        "title": "Meal name in ${languageName}",
+        "name": "Meal name in ${languageName}",
+        "description": "Description in ${languageName}",
+        "calories": 500,
+        "protein": 30,
+        "carbs": 50,
+        "fat": 15,
+        "servings": 1,
+        "ingredients": [
+          {
+            "name": "Ingredient in ${languageName}",
+            "quantity": 1,
+            "unit": "cup"
+          }
+        ],
+        "instructions": ["Step 1 in ${languageName}", "Step 2 in ${languageName}"]
+      }
+    ]
+  },
+  "recipes": []
+}`;
+
+  const userPrompt = `Generate a healthy day plan with these targets:
+- Calories: ${dailyCalories}
+- Protein: ${proteinGrams}g
+- Carbs: ${carbsGrams}g
+- Fat: ${fatsGrams}g
+
+Include ${meals.length} meals: ${meals.map((m: any) => m.type).join(", ")}
+
+Each meal should have:
+- Target calories from meal distribution
+- 5-8 ingredients with quantities
+- 3-5 cooking steps
+
+Remember: ALL content in ${languageName}.`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 3000,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[Instacart] OpenAI error:", response.status, errorText);
+      return sendError(res, "AI generation failed", 502);
+    }
+
+    const data = await response.json();
+    let content = data.choices?.[0]?.message?.content || "";
+
+    // Clean markdown code blocks if present
+    if (content.startsWith("```")) {
+      content = content.replace(/```json?\n?/g, "").replace(/```$/g, "");
+    }
+
+    const parsed = JSON.parse(content.trim());
+
+    return sendSuccess(res, {
+      day: parsed.day,
+      recipes: parsed.recipes || [],
+    });
+  } catch (err: any) {
+    console.error("[Instacart] Day plan generation error:", err);
+
+    if (err.name === "AbortError") {
+      return sendError(res, "Request timeout", 504);
+    }
+
+    return sendServerError(res, "Failed to generate day plan");
+  }
+}));
+
 export default router;
