@@ -1,8 +1,6 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import agentConfig from '../../config/agentConfig.json';
+import axios from 'axios';
 
 const foodSearchRouter = express.Router();
 
@@ -13,65 +11,62 @@ const searchFoodSchema = z.object({
   pageSize: z.number().min(1).max(50).optional().default(10),
 });
 
-const getFoodByIdSchema = z.object({
-  id: z.string().startsWith('fd_', 'Food ID must start with fd_'),
-});
-
 const getFoodByBarcodeSchema = z.object({
-  barcode: z.string().length(13, 'Barcode must be exactly 13 digits'),
+  barcode: z.string().min(8, 'Barcode must be at least 8 digits'),
 });
-
-// Helper function to connect to OpenNutrition MCP
-async function getOpenNutritionClient(): Promise<Client> {
-  const config = agentConfig.mcpServers['opennutrition-mcp'];
-
-  const transport = new StdioClientTransport({
-    command: config.command,
-    args: config.args,
-    env: config.env,
-  });
-
-  const client = new Client(
-    {
-      name: 'heirclark-food-search',
-      version: '1.0.0',
-    },
-    { capabilities: {} }
-  );
-
-  await client.connect(transport);
-  return client;
-}
 
 /**
  * POST /api/v1/food/search
- * Search for foods by name, brand, or partial matches
+ * Search for foods by name using Open Food Facts API
  */
 foodSearchRouter.post('/search', async (req: Request, res: Response) => {
   try {
     const { query, page, pageSize } = searchFoodSchema.parse(req.body);
 
-    const client = await getOpenNutritionClient();
-
-    const result: any = await client.callTool({
-      name: 'search-food-by-name',
-      arguments: {
-        query,
+    // Call Open Food Facts API
+    const response = await axios.get('https://world.openfoodfacts.org/cgi/search.pl', {
+      params: {
+        search_terms: query,
         page,
-        pageSize,
+        page_size: pageSize,
+        json: true,
+        fields: 'code,product_name,brands,nutriments,nutriscore_grade,nova_group,image_url,serving_size',
+      },
+      headers: {
+        'User-Agent': 'HeirclarkNutrition/1.0 (contact@heirclark.com)',
       },
     });
 
-    // Parse the result
-    const foodData = JSON.parse(result.content[0].text);
+    const products = response.data.products || [];
+
+    // Transform to simplified format
+    const foods = products.map((product: any) => ({
+      id: product.code,
+      name: product.product_name,
+      brand: product.brands,
+      image: product.image_url,
+      servingSize: product.serving_size,
+      nutriScore: product.nutriscore_grade,
+      novaGroup: product.nova_group,
+      nutrients: {
+        calories: product.nutriments?.['energy-kcal_100g'] || product.nutriments?.energy_100g,
+        protein: product.nutriments?.proteins_100g,
+        carbs: product.nutriments?.carbohydrates_100g,
+        fat: product.nutriments?.fat_100g,
+        fiber: product.nutriments?.fiber_100g,
+        sugar: product.nutriments?.sugars_100g,
+        sodium: product.nutriments?.sodium_100g,
+        saturatedFat: product.nutriments?.['saturated-fat_100g'],
+      },
+    }));
 
     return res.json({
       success: true,
       query,
       page,
       pageSize,
-      totalResults: foodData.totalCount || 0,
-      foods: foodData.foods || foodData,
+      totalResults: response.data.count || 0,
+      foods,
     });
   } catch (error: any) {
     console.error('[Food Search] Error searching foods:', error);
@@ -84,31 +79,55 @@ foodSearchRouter.post('/search', async (req: Request, res: Response) => {
 
 /**
  * GET /api/v1/food/browse
- * Browse paginated list of all foods
+ * Browse popular/recent foods from Open Food Facts
  */
 foodSearchRouter.get('/browse', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
 
-    const client = await getOpenNutritionClient();
-
-    const result: any = await client.callTool({
-      name: 'get-foods',
-      arguments: {
+    // Get foods sorted by popularity (completeness score)
+    const response = await axios.get('https://world.openfoodfacts.org/cgi/search.pl', {
+      params: {
         page,
-        pageSize,
+        page_size: pageSize,
+        json: true,
+        sort_by: 'unique_scans_n',
+        fields: 'code,product_name,brands,nutriments,nutriscore_grade,nova_group,image_url,serving_size',
+      },
+      headers: {
+        'User-Agent': 'HeirclarkNutrition/1.0 (contact@heirclark.com)',
       },
     });
 
-    const foodData = JSON.parse(result.content[0].text);
+    const products = response.data.products || [];
+
+    const foods = products.map((product: any) => ({
+      id: product.code,
+      name: product.product_name,
+      brand: product.brands,
+      image: product.image_url,
+      servingSize: product.serving_size,
+      nutriScore: product.nutriscore_grade,
+      novaGroup: product.nova_group,
+      nutrients: {
+        calories: product.nutriments?.['energy-kcal_100g'] || product.nutriments?.energy_100g,
+        protein: product.nutriments?.proteins_100g,
+        carbs: product.nutriments?.carbohydrates_100g,
+        fat: product.nutriments?.fat_100g,
+        fiber: product.nutriments?.fiber_100g,
+        sugar: product.nutriments?.sugars_100g,
+        sodium: product.nutriments?.sodium_100g,
+        saturatedFat: product.nutriments?.['saturated-fat_100g'],
+      },
+    }));
 
     return res.json({
       success: true,
       page,
       pageSize,
-      totalResults: foodData.totalCount || 0,
-      foods: foodData.foods || foodData,
+      totalResults: response.data.count || 0,
+      foods,
     });
   } catch (error: any) {
     console.error('[Food Search] Error browsing foods:', error);
@@ -121,28 +140,61 @@ foodSearchRouter.get('/browse', async (req: Request, res: Response) => {
 
 /**
  * GET /api/v1/food/:id
- * Get detailed food information by ID
+ * Get detailed food information by product code
  */
 foodSearchRouter.get('/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = getFoodByIdSchema.parse({ id: req.params.id });
+    const { id } = req.params;
 
-    const client = await getOpenNutritionClient();
-
-    const result: any = await client.callTool({
-      name: 'get-food-by-id',
-      arguments: { id },
+    const response = await axios.get(`https://world.openfoodfacts.org/api/v2/product/${id}`, {
+      headers: {
+        'User-Agent': 'HeirclarkNutrition/1.0 (contact@heirclark.com)',
+      },
     });
 
-    const foodData = JSON.parse(result.content[0].text);
+    if (response.data.status !== 1 || !response.data.product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Food not found',
+      });
+    }
+
+    const product = response.data.product;
+
+    const food = {
+      id: product.code,
+      name: product.product_name,
+      brand: product.brands,
+      image: product.image_url,
+      servingSize: product.serving_size,
+      nutriScore: product.nutriscore_grade,
+      novaGroup: product.nova_group,
+      ingredients: product.ingredients_text,
+      allergens: product.allergens,
+      nutrients: {
+        calories: product.nutriments?.['energy-kcal_100g'] || product.nutriments?.energy_100g,
+        protein: product.nutriments?.proteins_100g,
+        carbs: product.nutriments?.carbohydrates_100g,
+        fat: product.nutriments?.fat_100g,
+        fiber: product.nutriments?.fiber_100g,
+        sugar: product.nutriments?.sugars_100g,
+        sodium: product.nutriments?.sodium_100g,
+        saturatedFat: product.nutriments?.['saturated-fat_100g'],
+        cholesterol: product.nutriments?.cholesterol_100g,
+        calcium: product.nutriments?.calcium_100g,
+        iron: product.nutriments?.iron_100g,
+        vitaminA: product.nutriments?.['vitamin-a_100g'],
+        vitaminC: product.nutriments?.['vitamin-c_100g'],
+      },
+    };
 
     return res.json({
       success: true,
-      food: foodData.food || foodData,
+      food,
     });
   } catch (error: any) {
     console.error('[Food Search] Error getting food by ID:', error);
-    return res.status(400).json({
+    return res.status(500).json({
       success: false,
       error: error.message || 'Failed to get food details',
     });
@@ -151,28 +203,56 @@ foodSearchRouter.get('/:id', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/food/barcode
- * Look up food by EAN-13 barcode
+ * Look up food by barcode
  */
 foodSearchRouter.post('/barcode', async (req: Request, res: Response) => {
   try {
     const { barcode } = getFoodByBarcodeSchema.parse(req.body);
 
-    const client = await getOpenNutritionClient();
-
-    const result: any = await client.callTool({
-      name: 'get-food-by-ean13',
-      arguments: { ean_13: barcode },
+    const response = await axios.get(`https://world.openfoodfacts.org/api/v2/product/${barcode}`, {
+      headers: {
+        'User-Agent': 'HeirclarkNutrition/1.0 (contact@heirclark.com)',
+      },
     });
 
-    const foodData = JSON.parse(result.content[0].text);
+    if (response.data.status !== 1 || !response.data.product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found for this barcode',
+      });
+    }
+
+    const product = response.data.product;
+
+    const food = {
+      id: product.code,
+      name: product.product_name,
+      brand: product.brands,
+      image: product.image_url,
+      servingSize: product.serving_size,
+      nutriScore: product.nutriscore_grade,
+      novaGroup: product.nova_group,
+      ingredients: product.ingredients_text,
+      allergens: product.allergens,
+      nutrients: {
+        calories: product.nutriments?.['energy-kcal_100g'] || product.nutriments?.energy_100g,
+        protein: product.nutriments?.proteins_100g,
+        carbs: product.nutriments?.carbohydrates_100g,
+        fat: product.nutriments?.fat_100g,
+        fiber: product.nutriments?.fiber_100g,
+        sugar: product.nutriments?.sugars_100g,
+        sodium: product.nutriments?.sodium_100g,
+        saturatedFat: product.nutriments?.['saturated-fat_100g'],
+      },
+    };
 
     return res.json({
       success: true,
-      food: foodData.food || foodData,
+      food,
     });
   } catch (error: any) {
     console.error('[Food Search] Error looking up barcode:', error);
-    return res.status(400).json({
+    return res.status(500).json({
       success: false,
       error: error.message || 'Failed to look up barcode',
     });

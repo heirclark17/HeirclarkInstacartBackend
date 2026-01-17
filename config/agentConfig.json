@@ -50,7 +50,7 @@
     },
     "opennutrition-mcp": {
       "command": "node",
-      "args": ["C:/Users/derri/OneDrive/Desktop/HeirclarkNutrition&Chef App/fitness-mcps/mcp-opennutrition/build/index.js"],
+      "args": ["./mcp-servers/mcp-opennutrition/build/index.js"],
       "env": {},
       "transport": "stdio",
       "timeout": 30000,
