@@ -237,55 +237,9 @@ async function migrate() {
   console.log("✅ hc_mcp_audit_log table ready");
 
   // 12. Health History (unified fitness data from multiple MCP sources)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS hc_health_history (
-      id BIGSERIAL PRIMARY KEY,
-      customer_id VARCHAR(255) NOT NULL,
-      source_type VARCHAR(50) NOT NULL CHECK (source_type IN ('fitbit', 'google-fit', 'apple-health', 'manual')),
-      recorded_date DATE NOT NULL,
-
-      steps INTEGER,
-      active_calories INTEGER,
-      resting_calories INTEGER,
-      distance_meters INTEGER,
-      floors_climbed INTEGER,
-      active_minutes INTEGER,
-
-      sleep_minutes INTEGER,
-      deep_sleep_minutes INTEGER,
-      light_sleep_minutes INTEGER,
-      rem_sleep_minutes INTEGER,
-      awake_minutes INTEGER,
-      sleep_efficiency INTEGER,
-
-      resting_heart_rate INTEGER,
-      avg_heart_rate INTEGER,
-      max_heart_rate INTEGER,
-      min_heart_rate INTEGER,
-
-      weight_kg DECIMAL(10,2),
-      body_fat_percentage DECIMAL(5,2),
-      bmi DECIMAL(5,2),
-
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-      UNIQUE (customer_id, source_type, recorded_date)
-    );
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_health_history_customer_date
-    ON hc_health_history (customer_id, recorded_date DESC);
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_health_history_source_date
-    ON hc_health_history (source_type, recorded_date DESC);
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_health_history_customer_source
-    ON hc_health_history (customer_id, source_type, recorded_date DESC);
-  `);
-  console.log("✅ hc_health_history table ready");
+  // NOTE: Table creation moved to migrations/fix-health-history.ts to fix schema issues
+  // The table had old column names, so we use a dedicated migration to drop and recreate it
+  console.log("ℹ️  hc_health_history table managed by separate migration (run 'npm run migrate:fix-health')");
 
   console.log("\n🎉 All migrations completed successfully!");
   await pool.end();
