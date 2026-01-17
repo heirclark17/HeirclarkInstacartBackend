@@ -205,6 +205,88 @@ async function migrate() {
   `);
   console.log("✅ cleanup function ready");
 
+  // 11. MCP Audit Log (for Model Context Protocol operations)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS hc_mcp_audit_log (
+      id SERIAL PRIMARY KEY,
+      customer_id VARCHAR(255) NOT NULL,
+      provider VARCHAR(50) NOT NULL,
+      operation VARCHAR(100) NOT NULL,
+      tool_name VARCHAR(100),
+      input_params JSONB,
+      output_data JSONB,
+      success BOOLEAN DEFAULT TRUE,
+      record_count INTEGER DEFAULT 0,
+      error_message TEXT,
+      duration_ms INTEGER,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_customer_provider
+    ON hc_mcp_audit_log (customer_id, provider);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_created_at
+    ON hc_mcp_audit_log (created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_provider_success
+    ON hc_mcp_audit_log (provider, success);
+  `);
+  console.log("✅ hc_mcp_audit_log table ready");
+
+  // 12. Health History (unified fitness data from multiple MCP sources)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS hc_health_history (
+      id BIGSERIAL PRIMARY KEY,
+      customer_id VARCHAR(255) NOT NULL,
+      source_type VARCHAR(50) NOT NULL CHECK (source_type IN ('fitbit', 'google-fit', 'apple-health', 'manual')),
+      recorded_date DATE NOT NULL,
+
+      steps INTEGER,
+      active_calories INTEGER,
+      resting_calories INTEGER,
+      distance_meters INTEGER,
+      floors_climbed INTEGER,
+      active_minutes INTEGER,
+
+      sleep_minutes INTEGER,
+      deep_sleep_minutes INTEGER,
+      light_sleep_minutes INTEGER,
+      rem_sleep_minutes INTEGER,
+      awake_minutes INTEGER,
+      sleep_efficiency INTEGER,
+
+      resting_heart_rate INTEGER,
+      avg_heart_rate INTEGER,
+      max_heart_rate INTEGER,
+      min_heart_rate INTEGER,
+
+      weight_kg DECIMAL(10,2),
+      body_fat_percentage DECIMAL(5,2),
+      bmi DECIMAL(5,2),
+
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+      UNIQUE (customer_id, source_type, recorded_date)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_health_history_customer_date
+    ON hc_health_history (customer_id, recorded_date DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_health_history_source_date
+    ON hc_health_history (source_type, recorded_date DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_health_history_customer_source
+    ON hc_health_history (customer_id, source_type, recorded_date DESC);
+  `);
+  console.log("✅ hc_health_history table ready");
+
   console.log("\n🎉 All migrations completed successfully!");
   await pool.end();
 }

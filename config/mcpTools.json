@@ -1,0 +1,165 @@
+{
+  "toolMappings": {
+    "fitbit": {
+      "activity": {
+        "tool": "get_activity_summary",
+        "description": "Get daily activity summary (steps, calories, distance, floors)",
+        "inputSchema": {
+          "date": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["steps", "calories", "distance", "floors", "activeMinutes"]
+      },
+      "sleep": {
+        "tool": "get_sleep_log",
+        "description": "Get sleep data for a specific date",
+        "inputSchema": {
+          "date": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["duration", "efficiency", "deepMinutes", "lightMinutes", "remMinutes"]
+      },
+      "heart_rate": {
+        "tool": "get_heart_rate_intraday",
+        "description": "Get intraday heart rate data",
+        "inputSchema": {
+          "date": "string (YYYY-MM-DD)",
+          "detailLevel": "string (1sec, 1min, 5min, 15min)"
+        },
+        "outputFields": ["restingHeartRate", "heartRateZones", "intradayData"]
+      },
+      "nutrition": {
+        "tool": "get_food_log",
+        "description": "Get food and water log for a date",
+        "inputSchema": {
+          "date": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["calories", "water", "foods"]
+      },
+      "weight": {
+        "tool": "get_weight_log",
+        "description": "Get weight and body composition data",
+        "inputSchema": {
+          "date": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["weight", "bmi", "fat"]
+      }
+    },
+    "google-fit": {
+      "activity": {
+        "tool": "get_daily_activity",
+        "description": "Get aggregated daily activity data",
+        "inputSchema": {
+          "startDate": "string (YYYY-MM-DD)",
+          "endDate": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["steps", "calories", "distance", "moveMinutes"]
+      },
+      "heart_rate": {
+        "tool": "get_heart_rate",
+        "description": "Get heart rate data points",
+        "inputSchema": {
+          "startDate": "string (YYYY-MM-DD)",
+          "endDate": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["bpm", "timestamp"]
+      },
+      "sleep": {
+        "tool": "get_sleep_sessions",
+        "description": "Get sleep session data",
+        "inputSchema": {
+          "startDate": "string (YYYY-MM-DD)",
+          "endDate": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["sleepType", "duration", "stages"]
+      },
+      "weight": {
+        "tool": "get_weight",
+        "description": "Get weight measurements",
+        "inputSchema": {
+          "startDate": "string (YYYY-MM-DD)",
+          "endDate": "string (YYYY-MM-DD)"
+        },
+        "outputFields": ["weight", "timestamp"]
+      }
+    },
+    "apple-health": {
+      "query": {
+        "tool": "query_health_data",
+        "description": "SQL query interface for Apple Health CSV data",
+        "inputSchema": {
+          "query": "string (SQL query)",
+          "csvPath": "string (path to export.csv)"
+        },
+        "outputFields": ["dynamic based on query"]
+      }
+    },
+    "nutri-mcp": {
+      "search": {
+        "tool": "search_products",
+        "description": "Search food products across USDA, Open Food Facts, Nutritionix",
+        "inputSchema": {
+          "query": "string",
+          "limit": "number (default: 10)",
+          "source": "string (optional: usda, off, nutritionix)"
+        },
+        "outputFields": ["productId", "name", "brand", "calories", "protein", "carbs", "fat", "nutrients"]
+      },
+      "barcode": {
+        "tool": "search_by_barcode",
+        "description": "Look up product by barcode",
+        "inputSchema": {
+          "barcode": "string"
+        },
+        "outputFields": ["productId", "name", "brand", "nutrients", "allergens"]
+      },
+      "allergens": {
+        "tool": "check_allergens",
+        "description": "Check if product contains allergens",
+        "inputSchema": {
+          "productId": "string",
+          "allergens": "array of strings"
+        },
+        "outputFields": ["safe", "warnings", "allergenList"]
+      },
+      "nutrition_analysis": {
+        "tool": "analyze_nutrition",
+        "description": "Analyze nutrition and get daily value percentages",
+        "inputSchema": {
+          "productId": "string",
+          "servingSize": "number"
+        },
+        "outputFields": ["calories", "macros", "dailyValues", "nutriScore", "novaGroup"]
+      }
+    },
+    "openweathermap": {
+      "current": {
+        "tool": "get_current_weather",
+        "description": "Get current weather conditions",
+        "inputSchema": {
+          "lat": "number",
+          "lon": "number",
+          "units": "string (metric, imperial, standard)"
+        },
+        "outputFields": ["temp", "feelsLike", "humidity", "condition", "icon"]
+      },
+      "forecast": {
+        "tool": "get_forecast",
+        "description": "Get 5-day forecast (3-hour intervals)",
+        "inputSchema": {
+          "lat": "number",
+          "lon": "number",
+          "units": "string (metric, imperial, standard)"
+        },
+        "outputFields": ["forecastList", "temp", "condition", "timestamp"]
+      },
+      "air_quality": {
+        "tool": "get_air_quality",
+        "description": "Get air quality index and pollutants",
+        "inputSchema": {
+          "lat": "number",
+          "lon": "number"
+        },
+        "outputFields": ["aqi", "co", "no2", "o3", "pm2_5", "pm10"]
+      }
+    }
+  }
+}

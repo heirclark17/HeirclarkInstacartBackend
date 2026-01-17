@@ -1,0 +1,100 @@
+{
+  "version": "1.0.0",
+  "mcpServers": {
+    "fitbit": {
+      "command": "node",
+      "args": ["C:/Users/derri/OneDrive/Desktop/HeirclarkNutrition&Chef App/fitness-mcps/mcp-fitbit/build/index.js"],
+      "env": {
+        "FITBIT_CLIENT_ID": "${FITBIT_CLIENT_ID}",
+        "FITBIT_CLIENT_SECRET": "${FITBIT_CLIENT_SECRET}"
+      },
+      "transport": "stdio",
+      "timeout": 30000,
+      "retryAttempts": 3,
+      "dataTypes": ["steps", "calories", "heart_rate", "sleep", "nutrition", "weight"],
+      "rateLimit": {
+        "requestsPerHour": 150,
+        "burstSize": 10
+      }
+    },
+    "google-fit": {
+      "command": "node",
+      "args": ["C:/Users/derri/OneDrive/Desktop/HeirclarkNutrition&Chef App/fitness-mcps/google-fit-mcp/dist/index.js"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "${GOOGLE_CLIENT_ID}",
+        "GOOGLE_CLIENT_SECRET": "${GOOGLE_CLIENT_SECRET}"
+      },
+      "transport": "stdio",
+      "timeout": 30000,
+      "retryAttempts": 3,
+      "dataTypes": ["steps", "calories", "heart_rate", "sleep", "weight", "activities"],
+      "rateLimit": {
+        "requestsPerHour": 1000,
+        "burstSize": 20
+      }
+    },
+    "apple-health": {
+      "command": "node",
+      "args": ["C:/Users/derri/OneDrive/Desktop/HeirclarkNutrition&Chef App/fitness-mcps/apple-health-mcp/dist/server.js"],
+      "env": {
+        "APPLE_HEALTH_CSV_PATH": "${APPLE_HEALTH_CSV_PATH}"
+      },
+      "transport": "stdio",
+      "timeout": 60000,
+      "retryAttempts": 2,
+      "dataTypes": ["steps", "calories", "heart_rate", "sleep", "weight", "nutrition", "workouts"],
+      "rateLimit": {
+        "requestsPerHour": 1000,
+        "burstSize": 50
+      }
+    },
+    "nutri-mcp": {
+      "command": "npx",
+      "args": ["nutri-mcp"],
+      "env": {
+        "USDA_API_KEY": "${USDA_API_KEY}"
+      },
+      "transport": "stdio",
+      "timeout": 30000,
+      "retryAttempts": 3,
+      "dataTypes": ["nutrition", "allergens", "price", "barcode"],
+      "rateLimit": {
+        "requestsPerHour": 10000,
+        "burstSize": 100
+      }
+    },
+    "openweathermap": {
+      "command": "npx",
+      "args": ["mcp-openweathermap"],
+      "env": {
+        "OPENWEATHERMAP_API_KEY": "${OPENWEATHERMAP_API_KEY}"
+      },
+      "transport": "stdio",
+      "timeout": 10000,
+      "retryAttempts": 2,
+      "dataTypes": ["current_weather", "forecast", "air_quality"],
+      "rateLimit": {
+        "requestsPerHour": 60,
+        "burstSize": 10
+      }
+    }
+  },
+  "orchestration": {
+    "defaultProvider": "fitbit",
+    "syncSchedule": {
+      "enabled": true,
+      "interval": "0 */6 * * *"
+    },
+    "priority": {
+      "steps": ["apple-health", "fitbit", "google-fit"],
+      "calories": ["fitbit", "apple-health", "google-fit"],
+      "heart_rate": ["fitbit", "google-fit", "apple-health"],
+      "sleep": ["fitbit", "apple-health", "google-fit"],
+      "weight": ["apple-health", "fitbit", "google-fit"]
+    },
+    "deduplication": {
+      "enabled": true,
+      "timeToleranceSeconds": 300
+    }
+  }
+}

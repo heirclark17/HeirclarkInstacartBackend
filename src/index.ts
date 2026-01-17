@@ -89,6 +89,9 @@ import { wearablesRouter } from "./routes/wearables";
 // Health data router (synced wearable data)
 import { healthDataRouter } from "./routes/healthData";
 
+// MCP sync router (Model Context Protocol integration for fitness MCPs)
+import mcpSyncRouter from "./routes/mcpSync";
+
 // New H1/H2/H3 Product Improvement Routes
 import { createNutritionFoodsRouter } from "./routes/nutritionFoods";
 import { createProgramsRouter } from "./routes/programs";
@@ -335,6 +338,9 @@ app.use("/api/v1/wearables", wearablesRouter);
 
 // Health data (synced wearable data - activity, sleep, workouts, etc.)
 app.use("/api/v1/health-data", healthDataRouter);
+
+// MCP sync routes (fitness data synchronization via Model Context Protocol)
+app.use("/api/v1/mcp", mcpSyncRouter);
 
 // ======================================================================
 //                   NEW PRODUCT IMPROVEMENT ROUTES (H1/H2/H3)
