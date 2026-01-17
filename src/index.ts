@@ -95,6 +95,9 @@ import mcpSyncRouter from "./routes/mcpSync";
 // Food search router (OpenNutrition MCP integration for 300K+ food database)
 import foodSearchRouter from "./routes/foodSearch";
 
+// Weather router (OpenWeatherMap API integration)
+import weatherRouter from "./routes/weather";
+
 // New H1/H2/H3 Product Improvement Routes
 import { createNutritionFoodsRouter } from "./routes/nutritionFoods";
 import { createProgramsRouter } from "./routes/programs";
@@ -347,6 +350,9 @@ app.use("/api/v1/mcp", mcpSyncRouter);
 
 // Food search routes (OpenNutrition MCP - 300K+ food database with nutrition facts)
 app.use("/api/v1/food", foodSearchRouter);
+
+// Weather routes (OpenWeatherMap API - current weather, forecast, air quality)
+app.use("/api/v1/weather", weatherRouter);
 
 // ======================================================================
 //                   NEW PRODUCT IMPROVEMENT ROUTES (H1/H2/H3)
