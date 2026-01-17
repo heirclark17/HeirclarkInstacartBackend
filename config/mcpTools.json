@@ -92,42 +92,41 @@
         "outputFields": ["dynamic based on query"]
       }
     },
-    "nutri-mcp": {
+    "opennutrition-mcp": {
       "search": {
-        "tool": "search_products",
-        "description": "Search food products across USDA, Open Food Facts, Nutritionix",
+        "tool": "search-food-by-name",
+        "description": "Search foods by name, brand, or partial matches from 300K+ food database",
         "inputSchema": {
-          "query": "string",
-          "limit": "number (default: 10)",
-          "source": "string (optional: usda, off, nutritionix)"
+          "query": "string (min 1 char)",
+          "page": "number (default: 1, min: 1)",
+          "pageSize": "number (default: 5)"
         },
-        "outputFields": ["productId", "name", "brand", "calories", "protein", "carbs", "fat", "nutrients"]
+        "outputFields": ["id", "name", "brand", "calories", "protein", "carbs", "fat", "nutrients"]
+      },
+      "browse": {
+        "tool": "get-foods",
+        "description": "Browse paginated list of all foods in database",
+        "inputSchema": {
+          "page": "number (default: 1, min: 1)",
+          "pageSize": "number (default: 5)"
+        },
+        "outputFields": ["id", "name", "brand", "nutrients"]
+      },
+      "details": {
+        "tool": "get-food-by-id",
+        "description": "Get detailed nutritional information by food ID (format: fd_xxxxx)",
+        "inputSchema": {
+          "id": "string (must start with 'fd_')"
+        },
+        "outputFields": ["id", "name", "brand", "nutrients", "ingredients", "allergens", "servingSize"]
       },
       "barcode": {
-        "tool": "search_by_barcode",
-        "description": "Look up product by barcode",
+        "tool": "get-food-by-ean13",
+        "description": "Look up food by EAN-13 barcode (13 digits)",
         "inputSchema": {
-          "barcode": "string"
+          "ean_13": "string (exactly 13 characters)"
         },
-        "outputFields": ["productId", "name", "brand", "nutrients", "allergens"]
-      },
-      "allergens": {
-        "tool": "check_allergens",
-        "description": "Check if product contains allergens",
-        "inputSchema": {
-          "productId": "string",
-          "allergens": "array of strings"
-        },
-        "outputFields": ["safe", "warnings", "allergenList"]
-      },
-      "nutrition_analysis": {
-        "tool": "analyze_nutrition",
-        "description": "Analyze nutrition and get daily value percentages",
-        "inputSchema": {
-          "productId": "string",
-          "servingSize": "number"
-        },
-        "outputFields": ["calories", "macros", "dailyValues", "nutriScore", "novaGroup"]
+        "outputFields": ["id", "name", "brand", "barcode", "nutrients", "allergens"]
       }
     },
     "openweathermap": {

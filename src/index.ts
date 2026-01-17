@@ -92,6 +92,9 @@ import { healthDataRouter } from "./routes/healthData";
 // MCP sync router (Model Context Protocol integration for fitness MCPs)
 import mcpSyncRouter from "./routes/mcpSync";
 
+// Food search router (OpenNutrition MCP integration for 300K+ food database)
+import foodSearchRouter from "./routes/foodSearch";
+
 // New H1/H2/H3 Product Improvement Routes
 import { createNutritionFoodsRouter } from "./routes/nutritionFoods";
 import { createProgramsRouter } from "./routes/programs";
@@ -341,6 +344,9 @@ app.use("/api/v1/health-data", healthDataRouter);
 
 // MCP sync routes (fitness data synchronization via Model Context Protocol)
 app.use("/api/v1/mcp", mcpSyncRouter);
+
+// Food search routes (OpenNutrition MCP - 300K+ food database with nutrition facts)
+app.use("/api/v1/food", foodSearchRouter);
 
 // ======================================================================
 //                   NEW PRODUCT IMPROVEMENT ROUTES (H1/H2/H3)

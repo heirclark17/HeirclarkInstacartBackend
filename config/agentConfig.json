@@ -48,16 +48,14 @@
         "burstSize": 50
       }
     },
-    "nutri-mcp": {
-      "command": "npx",
-      "args": ["nutri-mcp"],
-      "env": {
-        "USDA_API_KEY": "${USDA_API_KEY}"
-      },
+    "opennutrition-mcp": {
+      "command": "node",
+      "args": ["C:/Users/derri/OneDrive/Desktop/HeirclarkNutrition&Chef App/fitness-mcps/mcp-opennutrition/build/index.js"],
+      "env": {},
       "transport": "stdio",
       "timeout": 30000,
       "retryAttempts": 3,
-      "dataTypes": ["nutrition", "allergens", "price", "barcode"],
+      "dataTypes": ["nutrition", "allergens", "barcode"],
       "rateLimit": {
         "requestsPerHour": 10000,
         "burstSize": 100
