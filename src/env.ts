@@ -9,6 +9,7 @@ type EnvShape = {
   TOKEN_CACHE_SECONDS?: string | number;
   PORT?: string | number;
   ALLOWED_ORIGINS?: string[];
+  FIGMA_API_KEY?: string;
 };
 
 const ENV: EnvShape = {
@@ -22,6 +23,7 @@ const ENV: EnvShape = {
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
     : undefined,
+  FIGMA_API_KEY: process.env.FIGMA_API_KEY,
 };
 
 export { ENV };

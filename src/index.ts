@@ -98,6 +98,9 @@ import foodSearchRouter from "./routes/foodSearch";
 // Weather router (OpenWeatherMap API integration)
 import weatherRouter from "./routes/weather";
 
+// Figma integration router (design file access)
+import { figmaRouter } from "./routes/figma";
+
 // New H1/H2/H3 Product Improvement Routes
 import { createNutritionFoodsRouter } from "./routes/nutritionFoods";
 import { createProgramsRouter } from "./routes/programs";
@@ -144,6 +147,7 @@ function validateStartupEnvironment(): void {
     { key: "ANTHROPIC_API_KEY", fallback: "Script generation will not work" },
     { key: "ENCRYPTION_KEY", fallback: "Data encryption disabled (generate with: openssl rand -base64 32)" },
     { key: "FIRECRAWL_API_KEY", fallback: "Web scraping will not work" },
+    { key: "FIGMA_API_KEY", fallback: "Figma design integration will not work" },
   ];
 
   // Validate encryption key if present
@@ -353,6 +357,9 @@ app.use("/api/v1/food", foodSearchRouter);
 
 // Weather routes (OpenWeatherMap API - current weather, forecast, air quality)
 app.use("/api/v1/weather", weatherRouter);
+
+// Figma integration routes (design file access, components, styles, exports)
+app.use("/api/v1/figma", figmaRouter);
 
 // ======================================================================
 //                   NEW PRODUCT IMPROVEMENT ROUTES (H1/H2/H3)
