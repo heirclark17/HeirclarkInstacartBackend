@@ -501,37 +501,37 @@ healthBridgeRouter.get("/history", async (req: Request, res: Response) => {
 
   try {
     let query = `
-      SELECT date, steps, active_calories, resting_energy, distance_meters,
-             latest_heart_rate_bpm, workouts_today, source, updated_at
+      SELECT recorded_date, steps, active_calories, resting_calories, distance_meters,
+             resting_heart_rate, created_at, updated_at, source_type
       FROM hc_health_history
-      WHERE shopify_customer_id = $1
+      WHERE customer_id = $1
     `;
     const params: any[] = [shopifyCustomerId];
 
     if (startDate) {
       params.push(startDate);
-      query += ` AND date >= $${params.length}`;
+      query += ` AND recorded_date >= $${params.length}`;
     }
     if (endDate) {
       params.push(endDate);
-      query += ` AND date <= $${params.length}`;
+      query += ` AND recorded_date <= $${params.length}`;
     }
 
-    query += ` ORDER BY date DESC LIMIT 90`; // Max 90 days
+    query += ` ORDER BY recorded_date DESC LIMIT 90`; // Max 90 days
 
     const result = await pool.query(query, params);
 
     const history: Record<string, any> = {};
     for (const row of result.rows) {
-      const dateStr = row.date.toISOString().split('T')[0];
+      const dateStr = row.recorded_date.toISOString().split('T')[0];
       history[dateStr] = {
         steps: row.steps || 0,
         activeCalories: row.active_calories || 0,
-        restingEnergy: row.resting_energy || 0,
+        restingEnergy: row.resting_calories || 0,
         distanceMeters: row.distance_meters || 0,
-        latestHeartRateBpm: row.latest_heart_rate_bpm,
-        workoutsToday: row.workouts_today || 0,
-        source: row.source,
+        latestHeartRateBpm: row.resting_heart_rate,
+        workoutsToday: 0,
+        source: row.source_type,
         updatedAt: row.updated_at,
       };
     }
