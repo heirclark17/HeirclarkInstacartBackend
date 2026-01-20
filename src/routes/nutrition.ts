@@ -1269,8 +1269,9 @@ nutritionRouter.post("/ai/transcribe-voice", upload.single('audio'), async (req:
     const ext = mimeToExt[file.mimetype || ''] || 'm4a';
     const filename = `audio.${ext}`;
 
-    // Create File object for OpenAI API
-    const audioFile = new File([file.buffer], filename, { type: file.mimetype || 'audio/m4a' });
+    // Create file-like object for OpenAI API using toFile helper
+    const { toFile } = await import('openai/uploads');
+    const audioFile = await toFile(file.buffer, filename, { type: file.mimetype || 'audio/m4a' });
 
     // Transcribe using Whisper
     const transcription = await openai.audio.transcriptions.create({
