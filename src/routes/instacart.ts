@@ -277,6 +277,28 @@ router.post("/products-link", asyncHandler(async (req: Request, res: Response) =
   try {
     // Instacart IDP API - Create products link
     // See: https://docs.instacart.com/developer_platform_api/
+    const lineItems = items.map((item: any) => ({
+      name: item.name || item.query,
+      quantity: item.quantity || 1,
+      unit: item.unit || "each",
+    }));
+
+    console.log("[Instacart] Line items:", JSON.stringify(lineItems, null, 2));
+
+    // Build request body - only include landing_page_configuration if landingUrl is provided
+    const requestBody: any = {
+      title: title || "Shopping List",
+      line_items: lineItems,
+    };
+
+    if (landingUrl) {
+      requestBody.landing_page_configuration = {
+        partner_linkback_url: landingUrl,
+      };
+    }
+
+    console.log("[Instacart] Request body:", JSON.stringify(requestBody, null, 2));
+
     const apiRes = await fetch(`${INSTACART_BASE_URL}/idp/v1/products/products_link`, {
       method: "POST",
       headers: {
@@ -284,20 +306,11 @@ router.post("/products-link", asyncHandler(async (req: Request, res: Response) =
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
-      body: JSON.stringify({
-        title: title || "Shopping List",
-        line_items: items.map((item: any) => ({
-          name: item.name || item.query,
-          quantity: item.quantity || 1,
-          unit: item.unit || "each",
-        })),
-        landing_page_configuration: {
-          partner_linkback_url: landingUrl,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await apiRes.json();
+    console.log("[Instacart] API response:", JSON.stringify(data, null, 2));
 
     if (!apiRes.ok) {
       console.error("[Instacart] Products link error:", apiRes.status, data);
