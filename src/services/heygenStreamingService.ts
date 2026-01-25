@@ -281,6 +281,30 @@ interface LiveAvatarTokenResponse {
   session_token: string;
 }
 
+/**
+ * LiveAvatar session start response
+ * Contains LiveKit room details for WebRTC connection
+ */
+interface LiveAvatarSessionResponse {
+  // New LiveAvatar format
+  room_url?: string;
+  room_token?: string;
+  session_id?: string;
+  // Legacy HeyGen format (nested in data)
+  code?: number;
+  message?: string;
+  data?: {
+    session_id?: string;
+    livekit_url?: string;
+    livekit_client_token?: string;
+    livekit_agent_token?: string | null;
+    room_name?: string;
+  };
+  // Direct fields (some responses)
+  livekit_url?: string;
+  livekit_client_token?: string;
+}
+
 // Cached context ID to avoid creating new contexts on every request
 let cachedContextId: string | null = null;
 
@@ -306,6 +330,20 @@ async function getOrCreateContext(): Promise<string> {
     'HEYGEN_CONTEXT_ID is required. ' +
     'Create a context at https://www.liveavatar.com, then set the context_id as HEYGEN_CONTEXT_ID in Railway.'
   );
+}
+
+/**
+ * Full streaming session details returned to frontend
+ */
+export interface StreamingSessionDetails {
+  sessionId: string;
+  accessToken: string;
+  url: string;
+  roomName?: string;
+  sessionDurationLimit?: number;
+  isPaid?: boolean;
+  avatarId?: string;
+  voiceId?: string;
 }
 
 /**
@@ -382,6 +420,121 @@ export async function createSessionToken(): Promise<string> {
     } else {
       console.error('[liveavatar] Error:', error);
     }
+    throw error;
+  }
+}
+
+/**
+ * Start a streaming session using LiveAvatar API
+ * This creates a token AND starts the session, returning full LiveKit room details
+ *
+ * Flow:
+ * 1. POST /sessions/token → get session_token
+ * 2. POST /sessions/start with Bearer session_token → get room URL + access token
+ *
+ * @returns Full session details including LiveKit room URL and access token
+ */
+export async function startStreamingSession(): Promise<StreamingSessionDetails> {
+  console.log('[liveavatar] Starting streaming session...');
+
+  const avatarId = process.env.HEYGEN_AVATAR_ID;
+  const voiceId = process.env.HEYGEN_VOICE_ID;
+
+  try {
+    // Step 1: Get session token
+    const sessionToken = await createSessionToken();
+    console.log('[liveavatar] Got session token, starting session...');
+
+    // Step 2: Start session with the token
+    const response = await axios.post<LiveAvatarSessionResponse>(
+      `${LIVEAVATAR_API_BASE}/sessions/start`,
+      {}, // Empty body for start
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`,
+        },
+        timeout: DEFAULT_TIMEOUT,
+      }
+    );
+
+    const sessionData = response.data;
+    console.log('[liveavatar] Session start response:', JSON.stringify(sessionData));
+
+    // Handle both LiveAvatar and HeyGen response formats
+    // LiveAvatar: { room_url, room_token, session_id }
+    // HeyGen: { code: 1000, data: { livekit_url, livekit_client_token, session_id } }
+
+    // Check for success (HeyGen uses code: 1000)
+    const isHeyGenFormat = sessionData.code !== undefined;
+    const isSuccess = !isHeyGenFormat || sessionData.code === 1000;
+
+    if (!isSuccess) {
+      console.error('[liveavatar] Session start failed:', sessionData);
+      throw new Error(sessionData.message || 'Session start failed');
+    }
+
+    // Extract room URL from multiple possible locations
+    const roomUrl =
+      sessionData.room_url ||
+      sessionData.livekit_url ||
+      sessionData.data?.livekit_url ||
+      sessionData.data?.room_name; // Fallback to room_name if url missing
+
+    // Extract access token from multiple possible locations
+    const accessToken =
+      sessionData.room_token ||
+      sessionData.livekit_client_token ||
+      sessionData.data?.livekit_client_token;
+
+    // Extract session ID
+    const sessionId =
+      sessionData.session_id ||
+      sessionData.data?.session_id ||
+      sessionToken; // Use token as fallback ID
+
+    // Extract room name if available
+    const roomName = sessionData.data?.room_name;
+
+    if (!roomUrl) {
+      console.error('[liveavatar] Missing room URL in response:', JSON.stringify(sessionData));
+      throw new Error('LiveAvatar session started but no room URL returned');
+    }
+
+    if (!accessToken) {
+      console.error('[liveavatar] Missing access token in response:', JSON.stringify(sessionData));
+      throw new Error('LiveAvatar session started but no access token returned');
+    }
+
+    console.log('[liveavatar] Session started successfully:', {
+      sessionId,
+      roomUrl: roomUrl.substring(0, 30) + '...',
+      hasAccessToken: !!accessToken,
+      roomName,
+    });
+
+    return {
+      sessionId,
+      accessToken,
+      url: roomUrl,
+      roomName,
+      avatarId: avatarId || undefined,
+      voiceId: voiceId || undefined,
+    };
+  } catch (error) {
+    if (error instanceof AxiosError) {
+      const apiErrorData = error.response?.data;
+      console.error('[liveavatar] Session start API error:', {
+        status: error.response?.status,
+        data: JSON.stringify(apiErrorData),
+        message: error.message,
+      });
+      const apiErrorMsg = typeof apiErrorData === 'object'
+        ? JSON.stringify(apiErrorData)
+        : String(apiErrorData);
+      throw new Error(`LiveAvatar session start failed (${error.response?.status}): ${apiErrorMsg}`);
+    }
+    console.error('[liveavatar] Session start error:', error);
     throw error;
   }
 }

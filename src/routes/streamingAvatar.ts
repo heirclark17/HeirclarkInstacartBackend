@@ -18,6 +18,7 @@ import {
   listStreamingAvatars,
   createSessionToken,
   createSession,
+  startStreamingSession,
   isConfigured,
   getConfigStatus,
   sanitizeAvatarText,
@@ -25,6 +26,7 @@ import {
   generateMealPlanCoachingScript,
   StreamingAvatar,
   NewSessionRequest,
+  StreamingSessionDetails,
 } from '../services/heygenStreamingService';
 import { videoRateLimitMiddleware } from '../middleware/rateLimiter';
 
@@ -301,8 +303,14 @@ streamingAvatarRouter.post('/speak', avatarRateLimit, async (req: Request, res: 
 
 /**
  * POST /api/v1/avatar/coach/goals
- * Combined endpoint: creates token + generates goal coaching script
- * Convenience endpoint for goal coach button
+ * Combined endpoint: starts full streaming session + generates goal coaching script
+ * Returns complete session details so frontend can connect directly to LiveKit
+ *
+ * Flow:
+ * 1. Generate script using AI
+ * 2. Create session token via LiveAvatar API
+ * 3. Start session to get LiveKit room details
+ * 4. Return script + full session details to frontend
  */
 streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request, res: Response) => {
   const { userId: rawUserId, goalData, userInputs } = req.body;
@@ -329,19 +337,35 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
   }
 
   try {
-    // Generate token and script in parallel
-    const [token, script] = await Promise.all([
-      createSessionToken(),
+    // Generate script and start session in parallel
+    const [script, session] = await Promise.all([
       generateGoalCoachingScript(goalData || {}, userInputs),
+      startStreamingSession(),
     ]);
 
+    console.log(`[streaming-avatar] Goal coach session started:`, {
+      sessionId: session.sessionId,
+      hasUrl: !!session.url,
+      hasToken: !!session.accessToken,
+    });
+
+    // Return full session details so frontend can connect directly
     return res.json({
       ok: true,
       streamingAvailable: true,
-      token,
+      token: session.sessionId, // Keep token field for backwards compatibility
       script,
-      defaultAvatarId: process.env.HEYGEN_AVATAR_ID || null,
-      defaultVoiceId: process.env.HEYGEN_VOICE_ID || null,
+      defaultAvatarId: session.avatarId || process.env.HEYGEN_AVATAR_ID || null,
+      defaultVoiceId: session.voiceId || process.env.HEYGEN_VOICE_ID || null,
+      // Full session details - frontend can use these directly
+      session: {
+        sessionId: session.sessionId,
+        accessToken: session.accessToken,
+        url: session.url,
+        roomName: session.roomName,
+        avatarId: session.avatarId,
+        voiceId: session.voiceId,
+      },
     });
   } catch (error: unknown) {
     console.error('[streaming-avatar] Goal coach error:', error);
@@ -356,7 +380,7 @@ streamingAvatarRouter.post('/coach/goals', avatarRateLimit, async (req: Request,
         script,
         message: 'Streaming temporarily unavailable. Text coaching provided.',
         _debug: {
-          tokenError: errorMessage,
+          sessionError: errorMessage,
           timestamp: new Date().toISOString(),
         },
       });
@@ -463,8 +487,8 @@ streamingAvatarRouter.get('/liveavatar/avatars', async (_req: Request, res: Resp
 
 /**
  * POST /api/v1/avatar/coach/mealplan
- * Combined endpoint: creates token + generates meal plan coaching script
- * Convenience endpoint for meal plan coach button
+ * Combined endpoint: starts full streaming session + generates meal plan coaching script
+ * Returns complete session details so frontend can connect directly to LiveKit
  */
 streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Request, res: Response) => {
   const { userId: rawUserId, plan, targets, userInputs } = req.body;
@@ -491,22 +515,39 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
   }
 
   try {
-    // Generate token and script in parallel
-    const [token, script] = await Promise.all([
-      createSessionToken(),
+    // Generate script and start session in parallel
+    const [script, session] = await Promise.all([
       generateMealPlanCoachingScript(plan || {}, targets, userInputs),
+      startStreamingSession(),
     ]);
 
+    console.log(`[streaming-avatar] Meal plan coach session started:`, {
+      sessionId: session.sessionId,
+      hasUrl: !!session.url,
+      hasToken: !!session.accessToken,
+    });
+
+    // Return full session details so frontend can connect directly
     return res.json({
       ok: true,
       streamingAvailable: true,
-      token,
+      token: session.sessionId, // Keep token field for backwards compatibility
       script,
-      defaultAvatarId: process.env.HEYGEN_AVATAR_ID || null,
-      defaultVoiceId: process.env.HEYGEN_VOICE_ID || null,
+      defaultAvatarId: session.avatarId || process.env.HEYGEN_AVATAR_ID || null,
+      defaultVoiceId: session.voiceId || process.env.HEYGEN_VOICE_ID || null,
+      // Full session details - frontend can use these directly
+      session: {
+        sessionId: session.sessionId,
+        accessToken: session.accessToken,
+        url: session.url,
+        roomName: session.roomName,
+        avatarId: session.avatarId,
+        voiceId: session.voiceId,
+      },
     });
   } catch (error: unknown) {
     console.error('[streaming-avatar] Meal plan coach error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
     // Fallback: Return script only
     try {
@@ -516,11 +557,15 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
         streamingAvailable: false,
         script,
         message: 'Streaming temporarily unavailable. Text coaching provided.',
+        _debug: {
+          sessionError: errorMessage,
+          timestamp: new Date().toISOString(),
+        },
       });
     } catch {
       return res.status(500).json({
         ok: false,
-        error: error instanceof Error ? error.message : 'Failed to generate coaching',
+        error: errorMessage,
       });
     }
   }
