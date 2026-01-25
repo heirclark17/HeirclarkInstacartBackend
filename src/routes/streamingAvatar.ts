@@ -486,20 +486,55 @@ streamingAvatarRouter.get('/liveavatar/avatars', async (_req: Request, res: Resp
 });
 
 /**
- * POST /api/v1/avatar/coach/mealplan
+ * POST /api/v1/avatar/coach/mealplan (and /coach/meal-plan for compatibility)
  * Combined endpoint: starts full streaming session + generates meal plan coaching script
  * Returns complete session details so frontend can connect directly to LiveKit
  */
-streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Request, res: Response) => {
-  const { userId: rawUserId, plan, targets, userInputs } = req.body;
+const mealPlanCoachHandler = async (req: Request, res: Response) => {
+  const {
+    userId: rawUserId,
+    // Support both parameter naming conventions
+    plan,
+    targets,
+    userInputs,
+    weeklyPlan,
+    selectedDayIndex,
+    userGoals,
+    preferences,
+  } = req.body;
+
   const userId = sanitizeUserId(rawUserId);
 
-  console.log(`[streaming-avatar] Meal plan coach request for user ${userId}`);
+  // Normalize parameters - support both old and new naming conventions
+  // Frontend sends weeklyPlan as array of days, backend function expects { days: [...] }
+  const normalizedPlan = weeklyPlan
+    ? { days: weeklyPlan }
+    : plan || {};
+
+  // Frontend sends userGoals with dailyCalories etc, backend expects calories etc
+  const normalizedTargets = userGoals
+    ? {
+        calories: userGoals.dailyCalories,
+        protein: userGoals.dailyProtein,
+        carbs: userGoals.dailyCarbs,
+        fat: userGoals.dailyFat,
+      }
+    : targets || {};
+
+  const normalizedUserInputs = userInputs || {
+    selectedDayIndex: selectedDayIndex ?? 0,
+    preferences: preferences || {},
+  };
+
+  console.log(`[streaming-avatar] Meal plan coach request for user ${userId}`, {
+    hasPlan: !!normalizedPlan,
+    dayIndex: normalizedUserInputs.selectedDayIndex,
+  });
 
   if (!isConfigured()) {
     // Fallback: Return script only without streaming
     try {
-      const script = await generateMealPlanCoachingScript(plan || {}, targets, userInputs);
+      const script = await generateMealPlanCoachingScript(normalizedPlan, normalizedTargets, normalizedUserInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -517,7 +552,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
   try {
     // Generate script and start session in parallel
     const [script, session] = await Promise.all([
-      generateMealPlanCoachingScript(plan || {}, targets, userInputs),
+      generateMealPlanCoachingScript(normalizedPlan, normalizedTargets, normalizedUserInputs),
       startStreamingSession(),
     ]);
 
@@ -551,7 +586,7 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
 
     // Fallback: Return script only
     try {
-      const script = await generateMealPlanCoachingScript(plan || {}, targets, userInputs);
+      const script = await generateMealPlanCoachingScript(normalizedPlan, normalizedTargets, normalizedUserInputs);
       return res.json({
         ok: true,
         streamingAvailable: false,
@@ -569,4 +604,8 @@ streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, async (req: Reque
       });
     }
   }
-});
+};
+
+// Register both route variants for compatibility
+streamingAvatarRouter.post('/coach/mealplan', avatarRateLimit, mealPlanCoachHandler);
+streamingAvatarRouter.post('/coach/meal-plan', avatarRateLimit, mealPlanCoachHandler);
