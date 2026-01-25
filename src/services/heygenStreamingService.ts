@@ -667,7 +667,12 @@ export async function generateGoalCoachingScript(goalData: {
   currentWeight?: number;
   targetWeight?: number;
   totalWeeks?: number;
-}, userInputs?: { name?: string }): Promise<string> {
+}, userInputs?: {
+  name?: string;
+  primaryGoal?: string;
+  workoutsPerWeek?: number;
+  activityLevel?: string;
+}): Promise<string> {
   const {
     calories = 2000,
     protein = 150,
@@ -686,51 +691,97 @@ export async function generateGoalCoachingScript(goalData: {
   } = goalData || {};
 
   const userName = userInputs?.name || null;
+  const primaryGoal = userInputs?.primaryGoal || goalType || 'maintain';
+  const workoutsPerWeek = userInputs?.workoutsPerWeek || 3;
+  const activityLevel = userInputs?.activityLevel || 'moderate';
 
-  const systemPrompt = `You are a warm, encouraging AI nutrition coach named Chef Clark for the Heirclark nutrition app. You're about to speak to a user via video avatar, so write conversational spoken text (not written text).
+  // Determine workout program based on goal
+  const getWorkoutProgram = () => {
+    switch (primaryGoal) {
+      case 'lose_weight':
+        return {
+          name: 'Fat Burning HIIT program',
+          description: 'combining high-intensity cardio with strength training to maximize calorie burn while preserving muscle mass',
+          focus: 'fat loss and metabolic conditioning',
+        };
+      case 'build_muscle':
+        return {
+          name: 'Progressive Overload Strength program',
+          description: 'focusing on compound movements and progressive resistance for muscle hypertrophy',
+          focus: 'building lean muscle and increasing strength',
+        };
+      case 'maintain':
+        return {
+          name: 'Balanced Fitness program',
+          description: 'combining strength training, cardio, and mobility work to sustain your current fitness',
+          focus: 'maintaining your physique and overall fitness',
+        };
+      default:
+        return {
+          name: 'Health & Wellness program',
+          description: 'emphasizing cardiovascular health, functional strength, and movement quality',
+          focus: 'long-term health and vitality',
+        };
+    }
+  };
+
+  const workoutProgram = getWorkoutProgram();
+
+  const systemPrompt = `You are a warm, encouraging AI nutrition and fitness coach named Chef Clark for the Heirclark health app. You're about to speak to a user via video avatar, so write conversational spoken text (not written text).
 
 VOICE STYLE:
 - Warm, friendly, and confident like a personal trainer who genuinely cares
-- Use natural speech patterns with occasional pauses (use commas and periods naturally)
+- Use natural speech patterns - the script should flow smoothly without awkward pauses
 - Vary sentence length - mix short punchy statements with longer explanations
 - Be encouraging without being cheesy or over-the-top
-- Sound like a real person, not a robot reading a script
+- Sound like a real person having a genuine conversation
 - Say numbers naturally (e.g., "twenty-three hundred" not "2,300")
+- Use connecting phrases to keep the speech flowing smoothly
+
+IMPORTANT - FLUIDITY:
+- Write the ENTIRE script as ONE continuous flowing piece
+- Do NOT create separate paragraphs or sections that would cause pauses
+- Use transitions like "Now," "And here's the exciting part," "Speaking of which," etc.
+- The avatar will read this in one take, so it must flow naturally from start to finish
 
 SCRIPT REQUIREMENTS:
-- Start with a personalized greeting using the user's name if provided
-- Explain their TDEE (daily calorie burn) in relatable terms
-- Explain their calorie target and how it relates to their goal
-- Break down their macros (protein, carbs, fat) with context on why each matters
-- Guide them to the next steps (Generate Meal Plan button OR Save and Start Tracking)
-- End with an encouraging, personalized sign-off
-- Keep total length between 150-250 words (about 60-90 seconds when spoken)
+- Start with a personalized, warm greeting using the user's name if provided
+- Briefly explain their TDEE and calorie target (keep this concise)
+- Mention their macro targets naturally (protein, carbs, fat)
+- Explain their personalized workout plan in detail - this is important!
+- Include the workout frequency and what the program focuses on
+- End with next steps and an encouraging, personalized sign-off
+- Keep total length between 200-300 words (about 75-100 seconds when spoken)
 - NEVER use bullet points, numbered lists, or markdown formatting
-- Write everything as flowing, natural speech`;
+- Write everything as ONE flowing, natural speech`;
 
   const userPrompt = `Generate a unique coaching script for this user:
 
-USER DATA:
+USER PROFILE:
 - Name: ${userName || 'Not provided (use friendly generic greeting)'}
-- Goal Type: ${goalType} (lose weight / gain muscle / maintain)
+- Primary Goal: ${primaryGoal} (lose_weight / build_muscle / maintain / improve_health)
 - Current Weight: ${currentWeight} lbs
 - Target Weight: ${targetWeight} lbs
-- BMI: ${bmi.toFixed(1)} (${bmiCategory.name})
+- Activity Level: ${activityLevel}
 
-CALCULATED TARGETS:
-- BMR (Basal Metabolic Rate): ${bmr} calories/day
-- TDEE (Total Daily Energy Expenditure): ${tdee} calories/day
+NUTRITION TARGETS:
 - Daily Calorie Target: ${calories} calories
+- TDEE (calories burned daily): ${tdee} calories
 - Daily ${dailyDelta < 0 ? 'Deficit' : dailyDelta > 0 ? 'Surplus' : 'Balance'}: ${Math.abs(Math.round(dailyDelta))} calories
-- Weekly Weight Change: ${Math.abs(weeklyChange).toFixed(2)} lbs/week
-- Estimated Time to Goal: ${Math.round(totalWeeks)} weeks
+- Protein: ${protein}g per day (for muscle maintenance/growth)
+- Carbs: ${carbs}g per day (for energy)
+- Fat: ${fat}g per day (for hormones and health)
+- Timeline: ${Math.round(totalWeeks)} weeks to reach goal
 
-MACRO TARGETS:
-- Protein: ${protein}g per day
-- Carbs: ${carbs}g per day
-- Fat: ${fat}g per day
+WORKOUT PLAN (IMPORTANT - explain this in detail):
+- Program: ${workoutProgram.name}
+- Description: ${workoutProgram.description}
+- Focus: ${workoutProgram.focus}
+- Frequency: ${workoutsPerWeek} workouts per week
+- Session Duration: 30-45 minutes per workout
+- Features: Personalized to ${primaryGoal === 'lose_weight' ? 'maximize fat burning' : primaryGoal === 'build_muscle' ? 'build lean muscle' : 'maintain fitness'}, adapts to progress, includes rest day guidance
 
-Create a unique, conversational script that feels personal to THIS specific user and their goals. Make it sound natural when spoken aloud by a video avatar coach.`;
+Create ONE continuous, flowing script that covers nutrition AND the workout plan. Make it personal and enthusiastic about their specific program. The script should read as one smooth conversation without any natural stopping points that would cause pauses.`;
 
   try {
     console.log('[heygen-streaming] Generating AI goal coaching script...');
@@ -741,8 +792,8 @@ Create a unique, conversational script that feels personal to THIS specific user
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.8, // Higher creativity for unique scripts
-      max_tokens: 600,
+      temperature: 0.7, // Balanced creativity with coherence
+      max_tokens: 800, // Increased for longer script with workout details
     });
 
     const script = completion.choices[0]?.message?.content?.trim();
@@ -775,7 +826,11 @@ function generateGoalCoachingScriptFallback(goalData: {
   dailyDelta?: number;
   goalType?: string;
   totalWeeks?: number;
-}, userInputs?: { name?: string }): string {
+}, userInputs?: {
+  name?: string;
+  primaryGoal?: string;
+  workoutsPerWeek?: number;
+}): string {
   const {
     calories = 2000,
     protein = 150,
@@ -789,22 +844,43 @@ function generateGoalCoachingScriptFallback(goalData: {
   } = goalData || {};
 
   const userName = userInputs?.name;
-  const absWeekly = Math.abs(weeklyChange).toFixed(2);
+  const primaryGoal = userInputs?.primaryGoal || goalType;
+  const workoutsPerWeek = userInputs?.workoutsPerWeek || 3;
+  const absWeekly = Math.abs(weeklyChange).toFixed(1);
   const absDelta = Math.abs(Math.round(dailyDelta));
 
-  let script = userName ? `Hi ${userName}! ` : `Hey there! `;
-  script += `Your body burns about ${tdee.toLocaleString()} calories daily. `;
+  // Get workout program name
+  const workoutProgram = primaryGoal === 'lose_weight'
+    ? 'Fat Burning HIIT program'
+    : primaryGoal === 'build_muscle'
+    ? 'Progressive Overload Strength program'
+    : 'Balanced Fitness program';
 
-  if (goalType !== 'maintain') {
-    script += `You'll eat ${calories.toLocaleString()} calories with a ${absDelta} calorie ${dailyDelta < 0 ? 'deficit' : 'surplus'}, `;
-    script += `${goalType === 'lose' ? 'losing' : 'gaining'} about ${absWeekly} pounds per week over ${Math.round(totalWeeks)} weeks. `;
+  let script = userName ? `Hey ${userName}, I'm so excited to walk you through your personalized plan! ` : `Hey there, I'm so excited to walk you through your personalized plan! `;
+  script += `So your body burns about ${tdee.toLocaleString()} calories every day, and `;
+
+  if (goalType !== 'maintain' && goalType !== 'lose' && goalType !== 'gain') {
+    // Handle lose_weight, build_muscle naming
+    if (primaryGoal === 'lose_weight') {
+      script += `we're setting you up with ${calories.toLocaleString()} calories daily, creating a ${absDelta} calorie deficit to help you lose about ${absWeekly} pounds per week. `;
+    } else if (primaryGoal === 'build_muscle') {
+      script += `we're setting you up with ${calories.toLocaleString()} calories daily, giving you a ${absDelta} calorie surplus to help you gain about ${absWeekly} pounds per week in lean muscle. `;
+    } else {
+      script += `at ${calories.toLocaleString()} calories daily, you'll maintain your current weight beautifully. `;
+    }
+  } else if (goalType === 'lose') {
+    script += `we're setting you up with ${calories.toLocaleString()} calories daily, creating a ${absDelta} calorie deficit to help you lose about ${absWeekly} pounds per week. `;
+  } else if (goalType === 'gain') {
+    script += `we're setting you up with ${calories.toLocaleString()} calories daily with a ${absDelta} calorie surplus to support muscle growth. `;
   } else {
-    script += `At ${calories.toLocaleString()} calories, you'll maintain your weight. `;
+    script += `at ${calories.toLocaleString()} calories daily, you'll maintain your current weight beautifully. `;
   }
 
-  script += `Your macros: ${protein} grams of protein, ${carbs} grams of carbs, and ${fat} grams of fat. `;
-  script += `Tap Generate Meal Plan to get started, or Save and Start Tracking to begin logging. `;
-  script += userName ? `You've got this, ${userName}!` : `You've got this!`;
+  script += `For your macros, you're aiming for ${protein} grams of protein to support your muscles, ${carbs} grams of carbs for energy, and ${fat} grams of healthy fats. `;
+  script += `Now here's the exciting part, your workout plan! I've set you up with our ${workoutProgram}, and you'll be working out ${workoutsPerWeek} times per week with sessions lasting about thirty to forty-five minutes each. `;
+  script += `This program is specifically designed for your goals and will adapt as you progress. `;
+  script += `To get started, tap Generate Meal Plan to see your personalized meals, or hit Save and Start Tracking to begin logging right away. `;
+  script += userName ? `You've got everything you need to succeed, ${userName}, and I'll be here cheering you on every step of the way!` : `You've got everything you need to succeed, and I'll be here cheering you on every step of the way!`;
 
   return script;
 }
