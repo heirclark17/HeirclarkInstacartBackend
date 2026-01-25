@@ -262,7 +262,7 @@ router.post("/search", asyncHandler(async (req: Request, res: Response) => {
  * See: https://docs.instacart.com/connect/api/fulfillment/
  */
 router.post("/products-link", asyncHandler(async (req: Request, res: Response) => {
-  const { items, landingUrl, partnerId } = req.body;
+  const { items, landingUrl, partnerId, title } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return sendError(res, "Missing or empty items array", 400);
@@ -271,6 +271,8 @@ router.post("/products-link", asyncHandler(async (req: Request, res: Response) =
   if (!INSTACART_API_KEY) {
     return sendError(res, "Instacart integration not configured", 503);
   }
+
+  console.log("[Instacart] Creating products link with", items.length, "items");
 
   try {
     // Instacart IDP API - Create products link
@@ -283,7 +285,7 @@ router.post("/products-link", asyncHandler(async (req: Request, res: Response) =
         "Accept": "application/json",
       },
       body: JSON.stringify({
-        title: "Shopping List",
+        title: title || "Shopping List",
         line_items: items.map((item: any) => ({
           name: item.name || item.query,
           quantity: item.quantity || 1,
