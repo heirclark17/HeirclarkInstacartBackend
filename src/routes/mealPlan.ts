@@ -241,7 +241,7 @@ async function getUnsplashImage(dishName: string, mealType?: string): Promise<st
   return imageUrl;
 }
 
-async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
+export async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResponse> {
   // Add images directly to each meal (using curated library is fast, no batching needed)
   console.log('[addImagesToMealPlan] Starting image generation for', plan.days.length, 'days');
 
@@ -269,7 +269,7 @@ async function addImagesToMealPlan(plan: MealPlanResponse): Promise<MealPlanResp
   return plan;
 }
 
-async function generateMealPlanWithAI(
+export async function generateMealPlanWithAI(
   targets: MealPlanTargets,
   preferences: MealPlanPreferences
 ): Promise<MealPlanResponse> {

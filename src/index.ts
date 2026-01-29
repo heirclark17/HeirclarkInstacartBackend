@@ -71,6 +71,9 @@ import aiBackgroundsRouter from "./routes/aiBackgrounds";
 // AI Meal Plan router
 import { mealPlanRouter } from "./routes/mealPlan";
 
+// AI Extra routes (workout plans, coach chat)
+import { aiExtraRouter } from "./routes/ai";
+
 // Meal Library router
 import { mealLibraryRouter } from "./routes/mealLibrary";
 
@@ -330,6 +333,9 @@ app.use("/api/v1/ai-backgrounds", aiBackgroundsRouter);
 
 // AI Meal Plan routes (7-day plan generation)
 app.use("/api/v1/ai", mealPlanRouter);
+
+// AI Extra routes (workout plans, coach chat) - mounted on same /api/v1/ai base
+app.use("/api/v1/ai", aiExtraRouter);
 
 // Meal library routes (saved meals) - Different path to avoid conflict with /api/v1/meals/:id
 app.use("/api/v1/meal-library", mealLibraryRouter);
