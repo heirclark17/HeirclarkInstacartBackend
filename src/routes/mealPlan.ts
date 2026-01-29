@@ -415,9 +415,9 @@ Return ONLY valid JSON. No markdown, no explanations.`;
 
   const userPrompt = `Generate the complete 7-day meal plan JSON now.`;
 
-  // Set 60 second timeout (meal plan generation is slow with detailed preferences)
+  // Set 120 second timeout (meal plan generation is slow with detailed preferences)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  const timeoutId = setTimeout(() => controller.abort(), 120000);
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
