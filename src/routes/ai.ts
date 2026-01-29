@@ -114,7 +114,7 @@ interface WorkoutPlanPreferences {
  * Generate AI-powered workout plan using GPT-4.1-mini
  */
 aiExtraRouter.post('/generate-workout-plan', aiRateLimit, async (req: Request, res: Response) => {
-  const { preferences, weeks = 4, shopifyCustomerId } = req.body;
+  const { preferences, weeks = 2, shopifyCustomerId } = req.body; // Default to 2 weeks for faster/more reliable generation
 
   if (!preferences) {
     return sendError(res, 'Missing preferences object', 400);
