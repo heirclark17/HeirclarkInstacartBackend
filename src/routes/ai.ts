@@ -132,48 +132,40 @@ aiExtraRouter.post('/generate-workout-plan', aiRateLimit, async (req: Request, r
   const equipment = prefs.availableEquipment || ['bodyweight'];
   const injuries = prefs.injuries || [];
 
-  const systemPrompt = `You are a certified personal trainer creating workout programs. Generate a ${weeks}-week workout plan in this EXACT JSON format:
+  const systemPrompt = `You are a certified personal trainer creating workout programs. Generate a ${weeks}-week workout plan in this EXACT compact JSON format:
 
 {
   "weeks": [
     {
       "weekNumber": 1,
-      "focus": "Foundation Building",
+      "focus": "Foundation",
       "workouts": [
         {
-          "dayOfWeek": "Monday",
-          "workoutType": "Full Body Strength",
+          "day": "Mon",
+          "type": "Full Body",
           "duration": 45,
           "exercises": [
-            {
-              "name": "Barbell Squat",
-              "sets": 3,
-              "reps": "8-10",
-              "rest": "90 seconds",
-              "notes": "Focus on depth and form"
-            }
+            {"name": "Squat", "sets": 3, "reps": "8-10", "rest": 90}
           ]
         }
       ]
     }
   ],
-  "progressionGuidelines": "Increase weight by 5% each week when completing all sets",
-  "warmupRoutine": "5-10 minutes light cardio + dynamic stretching",
-  "cooldownRoutine": "5-10 minutes static stretching"
+  "progression": "Add 5% weight weekly",
+  "warmup": "5 min cardio + dynamic stretches",
+  "cooldown": "5 min static stretches"
 }
 
-REQUIREMENTS:
-- Generate ${daysPerWeek} workouts per week
-- Each workout should be ${sessionMinutes} minutes
-- Goal: ${goal}
-- Experience: ${level}
+RULES:
+- ${daysPerWeek} workouts/week, ${sessionMinutes} min each
+- Goal: ${goal}, Level: ${level}
 - Equipment: ${equipment.join(', ')}
-${injuries.length > 0 ? `- AVOID exercises that aggravate: ${injuries.join(', ')}` : ''}
-- Include 4-6 exercises per workout
-- Specify sets, reps, and rest periods
-- Add form cues and safety notes
+${injuries.length > 0 ? `- AVOID: ${injuries.join(', ')}` : ''}
+- 4-5 exercises per workout (keep exercise names short)
+- Use "rest" in seconds (number), not strings
+- Keep notes/cues very brief (max 10 words) or omit
 
-Return ONLY valid JSON, no markdown.`;
+Return ONLY valid JSON.`;
 
   const userPrompt = `Generate the complete ${weeks}-week workout plan now.`;
 
@@ -193,8 +185,8 @@ Return ONLY valid JSON, no markdown.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.5,
-        max_tokens: 6000, // Increased for complex workout plans
+        temperature: 0.4,
+        max_tokens: 12000, // Increased for 4-week workout plans
         response_format: { type: 'json_object' }, // Force JSON response
       }),
       signal: controller.signal,
@@ -209,9 +201,16 @@ Return ONLY valid JSON, no markdown.`;
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
+    const finishReason = data.choices?.[0]?.finish_reason;
 
     if (!content) {
       return sendServerError(res, 'No content in OpenAI response');
+    }
+
+    // Check if response was truncated
+    if (finishReason === 'length') {
+      console.warn('[aiRouter] OpenAI response was truncated (hit max_tokens)');
+      return sendServerError(res, 'Workout plan too complex. Please try with fewer weeks or days.');
     }
 
     // Parse JSON, handle potential markdown code blocks
