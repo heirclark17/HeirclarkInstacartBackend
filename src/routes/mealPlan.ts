@@ -433,7 +433,8 @@ Return ONLY valid JSON. No markdown, no explanations.`;
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.5,
-        max_tokens: 4000,
+        max_tokens: 3000, // Reduced from 4000 for faster responses
+        response_format: { type: 'json_object' }, // Force JSON mode for faster, cleaner responses
       }),
       signal: controller.signal,
     });
