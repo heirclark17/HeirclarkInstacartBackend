@@ -194,7 +194,8 @@ Return ONLY valid JSON, no markdown.`;
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.5,
-        max_tokens: 4000,
+        max_tokens: 6000, // Increased for complex workout plans
+        response_format: { type: 'json_object' }, // Force JSON response
       }),
       signal: controller.signal,
     });
@@ -224,7 +225,14 @@ Return ONLY valid JSON, no markdown.`;
       cleanContent = cleanContent.slice(0, -3);
     }
 
-    const workoutPlan = JSON.parse(cleanContent.trim());
+    let workoutPlan;
+    try {
+      workoutPlan = JSON.parse(cleanContent.trim());
+    } catch (parseErr: any) {
+      console.error('[aiRouter] Failed to parse workout plan JSON:', parseErr.message);
+      console.error('[aiRouter] Raw content:', content.substring(0, 500));
+      return sendServerError(res, 'AI returned invalid JSON. Please try again.');
+    }
 
     // Validate structure
     if (!workoutPlan.weeks || !Array.isArray(workoutPlan.weeks) || workoutPlan.weeks.length !== weeks) {
