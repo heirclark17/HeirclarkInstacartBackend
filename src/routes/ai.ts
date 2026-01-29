@@ -15,10 +15,10 @@ export const aiExtraRouter = Router();
 // Apply authentication
 aiExtraRouter.use(authMiddleware());
 
-// Rate limiting for AI endpoints (10 requests per minute for expensive operations)
+// Rate limiting for AI endpoints (100 requests per minute for testing)
 const aiRateLimit = rateLimitMiddleware({
   windowMs: 60000,
-  maxRequests: 10,
+  maxRequests: 100,
   message: 'Too many AI requests, please try again later',
 });
 
