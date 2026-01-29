@@ -88,7 +88,7 @@ aiExtraRouter.post('/generate-meal-plan', aiRateLimit, async (req: Request, res:
       console.warn('[aiExtraRouter] Image fetch failed (continuing without images):', imgErr.message);
     }
 
-    return sendSuccess(res, plan);
+    return res.status(200).json({ ok: true, plan });
   } catch (err: any) {
     console.error('[aiExtraRouter] Meal plan generation failed:', err);
     return sendServerError(res, err.message || 'Failed to generate meal plan');
@@ -240,7 +240,8 @@ Return ONLY valid JSON, no markdown.`;
       return sendServerError(res, 'Invalid workout plan structure');
     }
 
-    return sendSuccess(res, {
+    return res.status(200).json({
+      ok: true,
       plan: {
         ...workoutPlan,
         generatedAt: new Date().toISOString(),
@@ -389,7 +390,8 @@ Keep responses concise (2-3 sentences). Be supportive and actionable.`;
       return sendServerError(res, 'No response from AI');
     }
 
-    return sendSuccess(res, {
+    return res.status(200).json({
+      ok: true,
       response: {
         message: assistantMessage,
         timestamp: new Date().toISOString(),
