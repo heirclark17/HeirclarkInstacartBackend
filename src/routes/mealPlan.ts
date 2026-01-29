@@ -486,6 +486,7 @@ Return ONLY valid JSON. No markdown, no explanations.`;
 
     return {
       ...parsedPlan,
+      shoppingList: [], // Initialize empty shopping list (will be populated later if needed)
       generatedAt: new Date().toISOString(),
       targets,
     };
