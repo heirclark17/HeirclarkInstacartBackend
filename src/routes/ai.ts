@@ -88,7 +88,7 @@ aiExtraRouter.post('/generate-meal-plan', aiRateLimit, async (req: Request, res:
       console.warn('[aiExtraRouter] Image fetch failed (continuing without images):', imgErr.message);
     }
 
-    return sendSuccess(res, { plan });
+    return sendSuccess(res, plan);
   } catch (err: any) {
     console.error('[aiExtraRouter] Meal plan generation failed:', err);
     return sendServerError(res, err.message || 'Failed to generate meal plan');
