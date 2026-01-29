@@ -5,7 +5,10 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError, sendServerError } from '../middleware/responseHelper';
 import { rateLimitMiddleware } from '../middleware/rateLimiter';
 import { authMiddleware } from '../middleware/auth';
-import { generateMealPlanWithAI, addImagesToMealPlan } from './mealPlan';
+
+// Import meal plan functions - defined at bottom of this file to avoid circular dependency
+let generateMealPlanWithAI: any;
+let addImagesToMealPlan: any;
 
 export const aiExtraRouter = Router();
 
@@ -67,6 +70,13 @@ aiExtraRouter.post('/generate-meal-plan', aiRateLimit, async (req: Request, res:
 
   try {
     console.log('[aiExtraRouter] Generating meal plan with AI');
+
+    // Lazy load meal plan functions to avoid circular dependency
+    if (!generateMealPlanWithAI) {
+      const mealPlanModule = await import('./mealPlan');
+      generateMealPlanWithAI = mealPlanModule.generateMealPlanWithAI;
+      addImagesToMealPlan = mealPlanModule.addImagesToMealPlan;
+    }
 
     // Generate the meal plan using existing logic
     let plan = await generateMealPlanWithAI(targets, backendPreferences);
@@ -388,10 +398,3 @@ Keep responses concise (2-3 sentences). Be supportive and actionable.`;
     return sendServerError(res, err.message || 'Failed to get coach response');
   }
 });
-
-// ============================================================================
-// HELPER: Export functions for use in wrapper endpoint
-// ============================================================================
-
-// Note: We import generateMealPlanWithAI and addImagesToMealPlan from mealPlan.ts
-// These need to be exported from that file
