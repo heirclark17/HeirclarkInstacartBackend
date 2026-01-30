@@ -433,7 +433,7 @@ Return ONLY valid JSON. No markdown, no explanations.`;
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.5,
-        max_tokens: 3000, // Reduced from 4000 for faster responses
+        max_tokens: 8000, // Increased to handle full 7-day meal plan with details
         response_format: { type: 'json_object' }, // Force JSON mode for faster, cleaner responses
       }),
       signal: controller.signal,
@@ -448,10 +448,20 @@ Return ONLY valid JSON. No markdown, no explanations.`;
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
+    const finishReason = data.choices?.[0]?.finish_reason;
+
+    // Check if response was truncated due to max_tokens
+    if (finishReason === 'length') {
+      console.error('[mealPlan] OpenAI response truncated - finish_reason: length');
+      console.error('[mealPlan] Content length received:', content?.length || 0);
+      throw new Error('AI response was cut off due to length limit - please try again');
+    }
 
     if (!content) {
       throw new Error('No content in OpenAI response');
     }
+
+    console.log('[mealPlan] OpenAI response finish_reason:', finishReason, 'content length:', content.length);
 
     // Parse JSON, handle potential markdown code blocks
     let parsedPlan: any;
@@ -464,7 +474,24 @@ Return ONLY valid JSON. No markdown, no explanations.`;
     if (cleanContent.endsWith('```')) {
       cleanContent = cleanContent.slice(0, -3);
     }
-    parsedPlan = JSON.parse(cleanContent.trim());
+
+    // Check for truncated JSON (response cut off mid-stream)
+    const trimmed = cleanContent.trim();
+    if (!trimmed.endsWith('}') && !trimmed.endsWith(']')) {
+      console.error('[mealPlan] OpenAI response appears truncated. Length:', trimmed.length);
+      console.error('[mealPlan] Last 100 chars:', trimmed.slice(-100));
+      throw new Error('AI response was truncated - please try again');
+    }
+
+    try {
+      parsedPlan = JSON.parse(trimmed);
+    } catch (parseErr: any) {
+      console.error('[mealPlan] JSON parse error:', parseErr.message);
+      console.error('[mealPlan] Content length:', trimmed.length);
+      console.error('[mealPlan] First 200 chars:', trimmed.slice(0, 200));
+      console.error('[mealPlan] Last 200 chars:', trimmed.slice(-200));
+      throw new Error(`Failed to parse AI response: ${parseErr.message}`);
+    }
 
     // Validate structure
     if (!parsedPlan.days || !Array.isArray(parsedPlan.days) || parsedPlan.days.length !== 7) {
