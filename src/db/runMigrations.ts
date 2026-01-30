@@ -323,6 +323,39 @@ export async function runMigrations(pool: Pool): Promise<void> {
       console.log('[Migrations] ✅ Enhanced features already migrated');
     }
 
+    // Run profile columns migration for weight goal alignment
+    const checkProfileColumns = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_name = 'hc_user_preferences'
+        AND column_name = 'target_weight_kg'
+      );
+    `);
+
+    const profileColumnsExist = checkProfileColumns.rows[0]?.exists;
+
+    if (!profileColumnsExist) {
+      console.log('[Migrations] Running profile columns migration for weight goal alignment...');
+
+      const profileMigration = `
+        -- Add profile columns to hc_user_preferences for weight goal alignment
+        ALTER TABLE hc_user_preferences
+        ADD COLUMN IF NOT EXISTS height_cm NUMERIC(5,1),
+        ADD COLUMN IF NOT EXISTS current_weight_kg NUMERIC(5,1),
+        ADD COLUMN IF NOT EXISTS age INTEGER,
+        ADD COLUMN IF NOT EXISTS sex VARCHAR(10),
+        ADD COLUMN IF NOT EXISTS activity_level VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS goal_type VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS target_weight_kg NUMERIC(5,1),
+        ADD COLUMN IF NOT EXISTS target_date DATE;
+      `;
+
+      await pool.query(profileMigration);
+      console.log('[Migrations] ✅ Profile columns migration completed!');
+    } else {
+      console.log('[Migrations] ✅ Profile columns already exist');
+    }
+
   } catch (error: any) {
     console.error('[Migrations] ❌ Migration failed:', error.message);
     // Don't crash the app, just log the error
