@@ -8,6 +8,7 @@
     "migrate:product": "node dist/db/migrations/runProductMigrations.js",
     "migrate:food-prefs": "node dist/db/migrations/runFoodPrefsMigration.js",
     "migrate:fix-health": "node dist/db/migrations/fix-health-history.js",
+    "migrate:profile": "node dist/db/migrations/add-profile-columns.js",
     "seed:usda": "node dist/scripts/seed-usda-foods.js",
     "seed:onboarding": "node dist/scripts/seed-onboarding-program.js",
     "start": "node dist/index.js",

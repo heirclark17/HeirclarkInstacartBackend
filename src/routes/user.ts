@@ -179,3 +179,185 @@ userRouter.post("/goals", validateHealthMetrics, async (req: AuthenticatedReques
     });
   }
 });
+
+/**
+ * GET /api/v1/user/profile
+ * Fetch user's physical profile for weight goal alignment
+ *
+ * Returns: heightCm, weightKg, age, sex, activityLevel, goalType, targetWeightKg, targetDate, timezone
+ *
+ * ✅ SECURITY: Requires authentication via Bearer token
+ * ✅ IDOR Protection: Uses validated customer ID from authMiddleware
+ */
+userRouter.get("/profile", async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const shopifyCustomerId = getCustomerId(req);
+
+    if (!shopifyCustomerId) {
+      return res.status(401).json({
+        ok: false,
+        error: "Authentication required",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        height_cm,
+        current_weight_kg,
+        age,
+        sex,
+        activity_level,
+        goal_type,
+        target_weight_kg,
+        target_date,
+        timezone
+       FROM hc_user_preferences
+       WHERE shopify_customer_id = $1`,
+      [shopifyCustomerId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        ok: true,
+        profile: null,
+      });
+    }
+
+    const row = result.rows[0];
+    return res.json({
+      ok: true,
+      profile: {
+        heightCm: row.height_cm ? Number(row.height_cm) : null,
+        weightKg: row.current_weight_kg ? Number(row.current_weight_kg) : null,
+        age: row.age ? Number(row.age) : null,
+        sex: row.sex || null,
+        activityLevel: row.activity_level || null,
+        goalType: row.goal_type || null,
+        targetWeightKg: row.target_weight_kg ? Number(row.target_weight_kg) : null,
+        targetDate: row.target_date || null,
+        timezone: row.timezone || "America/New_York",
+      },
+    });
+  } catch (err: any) {
+    console.error("[User] GET /profile error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to fetch profile",
+    });
+  }
+});
+
+/**
+ * PATCH /api/v1/user/profile
+ * Update user's physical profile for weight goal alignment
+ *
+ * Body: { height_cm?, weight_kg?, age?, sex?, activity_level?, goal_type?, target_weight_kg?, target_date?, timezone? }
+ *
+ * ✅ SECURITY: Requires authentication via Bearer token
+ * ✅ IDOR Protection: Uses validated customer ID from authMiddleware
+ */
+userRouter.patch("/profile", async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const shopifyCustomerId = getCustomerId(req);
+
+    if (!shopifyCustomerId) {
+      return res.status(401).json({
+        ok: false,
+        error: "Authentication required",
+      });
+    }
+
+    const {
+      height_cm,
+      weight_kg,
+      age,
+      sex,
+      activity_level,
+      goal_type,
+      target_weight_kg,
+      target_date,
+      timezone,
+    } = req.body;
+
+    // Validate numeric fields if provided
+    const heightCm = height_cm != null ? Number(height_cm) : null;
+    const weightKg = weight_kg != null ? Number(weight_kg) : null;
+    const ageNum = age != null ? Number(age) : null;
+    const targetWeightKg = target_weight_kg != null ? Number(target_weight_kg) : null;
+
+    // Upsert profile data
+    const result = await pool.query(
+      `INSERT INTO hc_user_preferences (
+        shopify_customer_id,
+        height_cm,
+        current_weight_kg,
+        age,
+        sex,
+        activity_level,
+        goal_type,
+        target_weight_kg,
+        target_date,
+        timezone,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      ON CONFLICT (shopify_customer_id) DO UPDATE SET
+        height_cm = COALESCE(EXCLUDED.height_cm, hc_user_preferences.height_cm),
+        current_weight_kg = COALESCE(EXCLUDED.current_weight_kg, hc_user_preferences.current_weight_kg),
+        age = COALESCE(EXCLUDED.age, hc_user_preferences.age),
+        sex = COALESCE(EXCLUDED.sex, hc_user_preferences.sex),
+        activity_level = COALESCE(EXCLUDED.activity_level, hc_user_preferences.activity_level),
+        goal_type = COALESCE(EXCLUDED.goal_type, hc_user_preferences.goal_type),
+        target_weight_kg = COALESCE(EXCLUDED.target_weight_kg, hc_user_preferences.target_weight_kg),
+        target_date = COALESCE(EXCLUDED.target_date, hc_user_preferences.target_date),
+        timezone = COALESCE(EXCLUDED.timezone, hc_user_preferences.timezone),
+        updated_at = NOW()
+      RETURNING
+        height_cm,
+        current_weight_kg,
+        age,
+        sex,
+        activity_level,
+        goal_type,
+        target_weight_kg,
+        target_date,
+        timezone`,
+      [
+        shopifyCustomerId,
+        heightCm,
+        weightKg,
+        ageNum,
+        sex || null,
+        activity_level || null,
+        goal_type || null,
+        targetWeightKg,
+        target_date || null,
+        timezone || null,
+      ]
+    );
+
+    const row = result.rows[0];
+    console.log(`[User] Profile saved for customer ${shopifyCustomerId}`);
+
+    return res.json({
+      ok: true,
+      message: "Profile saved successfully",
+      profile: {
+        heightCm: row.height_cm ? Number(row.height_cm) : null,
+        weightKg: row.current_weight_kg ? Number(row.current_weight_kg) : null,
+        age: row.age ? Number(row.age) : null,
+        sex: row.sex || null,
+        activityLevel: row.activity_level || null,
+        goalType: row.goal_type || null,
+        targetWeightKg: row.target_weight_kg ? Number(row.target_weight_kg) : null,
+        targetDate: row.target_date || null,
+        timezone: row.timezone || "America/New_York",
+      },
+    });
+  } catch (err: any) {
+    console.error("[User] PATCH /profile error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to save profile",
+    });
+  }
+});
